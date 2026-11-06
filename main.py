@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 DATA SHIFT —— Game Off 2026 / SHIFT
-进度：M1（窗口 / 网格 / 涂抹 / WASD / 计时）+ M2（二维码 / 提示层 / 进度条）
+进度：M1（窗口 / 网格 / 格子走位 / J 涂 K 抹 / 计时）+ M2（二维码 / 提示层 / 进度条）
+操作：WASD 一格一格走；按住 J 边走边涂黑，K 抹除脚下；R 重开。全程只用键盘。
 运行：python main.py（只依赖 pygame）
 窗口按桌面自动等比缩小，内部逻辑坐标始终 1000×1000；界面文字全为 ASCII 大写。
 """
 
-import math
 import random
 
 import pygame
@@ -31,7 +31,6 @@ FIT_MARGIN_X, FIT_MARGIN_Y = 80, 120   # 预留左右边距 + 标题栏 + 任务
 MIN_WINDOW = 520                        # 再小就看不清了
 
 GRID_PX = GRID_N * CELL           # 672
-TARGET_PX = TARGET_N * CELL       # 588
 
 # ==== 颜色 ====
 C_BG = (11, 15, 20)               # 窗外废墟底色
@@ -42,10 +41,11 @@ C_CELL_BLACK = (17, 17, 24)       # 已涂黑
 C_GHOST = (60, 60, 70, 110)       # 目标提示（半透明深灰，SRCALPHA）
 C_ERASING = (150, 150, 160)       # 抹除进行中
 C_LOCK = (30, 36, 45)             # 阶段2 锁定区遮罩
-C_MONSTER = (255, 61, 110)        # 侵蚀体猩红（M3 使用）
+C_MONSTER = (255, 61, 110)        # 侵蚀体猩红
 C_PLAYER = (108, 255, 196)        # 玩家（青绿）
-C_ACCENT = (108, 255, 196)        # 进度条
+C_ACCENT = (108, 255, 196)        # 进度条 / 结算里的「涂对」
 C_WARN = (255, 176, 32)           # 警示黄
+C_MISSING = (46, 52, 62)          # 结算缩略图：该黑却没涂的格子
 C_TEXT = (232, 236, 240)
 
 # ==== 规则 ====
@@ -58,27 +58,33 @@ NOISE_LIMIT_PCT = 0.25
 ALPHA_MIN = 0.48
 ALPHA_TRY = 40                    # 重摇次数上限，兜底取最密的一版
 
-# ==== 玩家 ====
-PLAYER_SPEED = 210.0              # px/s
-PLAYER_ACCEL = 18.0               # 速度平滑系数
-PLAYER_START = (500, 500)
-PAINT_MODE = "global"             # "global" | "radius"
-PAINT_RADIUS = 220
-
+# ==== 玩家（格子对齐移动）====
+PLAYER_START_CELL = (12, 12)      # 出生于主网格正中，一眼能看到脚下的目标区
+MOVE_REPEAT = 0.13                # 长按方向键时每走一格的间隔（按下瞬间必定先走一格）
 PLAYER_BODY_W, PLAYER_BODY_H = 16, 22
 PLAYER_GLOW_R = 14
-CLAMP_PAD = 8                     # 角色可越出网格 8px
 
-# ==== 怪物（M3 才用，先占位保证常量区完整） ====
+# ==== 怪物 ====
 SPAWN_PER_MINUTE = 15
 SPAWN_FIRST_DELAY = 2.0
 MONSTER_SPEED = 62.0
 MONSTER_RADIUS = 9
 MONSTER_IDLE_LIMIT = 12.0
+MONSTER_EAT_DIST = 6.0            # 到这个距离就算啃到，直接吃掉
+MONSTER_RETRY = 0.5               # 场上没有黑格时，隔多久重试一次选目标
+MONSTER_SPD_JITTER = (0.88, 1.12)  # 每只怪速度随机浮动，别齐步走
+
+# ==== 结算 ====
+THUMB_CELL = 10                   # 21×21 缩略图每格 10px → 210×210
+GRADE_S_COVERAGE = 0.95           # S 级门槛
+GRADE_S_NOISE = 3
+GRADE_A_NOISE_PCT = 0.4           # A 级：噪声不超过上限的 40%
 
 # ==== 输入：scancode 是物理键位，与输入法/CapsLock/Shift 无关 ====
 SC_W, SC_A, SC_S, SC_D = 26, 4, 22, 7
+SC_J, SC_K, SC_SPACE = 13, 14, 44   # J 涂黑 / K 抹除 / 空格=J 的别名
 SC_R, SC_ESC, SC_F1 = 21, 41, 58
+DIR_KEYS = {SC_W: (-1, 0), SC_S: (1, 0), SC_A: (0, -1), SC_D: (0, 1)}
 
 # ==== 格子状态 ====
 WHITE, BLACK, ERASING = 0, 1, 2
@@ -102,6 +108,11 @@ def pos_to_cell(x, y):
     if r >= GRID_N or c >= GRID_N:
         return None
     return int(r), int(c)
+
+def cell_center(r, c):
+    """格子序号 → 该格中心的屏幕坐标（格子对齐移动后，角色位置直接取格心）。"""
+    return (GRID_ORIGIN[0] + c * CELL + CELL // 2,
+            GRID_ORIGIN[1] + r * CELL + CELL // 2)
 
 def to_target(r, c):
     """主网格坐标 → 目标区坐标 (tr, tc)；不在目标区内返回 None。"""
@@ -239,7 +250,7 @@ class Board:
 # ==== 5. class InputState ====
 
 class InputState:
-    """WASD 三层保险：关文本输入 + scancode 事件 + scancode 索引兜底。
+    """全部键盘操作，三层保险：关文本输入 + scancode 事件 + scancode 索引兜底。
 
     IME 候选窗会吃掉字母键的 KEYDOWN，keycode 又可能被当物理键号查表（幽灵移动），
     scancode 是 USB-HID 物理键位，与布局/CapsLock/Shift/输入法无关。
@@ -251,64 +262,130 @@ class InputState:
         except Exception:
             pass
         self.held = set()                  # 存 scancode
+        self.last_dir = None               # 最后按下的方向键，斜向时优先听它的
 
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN:
             self.held.add(e.scancode)
+            if e.scancode in DIR_KEYS:
+                self.last_dir = e.scancode
         elif e.type == pygame.KEYUP:
             self.held.discard(e.scancode)
         elif e.type == pygame.WINDOWFOCUSLOST:
             self.held.clear()              # 防 Alt+Tab 后按键卡死
+            self.last_dir = None
 
-    def axis(self):
-        v = pygame.Vector2(0, 0)
-        p = pygame.key.get_pressed()
-        if SC_W in self.held or p[SC_W]:
-            v.y -= 1
-        if SC_S in self.held or p[SC_S]:
-            v.y += 1
-        if SC_A in self.held or p[SC_A]:
-            v.x -= 1
-        if SC_D in self.held or p[SC_D]:
-            v.x += 1
-        if v.length_squared() > 0:
-            v.normalize_ip()               # 斜向不加速
-        return v
+    def down(self, sc):
+        # 事件集合优先，get_pressed 兜底（索引也用 scancode，最坏只是 False，不会幽灵移动）
+        return sc in self.held or pygame.key.get_pressed()[sc]
+
+    def dir4(self):
+        """返回 (dr, dc) 或 None。格子移动只能四向，斜向按「最后按下」的那颗键走。"""
+        if self.last_dir is not None and self.down(self.last_dir):
+            return DIR_KEYS[self.last_dir]
+        for sc, d in DIR_KEYS.items():     # 兜底：last_dir 键已松开时按固定顺序取
+            if self.down(sc):
+                return d
+        return None
 
 # ==== 6. class Player ====
 
 class Player:
+    """格子对齐（grid-based）：按一下走一格，位置永远是格心，不存在「半个身子在格子里」。"""
+
     def __init__(self):
-        self.pos = pygame.Vector2(PLAYER_START)
-        self.vel = pygame.Vector2(0, 0)
-        self.facing = 1                    # 0上 1下 2左 3右
+        self.cell = PLAYER_START_CELL       # (row, col) 才是真身，pos 只是它的投影
+        self.pos = pygame.Vector2(cell_center(*self.cell))
+        self.facing = 1                     # 0上 1下 2左 3右
+        self.repeat = 0.0                   # 长按连走的计时器
 
-    def update(self, dt, axis):
-        target = axis * PLAYER_SPEED
-        # 指数收敛：约 0.06s 到位，松手即停，不做滑冰感
-        self.vel += (target - self.vel) * (1.0 - math.exp(-PLAYER_ACCEL * dt))
-        self.pos += self.vel * dt
+    def update(self, dt, d):
+        if d is None:
+            self.repeat = 0.0               # 松手归零，保证下次按下瞬间就走一格
+            return
+        self.repeat -= dt
+        if self.repeat > 0:
+            return
+        self.repeat = MOVE_REPEAT
+        nr, nc = self.cell[0] + d[0], self.cell[1] + d[1]
+        if not (0 <= nr < GRID_N and 0 <= nc < GRID_N):
+            return                          # 撞墙：原地不动，计时器照常重置，不会连环卡顿
+        self.cell = (nr, nc)
+        self.pos.update(cell_center(nr, nc))
+        self.facing = (1 if d[0] > 0 else 0) if d[0] else (3 if d[1] > 0 else 2)
 
-        pad = CLAMP_PAD
-        minx = GRID_ORIGIN[0] - pad
-        maxx = GRID_ORIGIN[0] + GRID_PX + pad
-        miny = GRID_ORIGIN[1] - pad
-        maxy = GRID_ORIGIN[1] + GRID_PX + pad
-        self.pos.x = min(max(self.pos.x, minx), maxx)
-        self.pos.y = min(max(self.pos.y, miny), maxy)
+# ==== 7. class Monster ====
 
-        if axis.x or axis.y:
-            if abs(axis.x) >= abs(axis.y):
-                self.facing = 3 if axis.x > 0 else 2
-            else:
-                self.facing = 1 if axis.y > 0 else 0
+class Monster:
+    """侵蚀体：从生成环进来，锁住最近的空闲黑格，走过去吃掉它，然后自毁。
 
-    def can_reach(self, rect):
-        if PAINT_MODE == "global":
-            return True
-        return (self.pos - pygame.Vector2(rect.center)).length() <= PAINT_RADIUS
+    一生只吃 1 格。没有状态机、没有动画阶段——走到就吃，吃完就删。
+    「最近黑格」天然就是诱饵机制：外围涂的黑格离生成环最近，怪自然先扑它们。
+    """
 
-# ==== 7. class Monster（M3：生成环取点 / 最近黑格选目标 / 走到就吃 / 吃完自删） ====
+    def __init__(self, pos, speed):
+        self.pos = pygame.Vector2(pos)
+        self.speed = speed
+        self.target = None                 # (r, c) 或 None
+        self.idle = 0.0                    # 无目标存活计时，超时自毁
+        self.retry = 0.0                   # 无目标时多久重试一次
+
+    def claim(self, claims):
+        """松开手上锁的那一格，让别的怪可以抢。"""
+        if self.target is not None:
+            claims[self.target] -= 1
+            if claims[self.target] <= 0:
+                del claims[self.target]
+            self.target = None
+
+    def retarget(self, board, claims):
+        """扫全网格找最近的黑格：优先没人锁的，全被锁了就允许重复，绝不卡死。"""
+        self.claim(claims)
+        free, any_cell = None, None
+        free_d = any_d = None
+        for r in range(GRID_N):
+            row = board.state[r]
+            for c in range(GRID_N):
+                if row[c] != BLACK:        # ERASING 不吸引怪，规则同 §9.3
+                    continue
+                cx, cy = cell_center(r, c)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if any_d is None or d < any_d:
+                    any_cell, any_d = (r, c), d
+                if not claims.get((r, c)) and (free_d is None or d < free_d):
+                    free, free_d = (r, c), d
+        pick = free or any_cell
+        if pick is not None:
+            claims[pick] = claims.get(pick, 0) + 1
+            self.target = pick
+
+    def update(self, dt, board, claims, center):
+        """返回 False 表示这只怪该死（吃到了，或者闲着超时）。"""
+        if self.target is not None:
+            t = self.target
+            if board.state[t[0]][t[1]] != BLACK:
+                self.retarget(board, claims)     # 目标被吃了/被玩家抹了，立刻重选
+
+        if self.target is None:
+            self.idle += dt                      # 场上没黑格：朝中心漂一会儿，超时自毁
+            to_c = center - self.pos
+            if to_c.length_squared() > 1.0:
+                self.pos += to_c.normalize() * self.speed * 0.5 * dt
+            self.retry -= dt
+            if self.retry <= 0:
+                self.retry = MONSTER_RETRY
+                self.retarget(board, claims)
+            return self.idle < MONSTER_IDLE_LIMIT
+
+        self.idle = 0.0
+        cx, cy = cell_center(*self.target)
+        d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
+        if d.length() <= MONSTER_EAT_DIST:
+            board.force_white(*self.target)      # 变白 + 该格红闪
+            self.claim(claims)
+            return False                         # 吃完必死
+        self.pos += d.normalize() * self.speed * dt
+        return True
 
 # ==== 8. class Game ====
 
@@ -328,6 +405,10 @@ class Game:
         # 字体只在初始化时创建一次，绝不在 draw 里新建
         self.f_main = pygame.font.Font(None, 28)
         self.f_small = pygame.font.Font(None, 22)
+        self.f_mid = pygame.font.Font(None, 52)        # 结算页标题
+        self.f_big = pygame.font.Font(None, 110)       # 结算页评级
+
+        self.center = pygame.Vector2(WINDOW_W / 2, WINDOW_H / 2)   # 怪物无目标时的漂向点
 
         # 28×28 的半透明提示块反复复用（每帧新建 400 个 Surface 会掉帧）
         self.ghost = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
@@ -345,12 +426,18 @@ class Game:
 
     # ---------- 开局 ----------
     def new_round(self):
-        rng = random.Random()                     # 不固定种子：R 重开必出新码
-        self.target = generate_target(rng)
+        self.rng = random.Random()                # 不固定种子：R 重开必出新码
+        self.target = generate_target(self.rng)
         self.board = Board(self.target)
         self.player = Player()
         self.elapsed = 0.0
-        self.state = "PLAY"                       # MENU / RESULT 在 M4~M5 接入
+        self.state = "PLAY"                       # MENU 在 M5 接入
+
+        self.monsters = []
+        self.claims = {}                          # {(r,c): 有几只怪锁着这一格}
+        self.spawn_acc = 0.0
+        self.shifted = False                      # 30s 阶段切换只允许触发一次
+        self.result = None
 
     # ---------- 事件 ----------
     def handle_event(self, e):
@@ -368,35 +455,83 @@ class Game:
         if self.state != "PLAY":
             return
 
-        # 1) 键盘移动必须在鼠标之前，否则拖涂时会感觉角色慢一帧
-        self.player.update(dt, self.input.axis())
+        # 1) 先走格子：移动是离散步进，脚下坐标一帧内就定死
+        self.player.update(dt, self.input.dir4())
 
-        # 2) 鼠标：每帧轮询，不依赖 MOUSEBUTTONDOWN，拖动才连续
-        cell = pos_to_cell(*self.mouse_logical())
-        if cell:
-            lmb, _, rmb = pygame.mouse.get_pressed()
-            if lmb:
-                if self.player.can_reach(cell_to_rect(*cell)):
-                    self.board.paint(*cell)
-            elif rmb:
-                self.board.start_erase(*cell)
+        # 2) 再处理脚下：按住 J（或空格）边走边涂，按住 K 边走边抹
+        #    放在移动之后，所以走进新格子的那一帧它就变黑，不会「走过一格还得补一下」
+        if self.input.down(SC_J) or self.input.down(SC_SPACE):
+            self.board.paint(*self.player.cell)
+        elif self.input.down(SC_K):
+            self.board.start_erase(*self.player.cell)
 
-        # 3) 计时（阶段锁定属 M4，这里只跑表）
+        # 3) 计时
         self.elapsed += dt
 
-        # 4) 先让抹除收敛，再进 M3 的怪物逻辑
+        # 4) 阶段切换：只触发一次，靠布尔守卫（不能用 abs(elapsed-30) < dt）
+        if not self.shifted and self.elapsed >= PHASE1_DURATION:
+            self.shifted = True
+            self.board.outer_open = False         # 外围锁死：已黑保留，未黑不可涂
+            # 1s 的 PHASE SHIFT 遮罩属 M5，这里先靠「外围变暗」做即时反馈
+
+        # 5) 先让抹除收敛，再跑怪物（顺序反了会「吃到空气」）
         self.board.update(dt)
 
-        # 5) 时间到 —— M4 在此切 RESULT，现在只把表停住
+        # 6) 怪物：目标失效会自己改道，吃到就死，闲着超时也死
+        for m in self.monsters[:]:
+            if not m.update(dt, self.board, self.claims, self.center):
+                self.monsters.remove(m)
+
+        # 7) 生成：全程恒定 15/分，用累加器，不用 set_timer
+        self.spawn_acc += dt
+        interval = 60.0 / SPAWN_PER_MINUTE
+        if self.elapsed > SPAWN_FIRST_DELAY and self.spawn_acc >= interval:
+            self.spawn_acc -= interval
+            self.spawn_monster()
+
+        # 8) 时间到 -> 结算
         if self.elapsed >= GAME_DURATION:
             self.elapsed = GAME_DURATION
+            self.finish()
+
+    def spawn_monster(self):
+        """在 30×30 生成环的四条边上等概率取点：先选边再选 t，长边不会被多算。"""
+        side = self.rng.randrange(4)
+        t = self.rng.random() * SPAWN_PX
+        x0, y0 = SPAWN_ORIGIN
+        if side == 0:
+            pos = (x0 + t, y0)
+        elif side == 1:
+            pos = (x0 + SPAWN_PX, y0 + t)
+        elif side == 2:
+            pos = (x0 + t, y0 + SPAWN_PX)
+        else:
+            pos = (x0, y0 + t)
+        speed = MONSTER_SPEED * self.rng.uniform(*MONSTER_SPD_JITTER)
+        self.monsters.append(Monster(pos, speed))
+
+    def finish(self):
+        """结算：只统计 21×21 目标区，外围诱饵不加分也不扣分。"""
+        for m in self.monsters:            # 结算时松开所有占用，claims 必须归零
+            m.claim(self.claims)
+        correct, noise, missing = self.board.stats()
+        total = self.board.target_total or 1
+        cap = round(total * NOISE_LIMIT_PCT)
+        coverage = correct / total
+        won = coverage >= WIN_COVERAGE and noise <= cap
+        if won and coverage >= GRADE_S_COVERAGE and noise <= GRADE_S_NOISE:
+            grade = "S"
+        elif won and noise <= cap * GRADE_A_NOISE_PCT:
+            grade = "A"
+        elif won:
+            grade = "B"
+        else:
+            grade = "F"
+        self.result = {"coverage": coverage, "noise": noise, "cap": cap,
+                       "won": won, "grade": grade}
+        self.state = "RESULT"
 
     # ---------- 绘制 ----------
-    def mouse_logical(self):
-        """窗口坐标 → 逻辑坐标（窗口被缩过的时候必须换算，否则涂不准）。"""
-        mx, my = pygame.mouse.get_pos()
-        return mx / self.scale, my / self.scale
-
     def present(self):
         if self.needs_scale:
             pygame.transform.smoothscale(self.canvas, self.window.get_size(), self.window)
@@ -404,8 +539,11 @@ class Game:
             self.window.blit(self.canvas, (0, 0))
 
     def draw(self):
-        self.draw_world()
-        self.draw_hud()
+        if self.state == "RESULT":
+            self.draw_result()
+        else:
+            self.draw_world()
+            self.draw_hud()
         self.present()
 
     def draw_world(self):
@@ -421,11 +559,14 @@ class Game:
         # 生成环虚线框：提示怪物从这条线外来
         self.draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)))
 
-        # 白底：锁定遮罩属 M4，现在全部按可涂状态画
-        for r in range(GRID_N):
-            for c in range(GRID_N):
-                if self.board.state[r][c] == WHITE:
-                    s.fill(C_CELL_WHITE, cell_to_rect(r, c))
+        # 白底一次铺满整个网格（不用逐格 fill），再给阶段2 的锁定区补暗色。
+        # 锁定格保留网格线，和「涂黑的实心块」在质感上区分开
+        s.fill(C_CELL_WHITE, pygame.Rect(GRID_ORIGIN, (GRID_PX, GRID_PX)))
+        if not self.board.outer_open:
+            for r in range(GRID_N):
+                for c in range(GRID_N):
+                    if self.board.state[r][c] == WHITE and to_target(r, c) is None:
+                        s.fill(C_LOCK, cell_to_rect(r, c))
 
         # 目标提示层：只有「该黑且还白」的格子才叠，强度低到不盖住网格线
         orr, occ = TARGET_OFFSET
@@ -460,16 +601,20 @@ class Game:
         for (r, c) in self.board.flash:
             s.blit(self.flash_surf, (GRID_ORIGIN[0] + c * CELL, GRID_ORIGIN[1] + r * CELL))
 
-        # M3：怪物画在这里
+        # 阶段2 的锁定区已在白底那一遍画成 C_LOCK（保留网格线），这里不用再盖
+
+        # 怪物就是一个红圆；玩家必须画在它之后，否则怪物路过会把玩家盖住
+        for m in self.monsters:
+            mx, my = int(m.pos.x), int(m.pos.y)
+            pygame.draw.circle(s, C_MONSTER, (mx, my), MONSTER_RADIUS)
+            pygame.draw.circle(s, C_CELL_BLACK, (mx, my), MONSTER_RADIUS, 1)
 
         self.draw_player(s)
 
     def draw_player(self, s):
+        # 位置就是格心，光晕半径 14 正好铺满一格，等于顺带给"我站在哪一格"画了框
         px, py = int(self.player.pos.x), int(self.player.pos.y)
         s.blit(self.glow, (px - PLAYER_GLOW_R, py - PLAYER_GLOW_R))
-
-        if PAINT_MODE == "radius":                # 只有切到 radius 才显示射程
-            pygame.draw.circle(s, C_ACCENT, (px, py), PAINT_RADIUS, 1)
 
         body = pygame.Rect(px - PLAYER_BODY_W // 2, py - PLAYER_BODY_H // 2,
                            PLAYER_BODY_W, PLAYER_BODY_H)
@@ -538,14 +683,71 @@ class Game:
         self.txt("PHASE 2 // LOCKED" if phase2 else "PHASE 1 // FREEFORM",
                  (HUD_PAD, WINDOW_H - 62), self.f_main,
                  C_ERASING if phase2 else C_ACCENT)
-        self.txt("[WASD] MOVE   [LMB] PAINT   [RMB] ERASE   [R] RESTART",
+        self.txt("[WASD] MOVE   [J] PAINT   [K] ERASE   [R] RESTART",
                  (WINDOW_W - HUD_PAD, WINDOW_H - 62), self.f_small, C_TEXT, right=True)
+        self.txt("HOLD J WHILE MOVING TO PAINT A TRAIL",
+                 (WINDOW_W - HUD_PAD, WINDOW_H - 38), self.f_small, C_ERASING, right=True)
 
         if self.debug:
             p = self.player.pos
             self.txt("FPS %d  POS %d,%d  TARGETS %d" % (
                 int(round(1.0 / max(self._last_dt, 1e-4))), p.x, p.y, total),
                 (HUD_PAD, 10), self.f_small, C_WARN)
+
+    # ---------- 结算页 ----------
+    def center_txt(self, text, pos, font, color):
+        img = font.render(text, True, color)
+        self.screen.blit(img, img.get_rect(center=pos))
+
+    def draw_thumb(self, x, y, is_target):
+        """21×21 缩略图。左图纯黑白；右图按「对/错/缺」上色：青绿 / 猩红 / 暗灰。"""
+        s = self.screen
+        orr, occ = TARGET_OFFSET
+        for tr in range(TARGET_N):
+            for tc in range(TARGET_N):
+                want = self.target[tr][tc]
+                if is_target:
+                    col = C_CELL_BLACK if want else C_CELL_WHITE
+                else:
+                    got = self.board.state[orr + tr][occ + tc] == BLACK
+                    if want:
+                        col = C_ACCENT if got else C_MISSING
+                    else:
+                        col = C_MONSTER if got else C_CELL_WHITE
+                s.fill(col, (x + tc * THUMB_CELL, y + tr * THUMB_CELL,
+                             THUMB_CELL, THUMB_CELL))
+        pygame.draw.rect(s, C_CELL_LINE,
+                         pygame.Rect(x, y, TARGET_N * THUMB_CELL, TARGET_N * THUMB_CELL), 1)
+
+    def draw_result(self):
+        s = self.screen
+        s.fill(C_BG)                     # 结算页是整屏重画，不清屏会透出上一帧棋盘
+        r = self.result
+        thumb = TARGET_N * THUMB_CELL
+        mid_x = WINDOW_W // 2
+
+        title = "DATA RESTORED" if r["won"] else "DATA CORRUPTED"
+        self.center_txt(title, (mid_x, 150), self.f_mid,
+                        C_ACCENT if r["won"] else C_MONSTER)
+
+        left_x, right_x, top_y = 120, WINDOW_W - 120 - thumb, 250
+        self.draw_thumb(left_x, top_y, True)
+        self.draw_thumb(right_x, top_y, False)
+        self.txt("TARGET", (left_x, top_y - 32), self.f_small, C_ERASING)
+        self.txt("YOURS", (right_x, top_y - 32), self.f_small, C_ERASING)
+
+        cov_col = C_ACCENT if r["coverage"] >= WIN_COVERAGE else C_TEXT
+        n_col = C_WARN if r["noise"] > r["cap"] * 0.8 else C_TEXT
+        self.center_txt("COVERAGE %d%%" % int(r["coverage"] * 100),
+                        (mid_x, 344), self.f_main, cov_col)
+        self.center_txt("NOISE %d / %d" % (r["noise"], r["cap"]),
+                        (mid_x, 380), self.f_main, n_col)
+
+        g_col = C_MONSTER if r["grade"] == "F" else (C_WARN if r["grade"] == "B" else C_ACCENT)
+        self.center_txt("GRADE", (mid_x, 522), self.f_small, C_ERASING)
+        self.center_txt(r["grade"], (mid_x, 592), self.f_big, g_col)
+
+        self.center_txt("R: RETRY      ESC: QUIT", (mid_x, 760), self.f_main, C_TEXT)
 
 # ==== 9. main() 主循环 ====
 
