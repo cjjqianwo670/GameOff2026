@@ -51,6 +51,8 @@ C_TEXT = (232, 236, 240)
 # ==== 规则 ====
 GAME_DURATION = 180.0
 PHASE1_DURATION = 30.0
+PHASE_SHIFT_TIME = 1.0            # 阶段切换遮罩持续时长（纯黑半透明 + 大字）
+MENU_BLINK_HZ = 2.0               # 菜单「PRESS SPACE」闪烁频率
 ERASE_CAST = 0.25
 WIN_COVERAGE = 0.70
 NOISE_LIMIT_PCT = 0.25
@@ -418,11 +420,16 @@ class Game:
         self.glow = pygame.Surface((PLAYER_GLOW_R * 2, PLAYER_GLOW_R * 2), pygame.SRCALPHA)
         pygame.draw.circle(self.glow, (*C_PLAYER, 46), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
 
+        # 阶段切换用的整屏遮罩，只建一次，每帧重填内容
+        self.overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        self.menu_t = 0.0
+
         # 被啃格的红闪覆盖层（半透明），M3 复用，同样只做一次
         self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.flash_surf.fill((*C_MONSTER, 120))
 
         self.new_round()
+        self.state = "MENU"                       # 开局先落在菜单（此时棋盘已备好一局）
 
     # ---------- 开局 ----------
     def new_round(self):
@@ -437,23 +444,45 @@ class Game:
         self.claims = {}                          # {(r,c): 有几只怪锁着这一格}
         self.spawn_acc = 0.0
         self.shifted = False                      # 30s 阶段切换只允许触发一次
+        self.shift_timer = 0.0                    # 遮罩剩余时间
         self.result = None
 
     # ---------- 事件 ----------
     def handle_event(self, e):
-        if e.type == pygame.KEYDOWN:              # 与 input.handle_event 互不排斥
-            if e.scancode == SC_R:
-                self.new_round()
-            elif e.scancode == SC_ESC:
-                self.running = False              # M5 改成回 MENU
-            elif e.scancode == SC_F1:
-                self.debug = not self.debug
+        if e.type != pygame.KEYDOWN:              # 与 input.handle_event 互不排斥
+            return
+        if e.scancode == SC_ESC:
+            if self.state == "MENU":
+                self.running = False              # 菜单是顶层，这里才真的退出
+            else:
+                self.to_menu()
+        elif e.scancode == SC_SPACE:
+            if self.state == "MENU":
+                self.start_round()
+        elif e.scancode == SC_R:
+            if self.state != "MENU":              # 局中/结算都能直接重开
+                self.start_round()
+        elif e.scancode == SC_F1:
+            self.debug = not self.debug
+
+    def start_round(self):
+        self.new_round()
+        self.input.held.clear()                   # 别让菜单里按着的空格/方向漏进新一局
+
+    def to_menu(self):
+        self.new_round()                          # 重置棋盘，菜单背后不挂着一个半死的局
+        self.state = "MENU"
 
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt                        # 仅供 F1 显示
+        if self.state == "MENU":
+            self.menu_t += dt                     # 只用来闪「PRESS SPACE」
+            return
         if self.state != "PLAY":
             return
+        if self.shift_timer > 0:
+            self.shift_timer -= dt
 
         # 1) 先走格子：移动是离散步进，脚下坐标一帧内就定死
         self.player.update(dt, self.input.dir4())
@@ -472,7 +501,7 @@ class Game:
         if not self.shifted and self.elapsed >= PHASE1_DURATION:
             self.shifted = True
             self.board.outer_open = False         # 外围锁死：已黑保留，未黑不可涂
-            # 1s 的 PHASE SHIFT 遮罩属 M5，这里先靠「外围变暗」做即时反馈
+            self.shift_timer = PHASE_SHIFT_TIME   # 1s 遮罩 + 居中大字，只触发这一次
 
         # 5) 先让抹除收敛，再跑怪物（顺序反了会「吃到空气」）
         self.board.update(dt)
@@ -539,11 +568,14 @@ class Game:
             self.window.blit(self.canvas, (0, 0))
 
     def draw(self):
-        if self.state == "RESULT":
+        if self.state == "MENU":
+            self.draw_menu()
+        elif self.state == "RESULT":
             self.draw_result()
         else:
             self.draw_world()
             self.draw_hud()
+            self.draw_shift_overlay()
         self.present()
 
     def draw_world(self):
@@ -693,6 +725,37 @@ class Game:
             self.txt("FPS %d  POS %d,%d  TARGETS %d" % (
                 int(round(1.0 / max(self._last_dt, 1e-4))), p.x, p.y, total),
                 (HUD_PAD, 10), self.f_small, C_WARN)
+
+    # ---------- 菜单 ----------
+    def draw_menu(self):
+        s = self.screen
+        s.fill(C_BG)
+        for x in range(0, WINDOW_W, CELL):        # 和局内呼应的废墟暗格
+            pygame.draw.line(s, C_BG_GRID, (x, 0), (x, WINDOW_H))
+        for y in range(0, WINDOW_H, CELL):
+            pygame.draw.line(s, C_BG_GRID, (0, y), (WINDOW_W, y))
+
+        mid = WINDOW_W // 2
+        self.center_txt("DATA SHIFT", (mid, 320), self.f_big, C_ACCENT)
+        self.center_txt("RESTORE THE CODE. OUTRUN THE SHIFT.", (mid, 404), self.f_main, C_ERASING)
+        if int(self.menu_t * MENU_BLINK_HZ) % 2 == 0:      # 闪一下，别像静态图
+            self.center_txt("PRESS SPACE TO START", (mid, 540), self.f_mid, C_TEXT)
+        self.center_txt("[WASD] MOVE     [J] PAINT     [K] ERASE", (mid, 660), self.f_main, C_TEXT)
+        self.center_txt("[R] RESTART     [ESC] MENU     [F1] DEBUG", (mid, 700), self.f_main, C_ERASING)
+        self.center_txt("ESC: QUIT", (mid, 900), self.f_small, C_ERASING)
+
+    def draw_shift_overlay(self):
+        """阶段切换的 1 秒遮罩：半透明黑 + 居中大字，随计时淡出。"""
+        if self.shift_timer <= 0:
+            return
+        k = min(1.0, self.shift_timer / PHASE_SHIFT_TIME)   # 1 -> 0
+        a = int(160 * k)                                    # 只让「幕」淡出
+        self.overlay.fill((0, 0, 0, a))
+        img = self.f_big.render("PHASE SHIFT", True, C_TEXT)
+        # 文字始终全亮：棋盘偏白，白字要靠暗幕托着；幕淡到透明时白字本来也看不见，不突兀
+        img.set_alpha(255)
+        self.overlay.blit(img, img.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2)))
+        self.screen.blit(self.overlay, (0, 0))
 
     # ---------- 结算页 ----------
     def center_txt(self, text, pos, font, color):
