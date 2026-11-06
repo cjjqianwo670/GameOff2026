@@ -1,806 +1,588 @@
 # -*- coding: utf-8 -*-
 """
-扫雷 · Minesweeper (pygame 复刻版)
-
-运行：python minesweeper.py
-依赖：pip install pygame
-
-操作：
-    左键 翻开 / 点击已翻开的数字可快速展开
-    右键 插旗
-    中键 在数字上快速展开
-    R    重开      1/2/3 切换难度      ESC 退出
+DATA SHIFT —— Game Off 2026 / SHIFT
+进度：M1（窗口 / 网格 / 涂抹 / WASD / 计时）+ M2（二维码 / 提示层 / 进度条）
+运行：python main.py（只依赖 pygame）
+窗口按桌面自动等比缩小，内部逻辑坐标始终 1000×1000；界面文字全为 ASCII 大写。
 """
 
-import json
-import os
+import math
 import random
 
 import pygame
 
-# ============================================================
-#  基础配置
-# ============================================================
+# ==== 1. 常量与颜色 ====
 
-LEVELS = {
-    "easy":   {"rows": 9,  "cols": 9,  "mines": 10, "label": "初级", "desc": "9 × 9 · 10 雷"},
-    "medium": {"rows": 16, "cols": 16, "mines": 40, "label": "中级", "desc": "16 × 16 · 40 雷"},
-    "hard":   {"rows": 16, "cols": 30, "mines": 99, "label": "高级", "desc": "16 × 30 · 99 雷"},
-}
-LEVEL_ORDER = ["easy", "medium", "hard"]
+# ==== 画面 ====
+WINDOW_W = WINDOW_H = 1000        # 逻辑画布尺寸（所有布局都按它算）
+FPS = 60
+CELL = 28
+GRID_N = 24
+GRID_ORIGIN = (164, 164)          # (1000-672)/2
+TARGET_N = 21
+TARGET_OFFSET = (1, 1)            # 24-21=3 是奇数，只能左/上留 1 格
+SPAWN_N = 30
+SPAWN_ORIGIN = (80, 80)
+SPAWN_PX = SPAWN_N * CELL         # 840
 
-# 配色（和网页版一致）
-BG          = (238, 242, 249)
-BOARD_BG    = (204, 215, 230)
-CELL_FILL   = (205, 219, 236)
-CELL_HOVER  = (228, 238, 251)
-CELL_EDGE   = (166, 187, 210)
-CELL_LIGHT  = (255, 255, 255)
-REVEALED    = (237, 242, 249)
-REVEALED_BD = (224, 232, 242)
-PANEL       = (255, 255, 255)
-PANEL_SHADE = (226, 232, 242)
-PILL_BG     = (241, 245, 251)
-LINE        = (219, 227, 238)
-TEXT        = (31, 41, 55)
-MUTED       = (107, 114, 128)
-ACCENT      = (59, 130, 246)
-ACCENT_DARK = (37, 99, 235)
-RED         = (239, 68, 68)
-FLAG_POLE   = (71, 85, 105)
-MINE_DARK   = (43, 52, 64)
-BOOM_BG     = (255, 217, 214)
-WRONG_BG    = (253, 232, 230)
+# 窗口自适应：高 DPI 屏逻辑分辨率常只有 1400×900 上下，1000×1000 会溢出屏幕，
+# 所以真实窗口按桌面可用空间缩、画面整帧贴进去，逻辑坐标始终是 1000×1000。
+FIT_MARGIN_X, FIT_MARGIN_Y = 80, 120   # 预留左右边距 + 标题栏 + 任务栏
+MIN_WINDOW = 520                        # 再小就看不清了
 
-NUMBER_COLORS = {
-    1: (29, 111, 224),
-    2: (46, 158, 79),
-    3: (224, 69, 58),
-    4: (123, 63, 228),
-    5: (224, 123, 26),
-    6: (15, 154, 168),
-    7: (55, 65, 81),
-    8: (123, 135, 148),
-}
+GRID_PX = GRID_N * CELL           # 672
+TARGET_PX = TARGET_N * CELL       # 588
 
-BEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "minesweeper_best.json")
+# ==== 颜色 ====
+C_BG = (11, 15, 20)               # 窗外废墟底色
+C_BG_GRID = (18, 24, 32)          # 废墟暗格
+C_CELL_WHITE = (247, 247, 249)    # 未涂黑格子
+C_CELL_LINE = (228, 228, 232)     # 格子分隔线
+C_CELL_BLACK = (17, 17, 24)       # 已涂黑
+C_GHOST = (60, 60, 70, 110)       # 目标提示（半透明深灰，SRCALPHA）
+C_ERASING = (150, 150, 160)       # 抹除进行中
+C_LOCK = (30, 36, 45)             # 阶段2 锁定区遮罩
+C_MONSTER = (255, 61, 110)        # 侵蚀体猩红（M3 使用）
+C_PLAYER = (108, 255, 196)        # 玩家（青绿）
+C_ACCENT = (108, 255, 196)        # 进度条
+C_WARN = (255, 176, 32)           # 警示黄
+C_TEXT = (232, 236, 240)
 
+# ==== 规则 ====
+GAME_DURATION = 180.0
+PHASE1_DURATION = 30.0
+ERASE_CAST = 0.25
+WIN_COVERAGE = 0.70
+NOISE_LIMIT_PCT = 0.25
+# 目标黑格占比下限：低于它的一版太稀、太难 70%，重摇（§14 平衡值约 220/441 ≈ 0.50）
+ALPHA_MIN = 0.48
+ALPHA_TRY = 40                    # 重摇次数上限，兜底取最密的一版
 
-# ============================================================
-#  字体
-# ============================================================
-# 注意：这里刻意不使用 pygame.font.SysFont()。
-# 部分 Windows 的字体注册表里存在数值型键名，pygame 的 initsysfonts_win32()
-# 会拿 int 去调 os.path.splitext()，直接抛：
-#     TypeError: expected str, bytes or os.PathLike object, not int
-# 改成按字体文件路径加载，完全绕开系统字体枚举。
+# ==== 玩家 ====
+PLAYER_SPEED = 210.0              # px/s
+PLAYER_ACCEL = 18.0               # 速度平滑系数
+PLAYER_START = (500, 500)
+PAINT_MODE = "global"             # "global" | "radius"
+PAINT_RADIUS = 220
 
-# 中文字体（常规 / 粗体），按优先级排列
-CJK_REG = [
-    r"C:\Windows\Fonts\msyh.ttc",       # 微软雅黑
-    r"C:\Windows\Fonts\msyh.ttf",       # 微软雅黑（Win7）
-    r"C:\Windows\Fonts\Deng.ttf",       # 等线
-    r"C:\Windows\Fonts\simhei.ttf",     # 黑体
-    r"C:\Windows\Fonts\simsun.ttc",     # 宋体
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-]
-CJK_BOLD = [
-    r"C:\Windows\Fonts\msyhbd.ttc",     # 微软雅黑 Bold
-    r"C:\Windows\Fonts\msyhbd.ttf",
-    r"C:\Windows\Fonts\Dengb.ttf",
-    "/System/Library/Fonts/PingFang.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-]
-MONO_REG = [
-    r"C:\Windows\Fonts\consola.ttf",
-    "/System/Library/Fonts/Menlo.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-]
-MONO_BOLD = [
-    r"C:\Windows\Fonts\consolab.ttf",
-]
+PLAYER_BODY_W, PLAYER_BODY_H = 16, 22
+PLAYER_GLOW_R = 14
+CLAMP_PAD = 8                     # 角色可越出网格 8px
 
-_font_cache = {}
+# ==== 怪物（M3 才用，先占位保证常量区完整） ====
+SPAWN_PER_MINUTE = 15
+SPAWN_FIRST_DELAY = 2.0
+MONSTER_SPEED = 62.0
+MONSTER_RADIUS = 9
+MONSTER_IDLE_LIMIT = 12.0
 
+# ==== 输入：scancode 是物理键位，与输入法/CapsLock/Shift 无关 ====
+SC_W, SC_A, SC_S, SC_D = 26, 4, 22, 7
+SC_R, SC_ESC, SC_F1 = 21, 41, 58
 
-def _first_existing(paths):
-    for p in paths:
-        try:
-            if os.path.exists(p):
-                return p
-        except Exception:
-            pass
+# ==== 格子状态 ====
+WHITE, BLACK, ERASING = 0, 1, 2
+
+# ==== 布局：HUD ====
+HUD_PAD = 80
+BAR_W, BAR_H = 320, 10
+
+# ==== 2. 坐标工具函数（全局只用这三个做换算） ====
+
+def cell_to_rect(r, c):
+    return pygame.Rect(GRID_ORIGIN[0] + c * CELL,
+                       GRID_ORIGIN[1] + r * CELL, CELL, CELL)
+
+def pos_to_cell(x, y):
+    """屏幕坐标 → (row, col)；不在主网格内返回 None。"""
+    gx, gy = x - GRID_ORIGIN[0], y - GRID_ORIGIN[1]
+    if gx < 0 or gy < 0:
+        return None
+    c, r = gx // CELL, gy // CELL
+    if r >= GRID_N or c >= GRID_N:
+        return None
+    return int(r), int(c)
+
+def to_target(r, c):
+    """主网格坐标 → 目标区坐标 (tr, tc)；不在目标区内返回 None。"""
+    tr, tc = r - TARGET_OFFSET[0], c - TARGET_OFFSET[1]
+    if 0 <= tr < TARGET_N and 0 <= tc < TARGET_N:
+        return tr, tc
     return None
 
+# ==== 3. generate_target() ====
 
-def _safe_font(path, size):
-    try:
-        return pygame.font.Font(path, size)
-    except Exception:
-        return None
+def generate_target(rng, n=TARGET_N):
+    """程序化生成 21×21「形似 QR」的 0/1 矩阵：保留定位图案/时序线/暗模块，信息区随机。
 
-
-def F(size, bold=False, mono=False):
-    """按文件路径加载字体；实在找不到才退回 pygame 内置字体。"""
-    key = (size, bold, mono)
-    if key in _font_cache:
-        return _font_cache[key]
-
-    fnt = None
-    native_bold = False
-
-    if mono:
-        path = _first_existing(MONO_BOLD if bold else MONO_REG)
-        if path:
-            fnt = _safe_font(path, size)
-            native_bold = bold and (path in MONO_BOLD)
-
-    if fnt is None and bold:
-        path = _first_existing(CJK_BOLD)
-        if path:
-            fnt = _safe_font(path, size)
-            native_bold = fnt is not None
-
-    if fnt is None:
-        path = _first_existing(CJK_REG)
-        if path:
-            fnt = _safe_font(path, size)
-
-    if fnt is None:
-        fnt = pygame.font.Font(None, size)
-        native_bold = False
-
-    if bold and not native_bold:
-        fnt.set_bold(True)
-
-    _font_cache[key] = fnt
-    return fnt
-
-
-def draw_text(surf, s, font, color, pos, anchor="topleft"):
-    img = font.render(s, True, color)
-    rect = img.get_rect(**{anchor: pos})
-    surf.blit(img, rect)
-    return rect
-
-
-def fmt3(n):
-    n = int(n)
-    return "-%02d" % min(999, -n) if n < 0 else "%03d" % min(999, n)
-
-
-def disable_ime():
+    不用真 QR 库（每局都长一样、密度不可控）。密度只做下限保护：信息区按 0.5 填，
+    期望约 50%（≈220 格，对上 §14）；太稀就重摇，重摇有上限并取最密兜底，绝不递归。
     """
-    关闭 SDL 的文本输入，让按键直接送给游戏窗口。
-    Windows 上开着中文输入法时，r / 1 / 2 这些字母数字会被输入法
-    当成拼音抢走，游戏收不到 KEYDOWN，表现就是「按 R 没反应」。
+    floor = n * n * ALPHA_MIN
+    best, best_cnt = None, -1
+    for _ in range(ALPHA_TRY):
+        m = _build_qr_like(rng, n)
+        cnt = sum(map(sum, m))
+        if cnt > best_cnt:
+            best, best_cnt = m, cnt
+        if cnt >= floor:
+            return m
+    return best
+
+def _build_qr_like(rng, n):
+    m = [[0] * n for _ in range(n)]
+    reserved = [[False] * n for _ in range(n)]
+
+    # (1) 三个 7×7 定位图案，连同外围 1 格白色分隔带一起标记 reserved
+    for r0, c0 in ((0, 0), (0, n - 7), (n - 7, 0)):
+        for r in range(r0 - 1, r0 + 8):
+            for c in range(c0 - 1, c0 + 8):
+                if 0 <= r < n and 0 <= c < n:
+                    reserved[r][c] = True
+        for dr in range(7):
+            for dc in range(7):
+                ring = dr in (0, 6) or dc in (0, 6)
+                core = 2 <= dr <= 4 and 2 <= dc <= 4
+                m[r0 + dr][c0 + dc] = 1 if (ring or core) else 0
+
+    # (2) 时序线：第 6 行 / 第 6 列，一黑一白交错
+    for i in range(n):
+        if not reserved[6][i]:
+            m[6][i] = 1 if i % 2 == 0 else 0
+            reserved[6][i] = True
+        if not reserved[i][6]:
+            m[i][6] = 1 if i % 2 == 0 else 0
+            reserved[i][6] = True
+
+    # (3) 暗模块（QR 规范里的固定黑点）
+    m[n - 8][8] = 1
+    reserved[n - 8][8] = True
+
+    # (4) 信息区随机填充
+    for r in range(n):
+        for c in range(n):
+            if not reserved[r][c]:
+                m[r][c] = 1 if rng.random() < 0.50 else 0
+    return m
+
+# ==== 4. class Board ====
+
+class Board:
+    def __init__(self, target):
+        self.target = target                                   # 21×21 的 0/1
+        self.target_total = sum(map(sum, target))              # 目标黑格总数
+        self.state = [[WHITE] * GRID_N for _ in range(GRID_N)]
+        self.erase_t = [[0.0] * GRID_N for _ in range(GRID_N)]
+        self.flash = {}                                        # {(r,c): 剩余秒}，M3 啃食红闪
+        # M1/M2 恒为 True：全网格可涂。M4 只需在 30s 时把它置 False，外围即锁死
+        self.outer_open = True
+
+    # --- 查询 ---
+    def cell_ok_for_paint(self, r, c):
+        if self.outer_open:
+            return True
+        return to_target(r, c) is not None
+
+    def cell_ok_for_erase(self, r, c):
+        # ERASING 期间既不可再涂也不可再抹，避免计时被重置
+        return self.state[r][c] == BLACK and self.cell_ok_for_paint(r, c)
+
+    def stats(self):
+        """只统计 21×21 目标区，外围诱饵不加分也不扣分。"""
+        correct = noise = missing = 0
+        orr, occ = TARGET_OFFSET
+        for tr in range(TARGET_N):
+            for tc in range(TARGET_N):
+                st = self.state[orr + tr][occ + tc]
+                if self.target[tr][tc]:
+                    if st == BLACK:
+                        correct += 1
+                    else:
+                        missing += 1
+                elif st == BLACK:
+                    noise += 1
+        return correct, noise, missing
+
+    # --- 操作 ---
+    def paint(self, r, c):
+        """幂等：拖动时每帧都会调用，已是黑/正在抹除就直接返回。"""
+        if self.state[r][c] != WHITE:
+            return
+        if not self.cell_ok_for_paint(r, c):
+            return
+        self.state[r][c] = BLACK
+
+    def start_erase(self, r, c):
+        if not self.cell_ok_for_erase(r, c):
+            return
+        self.state[r][c] = ERASING
+        self.erase_t[r][c] = ERASE_CAST
+
+    def force_white(self, r, c):
+        """怪物啃食：无条件变白 + 红闪（M3 调用）。"""
+        self.state[r][c] = WHITE
+        self.erase_t[r][c] = 0.0
+        self.flash[(r, c)] = 0.15
+
+    def update(self, dt):
+        for r in range(GRID_N):
+            for c in range(GRID_N):
+                if self.state[r][c] == ERASING:
+                    self.erase_t[r][c] -= dt
+                    if self.erase_t[r][c] <= 0:
+                        self.state[r][c] = WHITE
+        for k in list(self.flash):
+            self.flash[k] -= dt
+            if self.flash[k] <= 0:
+                del self.flash[k]
+
+# ==== 5. class InputState ====
+
+class InputState:
+    """WASD 三层保险：关文本输入 + scancode 事件 + scancode 索引兜底。
+
+    IME 候选窗会吃掉字母键的 KEYDOWN，keycode 又可能被当物理键号查表（幽灵移动），
+    scancode 是 USB-HID 物理键位，与布局/CapsLock/Shift/输入法无关。
     """
-    try:
-        pygame.key.stop_text_input()
-    except Exception:
-        pass
 
-
-# ============================================================
-#  布局计算
-# ============================================================
-
-def compute_layout(key):
-    L = LEVELS[key]
-    rows, cols = L["rows"], L["cols"]
-    gap = 3
-
-    # 自适应格子尺寸：先按最大宽度算，再按屏幕高度收一点
-    cell = min(34, (1040 - (cols - 1) * gap - 16) // cols)
-    try:
-        screen_h = pygame.display.Info().current_h
-    except Exception:
-        screen_h = 900
-    by_h = (screen_h - 300 - (rows - 1) * gap - 16) // rows
-    cell = max(18, min(cell, by_h))
-    cell = min(cell, 34)
-
-    board_w = cols * cell + (cols - 1) * gap + 16
-    board_h = rows * cell + (rows - 1) * gap + 16
-
-    pad = 24
-    win_w = max(board_w + pad * 2, 640)
-
-    title_y = 16
-    sub_y = 62
-    btn_y = 94
-    btn_h = 46
-    panel_y = btn_y + btn_h + 16
-    panel_x = pad
-    panel_w = win_w - pad * 2
-    inner = 14
-    hud_h = 54
-    hud_y = panel_y + inner
-    board_y = hud_y + hud_h + 10
-    board_x = panel_x + (panel_w - board_w) // 2
-    panel_bottom = board_y + board_h + inner
-    win_h = panel_bottom + 52
-
-    # 难度按钮
-    btn_gap = 10
-    bw = (panel_w - btn_gap * 2) // 3
-    level_rects = {}
-    for i, k in enumerate(LEVEL_ORDER):
-        level_rects[k] = pygame.Rect(panel_x + i * (bw + btn_gap), btn_y, bw, btn_h)
-
-    face_size = 46
-    face_rect = pygame.Rect(0, 0, face_size, face_size)
-    face_rect.center = (panel_x + panel_w // 2, hud_y + hud_h // 2)
-
-    # 右上角「重开」按钮（不依赖键盘，鼠标也能重开）
-    restart_rect = pygame.Rect(win_w - pad - 96, title_y + 6, 96, 32)
-
-    return {
-        "win_w": win_w, "win_h": win_h, "cell": cell, "gap": gap,
-        "pad": pad, "title_y": title_y, "sub_y": sub_y,
-        "panel": pygame.Rect(panel_x, panel_y, panel_w, panel_bottom - panel_y),
-        "hud_y": hud_y, "hud_h": hud_h,
-        "board_x": board_x, "board_y": board_y,
-        "board_w": board_w, "board_h": board_h,
-        "panel_x": panel_x, "panel_w": panel_w, "panel_bottom": panel_bottom,
-        "level_rects": level_rects, "face_rect": face_rect,
-        "restart_rect": restart_rect,
-    }
-
-
-# ============================================================
-#  绘制小工具
-# ============================================================
-
-def draw_face(surf, rect, state):
-    """用几何图形画笑脸，避免 emoji 字体缺失。"""
-    pygame.draw.rect(surf, (243, 247, 253), rect, border_radius=14)
-    pygame.draw.rect(surf, LINE, rect, 1, border_radius=14)
-
-    cx, cy = rect.center
-    r = int(rect.width * 0.32)
-    pygame.draw.circle(surf, (255, 206, 84), (cx, cy), r)
-    pygame.draw.circle(surf, (222, 168, 40), (cx, cy), r, 1)
-
-    eye = (60, 50, 40)
-    if state == "dead":
-        k = max(2, r // 4)
-        for dx in (-1, 1):
-            ex = cx + dx * int(r * 0.42)
-            ey = cy - int(r * 0.20)
-            pygame.draw.line(surf, eye, (ex - k, ey - k), (ex + k, ey + k), 2)
-            pygame.draw.line(surf, eye, (ex - k, ey + k), (ex + k, ey - k), 2)
-        pygame.draw.line(surf, eye, (cx - int(r * 0.38), cy + int(r * 0.5)),
-                         (cx + int(r * 0.38), cy + int(r * 0.5)), 2)
-    elif state == "cool":
-        pygame.draw.rect(surf, (45, 55, 70),
-                         (cx - int(r * 0.72), cy - int(r * 0.34),
-                          int(r * 1.44), int(r * 0.40)), border_radius=2)
-        mouth_smile(surf, cx, cy + int(r * 0.16), int(r * 0.5), eye, 2)
-    elif state == "worried":
-        for dx in (-1, 1):
-            pygame.draw.circle(surf, eye, (cx + dx * int(r * 0.38), cy - int(r * 0.22)), 2)
-        pygame.draw.ellipse(surf, eye,
-                            (cx - int(r * 0.22), cy + int(r * 0.16),
-                             int(r * 0.44), int(r * 0.52)))
-    else:  # smile
-        for dx in (-1, 1):
-            pygame.draw.circle(surf, eye, (cx + dx * int(r * 0.38), cy - int(r * 0.26)), 2)
-        mouth_smile(surf, cx, cy + int(r * 0.18), int(r * 0.5), eye, 2)
-
-
-def mouth_smile(surf, cx, cy, w, color, thick=2):
-    pts = []
-    for dx in range(-w, w + 1):
-        y = cy - (dx * dx) // max(1, int(w * 2.0))
-        pts.append((cx + dx, y))
-    if len(pts) > 1:
-        pygame.draw.lines(surf, color, False, pts, thick)
-
-
-def draw_flag(surf, rect, cell):
-    pole_x = rect.centerx - int(cell * 0.09)
-    top = rect.top + int(cell * 0.22)
-    bottom = rect.bottom - int(cell * 0.22)
-    w = max(2, cell // 14)
-    pygame.draw.line(surf, FLAG_POLE, (pole_x, top), (pole_x, bottom), w)
-    pygame.draw.line(surf, FLAG_POLE, (pole_x - int(cell * 0.17), bottom),
-                     (pole_x + int(cell * 0.08), bottom), w)
-    pygame.draw.polygon(surf, RED, [
-        (pole_x + 1, top),
-        (pole_x + int(cell * 0.30), top + int(cell * 0.14)),
-        (pole_x + 1, top + int(cell * 0.29)),
-    ])
-
-
-def draw_mine(surf, rect, cell):
-    cx, cy = rect.center
-    R = max(3, int(cell * 0.25))
-    lw = max(2, cell // 14)
-    dirs = [(1, 0), (-1, 0), (0, 1), (0, -1), (0.72, 0.72), (-0.72, 0.72), (0.72, -0.72), (-0.72, -0.72)]
-    for dx, dy in dirs:
-        p1 = (int(cx + dx * R * 0.95), int(cy + dy * R * 0.95))
-        p2 = (int(cx + dx * R * 1.8), int(cy + dy * R * 1.8))
-        pygame.draw.line(surf, MINE_DARK, p1, p2, lw)
-    pygame.draw.circle(surf, MINE_DARK, (cx, cy), R)
-    hl = max(1, R // 3)
-    pygame.draw.circle(surf, (232, 238, 246), (cx - R // 3, cy - R // 3), hl)
-
-
-def draw_cross(surf, rect, color, thick=2):
-    pad = max(3, int(rect.w * 0.28))
-    pygame.draw.line(surf, color, (rect.x + pad, rect.y + pad),
-                     (rect.right - pad, rect.bottom - pad), thick)
-    pygame.draw.line(surf, color, (rect.x + pad, rect.bottom - pad),
-                     (rect.right - pad, rect.y + pad), thick)
-
-
-# ============================================================
-#  游戏
-# ============================================================
-
-class Game:
-    def __init__(self, level="easy"):
-        self.best = self.load_best()
-        self.screen = None
-        self.key = level
-        self.set_level(level)
-
-    # ---------- 存档 ----------
-    def load_best(self):
+    def __init__(self):
         try:
-            with open(BEST_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def save_best(self):
-        try:
-            with open(BEST_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.best, f)
+            pygame.key.stop_text_input()   # 本游戏不需要打字，让 IME 退化为英文直通
         except Exception:
             pass
+        self.held = set()                  # 存 scancode
 
-    # ---------- 关卡 / 初始化 ----------
-    def set_level(self, key):
-        self.key = key
-        L = LEVELS[key]
-        self.rows, self.cols, self.mines = L["rows"], L["cols"], L["mines"]
-        self.layout = compute_layout(key)
-        self.screen = pygame.display.set_mode((self.layout["win_w"], self.layout["win_h"]))
-        pygame.display.set_caption("扫雷 · Minesweeper")
-        disable_ime()   # 重建窗口后输入法可能被重新打开，这里再关一次
+    def handle_event(self, e):
+        if e.type == pygame.KEYDOWN:
+            self.held.add(e.scancode)
+        elif e.type == pygame.KEYUP:
+            self.held.discard(e.scancode)
+        elif e.type == pygame.WINDOWFOCUSLOST:
+            self.held.clear()              # 防 Alt+Tab 后按键卡死
 
-        cell = self.layout["cell"]
-        self.num_font = F(max(11, int(cell * 0.58)), True)
-        self.num_surfs = {
-            n: self.num_font.render(str(n), True, c) for n, c in NUMBER_COLORS.items()
-        }
-        self.reset()
+    def axis(self):
+        v = pygame.Vector2(0, 0)
+        p = pygame.key.get_pressed()
+        if SC_W in self.held or p[SC_W]:
+            v.y -= 1
+        if SC_S in self.held or p[SC_S]:
+            v.y += 1
+        if SC_A in self.held or p[SC_A]:
+            v.x -= 1
+        if SC_D in self.held or p[SC_D]:
+            v.x += 1
+        if v.length_squared() > 0:
+            v.normalize_ip()               # 斜向不加速
+        return v
 
-    def reset(self):
-        rows, cols = self.rows, self.cols
-        self.mine = [[False] * cols for _ in range(rows)]
-        self.adj = [[0] * cols for _ in range(rows)]
-        self.revealed = [[False] * cols for _ in range(rows)]
-        self.flagged = [[False] * cols for _ in range(rows)]
+# ==== 6. class Player ====
 
-        self.started = False
-        self.over = False
-        self.won = False
-        self.revealed_count = 0
-        self.flag_count = 0
-        self.elapsed = 0
-        self.t0 = None
-        self.boom_cell = None
-        self.new_record = False
-        self.again_rect = None
+class Player:
+    def __init__(self):
+        self.pos = pygame.Vector2(PLAYER_START)
+        self.vel = pygame.Vector2(0, 0)
+        self.facing = 1                    # 0上 1下 2左 3右
 
-    # ---------- 布雷 ----------
-    def plant(self, sr, sc):
-        rows, cols = self.rows, self.cols
-        banned = set()
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                r, c = sr + dr, sc + dc
-                if 0 <= r < rows and 0 <= c < cols:
-                    banned.add((r, c))
+    def update(self, dt, axis):
+        target = axis * PLAYER_SPEED
+        # 指数收敛：约 0.06s 到位，松手即停，不做滑冰感
+        self.vel += (target - self.vel) * (1.0 - math.exp(-PLAYER_ACCEL * dt))
+        self.pos += self.vel * dt
 
-        pool = [(r, c) for r in range(rows) for c in range(cols) if (r, c) not in banned]
-        random.shuffle(pool)
-        for r, c in pool[:min(self.mines, len(pool))]:
-            self.mine[r][c] = True
+        pad = CLAMP_PAD
+        minx = GRID_ORIGIN[0] - pad
+        maxx = GRID_ORIGIN[0] + GRID_PX + pad
+        miny = GRID_ORIGIN[1] - pad
+        maxy = GRID_ORIGIN[1] + GRID_PX + pad
+        self.pos.x = min(max(self.pos.x, minx), maxx)
+        self.pos.y = min(max(self.pos.y, miny), maxy)
 
-        for r in range(rows):
-            for c in range(cols):
-                if self.mine[r][c]:
-                    for nr, nc in self.neighbors(r, c):
-                        self.adj[nr][nc] += 1
+        if axis.x or axis.y:
+            if abs(axis.x) >= abs(axis.y):
+                self.facing = 3 if axis.x > 0 else 2
+            else:
+                self.facing = 1 if axis.y > 0 else 0
 
-    def neighbors(self, r, c):
-        out = []
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                if dr == 0 and dc == 0:
-                    continue
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                    out.append((nr, nc))
-        return out
+    def can_reach(self, rect):
+        if PAINT_MODE == "global":
+            return True
+        return (self.pos - pygame.Vector2(rect.center)).length() <= PAINT_RADIUS
 
-    # ---------- 时间 ----------
-    def freeze_time(self):
-        if self.t0 is not None:
-            self.elapsed = min(999, (pygame.time.get_ticks() - self.t0) // 1000)
+# ==== 7. class Monster（M3：生成环取点 / 最近黑格选目标 / 走到就吃 / 吃完自删） ====
 
-    def tick_time(self):
-        if self.started and not self.over and self.t0 is not None:
-            self.elapsed = min(999, (pygame.time.get_ticks() - self.t0) // 1000)
+# ==== 8. class Game ====
 
-    # ---------- 操作 ----------
-    def toggle_flag(self, r, c):
-        if self.over or self.revealed[r][c]:
-            return
-        self.flagged[r][c] = not self.flagged[r][c]
-        self.flag_count += 1 if self.flagged[r][c] else -1
+class Game:
+    def __init__(self, window):
+        self.window = window
+        # 绘制都打到逻辑画布，最后一次性缩放进窗口，布局常量与判定逻辑都不用改
+        self.canvas = pygame.Surface((WINDOW_W, WINDOW_H))
+        self.screen = self.canvas
+        self.scale = window.get_width() / float(WINDOW_W)
+        self.needs_scale = window.get_width() != WINDOW_W
+        self.input = InputState()
+        self.running = True
+        self.debug = False
+        self._last_dt = 1.0 / FPS              # 给 F1 调试显示用
 
-    def flood(self, r, c):
-        stack = [(r, c)]
-        while stack:
-            cr, cc = stack.pop()
-            if self.revealed[cr][cc] or self.flagged[cr][cc]:
-                continue
-            self.revealed[cr][cc] = True
-            self.revealed_count += 1
-            if self.adj[cr][cc] == 0:
-                for nr, nc in self.neighbors(cr, cc):
-                    if not self.revealed[nr][nc] and not self.flagged[nr][nc]:
-                        stack.append((nr, nc))
+        # 字体只在初始化时创建一次，绝不在 draw 里新建
+        self.f_main = pygame.font.Font(None, 28)
+        self.f_small = pygame.font.Font(None, 22)
 
-    def left_click(self, r, c):
-        if self.over or self.flagged[r][c]:
-            return
-        if not self.started:
-            self.started = True
-            self.t0 = pygame.time.get_ticks()
-            self.plant(r, c)
-        if self.revealed[r][c]:
-            self.chord(r, c)
-            return
-        if self.mine[r][c]:
-            self.boom(r, c)
-            return
-        self.flood(r, c)
-        self.check_win()
+        # 28×28 的半透明提示块反复复用（每帧新建 400 个 Surface 会掉帧）
+        self.ghost = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.ghost.fill(C_GHOST)
 
-    def chord(self, r, c):
-        if self.over or not self.revealed[r][c] or self.adj[r][c] == 0:
-            return
-        nb = self.neighbors(r, c)
-        flags = sum(1 for nr, nc in nb if self.flagged[nr][nc])
-        if flags != self.adj[r][c]:
-            return
-        boom = None
-        for nr, nc in nb:
-            if self.flagged[nr][nc] or self.revealed[nr][nc]:
-                continue
-            if self.mine[nr][nc]:
-                boom = (nr, nc)
-                break
-            self.flood(nr, nc)
-        if boom:
-            self.boom(*boom)
-        else:
-            self.check_win()
+        # 玩家脚下光晕，同样只做一次
+        self.glow = pygame.Surface((PLAYER_GLOW_R * 2, PLAYER_GLOW_R * 2), pygame.SRCALPHA)
+        pygame.draw.circle(self.glow, (*C_PLAYER, 46), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
 
-    def boom(self, r, c):
-        if self.over:
-            return
-        self.over = True
-        self.won = False
-        self.boom_cell = (r, c)
-        self.freeze_time()
-        for rr in range(self.rows):
-            for cc in range(self.cols):
-                if self.mine[rr][cc] and not self.flagged[rr][cc]:
-                    self.revealed[rr][cc] = True
+        # 被啃格的红闪覆盖层（半透明），M3 复用，同样只做一次
+        self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.flash_surf.fill((*C_MONSTER, 120))
 
-    def check_win(self):
-        if self.over:
-            return
-        if self.revealed_count != self.rows * self.cols - self.mines:
-            return
-        self.over = True
-        self.won = True
-        self.freeze_time()
-        for rr in range(self.rows):
-            for cc in range(self.cols):
-                if self.mine[rr][cc] and not self.flagged[rr][cc]:
-                    self.flagged[rr][cc] = True
-                    self.flag_count += 1
-        old = self.best.get(self.key)
-        self.new_record = (old is None) or (self.elapsed < old)
-        if self.new_record:
-            self.best[self.key] = self.elapsed
-            self.save_best()
+        self.new_round()
 
-    # ---------- 坐标换算 ----------
-    def cell_at(self, pos):
-        lay = self.layout
-        cell, gap = lay["cell"], lay["gap"]
-        bx = lay["board_x"] + 8
-        by = lay["board_y"] + 8
-        x, y = pos
-        if x < bx or y < by:
-            return None
-        c = (x - bx) // (cell + gap)
-        r = (y - by) // (cell + gap)
-        if not (0 <= r < self.rows and 0 <= c < self.cols):
-            return None
-        # 落在间隙里就不算
-        if (x - bx) - c * (cell + gap) >= cell:
-            return None
-        if (y - by) - r * (cell + gap) >= cell:
-            return None
-        return int(r), int(c)
-
-    def cell_rect(self, r, c):
-        lay = self.layout
-        cell, gap = lay["cell"], lay["gap"]
-        x = lay["board_x"] + 8 + c * (cell + gap)
-        y = lay["board_y"] + 8 + r * (cell + gap)
-        return pygame.Rect(x, y, cell, cell)
+    # ---------- 开局 ----------
+    def new_round(self):
+        rng = random.Random()                     # 不固定种子：R 重开必出新码
+        self.target = generate_target(rng)
+        self.board = Board(self.target)
+        self.player = Player()
+        self.elapsed = 0.0
+        self.state = "PLAY"                       # MENU / RESULT 在 M4~M5 接入
 
     # ---------- 事件 ----------
-    def handle_mouse_down(self, pos, button):
-        lay = self.layout
+    def handle_event(self, e):
+        if e.type == pygame.KEYDOWN:              # 与 input.handle_event 互不排斥
+            if e.scancode == SC_R:
+                self.new_round()
+            elif e.scancode == SC_ESC:
+                self.running = False              # M5 改成回 MENU
+            elif e.scancode == SC_F1:
+                self.debug = not self.debug
 
-        if button == 1:
-            for k, rect in lay["level_rects"].items():
-                if rect.collidepoint(pos):
-                    if k != self.key:
-                        self.set_level(k)
-                    return
-            if lay["face_rect"].collidepoint(pos):
-                self.reset()
-                return
-            if lay["restart_rect"].collidepoint(pos):
-                self.reset()
-                return
-            again = getattr(self, "again_rect", None)
-            if self.over and again is not None and again.collidepoint(pos):
-                self.reset()
-                return
-
-        rc = self.cell_at(pos)
-        if rc is None:
+    # ---------- 更新 ----------
+    def update(self, dt):
+        self._last_dt = dt                        # 仅供 F1 显示
+        if self.state != "PLAY":
             return
-        r, c = rc
-        if button == 1:
-            self.left_click(r, c)
-        elif button == 3:
-            self.toggle_flag(r, c)
-        elif button == 2:
-            self.chord(r, c)
 
-    def face_state(self):
-        if self.over:
-            return "cool" if self.won else "dead"
-        return "smile"
+        # 1) 键盘移动必须在鼠标之前，否则拖涂时会感觉角色慢一帧
+        self.player.update(dt, self.input.axis())
+
+        # 2) 鼠标：每帧轮询，不依赖 MOUSEBUTTONDOWN，拖动才连续
+        cell = pos_to_cell(*self.mouse_logical())
+        if cell:
+            lmb, _, rmb = pygame.mouse.get_pressed()
+            if lmb:
+                if self.player.can_reach(cell_to_rect(*cell)):
+                    self.board.paint(*cell)
+            elif rmb:
+                self.board.start_erase(*cell)
+
+        # 3) 计时（阶段锁定属 M4，这里只跑表）
+        self.elapsed += dt
+
+        # 4) 先让抹除收敛，再进 M3 的怪物逻辑
+        self.board.update(dt)
+
+        # 5) 时间到 —— M4 在此切 RESULT，现在只把表停住
+        if self.elapsed >= GAME_DURATION:
+            self.elapsed = GAME_DURATION
 
     # ---------- 绘制 ----------
+    def mouse_logical(self):
+        """窗口坐标 → 逻辑坐标（窗口被缩过的时候必须换算，否则涂不准）。"""
+        mx, my = pygame.mouse.get_pos()
+        return mx / self.scale, my / self.scale
+
+    def present(self):
+        if self.needs_scale:
+            pygame.transform.smoothscale(self.canvas, self.window.get_size(), self.window)
+        else:
+            self.window.blit(self.canvas, (0, 0))
+
     def draw(self):
+        self.draw_world()
+        self.draw_hud()
+        self.present()
+
+    def draw_world(self):
         s = self.screen
-        lay = self.layout
-        s.fill(BG)
-        mouse = pygame.mouse.get_pos()
+        s.fill(C_BG)
 
-        # 顶部标题
-        draw_text(s, "扫雷", F(30, True), ACCENT, (lay["pad"], lay["title_y"]))
-        draw_text(s, "左键翻开 · 右键插旗 · 点已翻开的数字快速展开",
-                  F(13), MUTED, (lay["pad"] + 70, lay["title_y"] + 16))
+        # 废墟暗格：每 28px 一层暗线，主网格盖上去之后只剩网格外的部分可见
+        for x in range(0, WINDOW_W, CELL):
+            pygame.draw.line(s, C_BG_GRID, (x, 0), (x, WINDOW_H))
+        for y in range(0, WINDOW_H, CELL):
+            pygame.draw.line(s, C_BG_GRID, (0, y), (WINDOW_W, y))
 
-        # 右上角「重开」按钮
-        rr = lay["restart_rect"]
-        r_hover = rr.collidepoint(mouse)
-        pygame.draw.rect(s, (238, 245, 255) if r_hover else (255, 255, 255), rr, border_radius=9)
-        pygame.draw.rect(s, (183, 204, 240) if r_hover else LINE, rr, 1, border_radius=9)
-        draw_text(s, "重开  R", F(13, True), ACCENT_DARK, rr.center, "center")
+        # 生成环虚线框：提示怪物从这条线外来
+        self.draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)))
 
-        # 难度按钮
-        for k, rect in lay["level_rects"].items():
-            active = (k == self.key)
-            hover = rect.collidepoint(mouse) and not active
-            bg = (240, 246, 255) if active else ((247, 250, 254) if hover else (255, 255, 255))
-            border = ACCENT if active else ((183, 204, 240) if hover else LINE)
-            pygame.draw.rect(s, bg, rect, border_radius=12)
-            pygame.draw.rect(s, border, rect, 1, border_radius=12)
-            L = LEVELS[k]
-            draw_text(s, L["label"], F(15, True),
-                      ACCENT_DARK if active else TEXT, (rect.x + 14, rect.y + 7))
-            draw_text(s, L["desc"], F(11), (74, 118, 196) if active else MUTED,
-                      (rect.x + 14, rect.y + 27))
+        # 白底：锁定遮罩属 M4，现在全部按可涂状态画
+        for r in range(GRID_N):
+            for c in range(GRID_N):
+                if self.board.state[r][c] == WHITE:
+                    s.fill(C_CELL_WHITE, cell_to_rect(r, c))
 
-        # 面板阴影 + 面板
-        panel = lay["panel"]
-        pygame.draw.rect(s, PANEL_SHADE, panel.move(0, 4), border_radius=18)
-        pygame.draw.rect(s, PANEL, panel, border_radius=18)
+        # 目标提示层：只有「该黑且还白」的格子才叠，强度低到不盖住网格线
+        orr, occ = TARGET_OFFSET
+        for tr in range(TARGET_N):
+            row = self.target[tr]
+            for tc in range(TARGET_N):
+                if row[tc] and self.board.state[orr + tr][occ + tc] == WHITE:
+                    s.blit(self.ghost, (GRID_ORIGIN[0] + (occ + tc) * CELL,
+                                        GRID_ORIGIN[1] + (orr + tr) * CELL))
 
-        # HUD：剩余雷数
-        pill_h = 34
-        mine_pill = pygame.Rect(lay["panel_x"] + 14, lay["hud_y"] + (lay["hud_h"] - pill_h) // 2, 92, pill_h)
-        draw_text(s, "剩余雷数", F(11), MUTED, (mine_pill.x, mine_pill.y - 17))
-        pygame.draw.rect(s, PILL_BG, mine_pill, border_radius=8)
-        pygame.draw.rect(s, LINE, mine_pill, 1, border_radius=8)
-        draw_text(s, fmt3(self.mines - self.flag_count), F(20, True, mono=True),
-                  TEXT, mine_pill.center, "center")
+        # 网格线：整片画线比每格描边便宜，且不会被提示块吃掉
+        for i in range(GRID_N + 1):
+            x = GRID_ORIGIN[0] + i * CELL
+            y = GRID_ORIGIN[1] + i * CELL
+            pygame.draw.line(s, C_CELL_LINE, (x, GRID_ORIGIN[1]), (x, GRID_ORIGIN[1] + GRID_PX))
+            pygame.draw.line(s, C_CELL_LINE, (GRID_ORIGIN[0], y), (GRID_ORIGIN[0] + GRID_PX, y))
 
-        # HUD：计时
-        time_pill = pygame.Rect(lay["panel_x"] + lay["panel_w"] - 14 - 92,
-                                lay["hud_y"] + (lay["hud_h"] - pill_h) // 2, 92, pill_h)
-        draw_text(s, "用时", F(11), MUTED, (time_pill.right, time_pill.y - 17), "topright")
-        pygame.draw.rect(s, PILL_BG, time_pill, border_radius=8)
-        pygame.draw.rect(s, LINE, time_pill, 1, border_radius=8)
-        draw_text(s, fmt3(self.elapsed), F(20, True, mono=True),
-                  TEXT, time_pill.center, "center")
+        # 已涂黑 / 抹除中 / 被啃红闪
+        for r in range(GRID_N):
+            for c in range(GRID_N):
+                st = self.board.state[r][c]
+                if st == BLACK:
+                    s.fill(C_CELL_BLACK, cell_to_rect(r, c))
+                elif st == ERASING:
+                    rect = cell_to_rect(r, c)
+                    s.fill(C_ERASING, rect)
+                    # 抹除灰与提示灰明度只差 15，靠颜色分不清，让中心白块从 0 撑到满格
+                    k = 1.0 - self.board.erase_t[r][c] / ERASE_CAST
+                    inset = int(CELL * 0.5 * (1.0 - k))
+                    if inset > 0:
+                        s.fill(C_CELL_WHITE, rect.inflate(-2 * inset, -2 * inset))
+        for (r, c) in self.board.flash:
+            s.blit(self.flash_surf, (GRID_ORIGIN[0] + c * CELL, GRID_ORIGIN[1] + r * CELL))
 
-        # HUD：笑脸
-        draw_face(s, lay["face_rect"], self.face_state())
+        # M3：怪物画在这里
 
-        # 棋盘底板
-        board_rect = pygame.Rect(lay["board_x"], lay["board_y"], lay["board_w"], lay["board_h"])
-        pygame.draw.rect(s, BOARD_BG, board_rect, border_radius=12)
+        self.draw_player(s)
 
-        hover_rc = None if self.over else self.cell_at(mouse)
-        cell = lay["cell"]
+    def draw_player(self, s):
+        px, py = int(self.player.pos.x), int(self.player.pos.y)
+        s.blit(self.glow, (px - PLAYER_GLOW_R, py - PLAYER_GLOW_R))
 
-        for r in range(self.rows):
-            for c in range(self.cols):
-                rect = self.cell_rect(r, c)
-                is_boom = (self.boom_cell == (r, c))
+        if PAINT_MODE == "radius":                # 只有切到 radius 才显示射程
+            pygame.draw.circle(s, C_ACCENT, (px, py), PAINT_RADIUS, 1)
 
-                if self.revealed[r][c]:
-                    bg = BOOM_BG if is_boom else REVEALED
-                    pygame.draw.rect(s, bg, rect, border_radius=3)
-                    pygame.draw.rect(s, (239, 68, 68) if is_boom else REVEALED_BD,
-                                     rect, 1 if not is_boom else 2, border_radius=3)
-                    if self.mine[r][c]:
-                        draw_mine(s, rect, cell)
-                    elif self.adj[r][c] > 0:
-                        surf = self.num_surfs[self.adj[r][c]]
-                        s.blit(surf, surf.get_rect(center=rect.center))
-                    continue
+        body = pygame.Rect(px - PLAYER_BODY_W // 2, py - PLAYER_BODY_H // 2,
+                           PLAYER_BODY_W, PLAYER_BODY_H)
+        pygame.draw.rect(s, C_PLAYER, body, border_radius=5)
 
-                # 未翻开
-                pygame.draw.rect(s, CELL_EDGE, rect, border_radius=4)
-                inner = rect.inflate(-2, -2)
-                body = CELL_HOVER if hover_rc == (r, c) else CELL_FILL
-                pygame.draw.rect(s, body, inner, border_radius=3)
-                pygame.draw.line(s, CELL_LIGHT, (inner.x + 1, inner.y), (inner.right - 2, inner.y))
+        # 4×4 的「眼」按朝向偏移，让角色在静止时也有方向感
+        ex, ey = px - 2, py - 2
+        if self.player.facing == 0:
+            ey = body.top + 4
+        elif self.player.facing == 1:
+            ey = body.bottom - 8
+        elif self.player.facing == 2:
+            ex = body.left + 3
+        else:
+            ex = body.right - 7
+        s.fill(C_CELL_BLACK, pygame.Rect(ex, ey, 4, 4))
 
-                if self.flagged[r][c]:
-                    if self.over and not self.won and not self.mine[r][c]:
-                        pygame.draw.rect(s, WRONG_BG, inner, border_radius=3)
-                        draw_cross(s, rect, RED, max(2, cell // 12))
-                    else:
-                        draw_flag(s, rect, cell)
+    def draw_dashed_rect(self, s, rect, dash=12, color=C_CELL_LINE):
+        for x in range(rect.left, rect.right, dash * 2):
+            x2 = min(x + dash, rect.right)
+            pygame.draw.line(s, color, (x, rect.top), (x2, rect.top))
+            pygame.draw.line(s, color, (x, rect.bottom), (x2, rect.bottom))
+        for y in range(rect.top, rect.bottom, dash * 2):
+            y2 = min(y + dash, rect.bottom)
+            pygame.draw.line(s, color, (rect.left, y), (rect.left, y2))
+            pygame.draw.line(s, color, (rect.right, y), (rect.right, y2))
 
-        # 结算浮层
-        if self.over:
-            self.draw_overlay(board_rect)
+    # ---------- HUD ----------
+    def txt(self, text, pos, font, color, right=False):
+        """right=True 时 pos 是右上角，用来把文字贴住右侧 HUD 边距。"""
+        img = font.render(text, True, color)
+        self.screen.blit(img, img.get_rect(topright=pos) if right else img.get_rect(topleft=pos))
 
-        # 底部
-        best = self.best.get(self.key)
-        best_txt = ("最佳成绩：%d 秒" % best) if best is not None else "最佳成绩：—"
-        draw_text(s, best_txt, F(13), MUTED,
-                  (lay["pad"], lay["panel_bottom"] + 18))
-        draw_text(s, "R 重开 · 1/2/3 切换难度 · ESC 退出", F(13), MUTED,
-                  (lay["win_w"] - lay["pad"], lay["panel_bottom"] + 18), "topright")
-
-    def draw_overlay(self, board_rect):
+    def draw_hud(self):
         s = self.screen
-        ov = pygame.Surface((board_rect.w, board_rect.h), pygame.SRCALPHA)
-        ov.fill((255, 255, 255, 216))
-        # 用圆角遮罩把浮层四角切圆，避免盖住底板圆角
-        mask = pygame.Surface((board_rect.w, board_rect.h), pygame.SRCALPHA)
-        pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(), border_radius=12)
-        ov.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        s.blit(ov, board_rect.topleft)
+        correct, noise, _missing = self.board.stats()
+        total = self.board.target_total or 1     # 百分比一律除 target_total，不写死 441
+        coverage = correct / total
+        noise_cap = round(total * NOISE_LIMIT_PCT)
 
-        cx = board_rect.centerx
-        cy = board_rect.centery
+        top_y, mid_y = 38, 46
 
-        if self.won:
-            title = "新纪录！" if self.new_record else "通关！"
-            sub = "%s · 用时 %d 秒" % (LEVELS[self.key]["desc"], self.elapsed)
-            color = (37, 99, 235)
-        else:
-            title = "踩雷了"
-            sub = "坚持了 %d 秒 · 再试一次吧" % self.elapsed
-            color = (220, 38, 38)
+        # 计时：剩余 ≤30s 转警示黄
+        remain = max(0.0, GAME_DURATION - self.elapsed)
+        t_col = C_WARN if remain <= 30.0 else C_TEXT
+        self.txt("%02d:%02d" % (int(remain) // 60, int(remain) % 60), (HUD_PAD, top_y),
+                 self.f_main, t_col)
 
-        if board_rect.h < 300:      # 极窄屏紧凑布局
-            face_size, dy_title, dy_sub, dy_btn = 44, -6, 20, 52
-        else:
-            face_size, dy_title, dy_sub, dy_btn = 68, 4, 38, 92
+        # 进度条 + 70% 胜利线（唯一的目标锚点）
+        bar = pygame.Rect(210, mid_y, BAR_W, BAR_H)
+        s.fill(C_LOCK, bar)
+        s.fill(C_ACCENT, pygame.Rect(bar.x, bar.y, int(BAR_W * min(coverage, 1.0)), bar.h))
+        win_x = bar.x + int(BAR_W * WIN_COVERAGE)
+        pygame.draw.line(s, C_TEXT, (win_x, bar.y - 4), (win_x, bar.y + BAR_H + 4), 2)
 
-        face_rect = pygame.Rect(0, 0, face_size, face_size)
-        face_rect.center = (cx, cy - 62 if face_size > 50 else cy - 42)
-        draw_face(s, face_rect, self.face_state())
+        pct_col = C_ACCENT if coverage >= WIN_COVERAGE else C_TEXT
+        self.txt("%d%%" % int(coverage * 100), (bar.right + 20, top_y), self.f_main, pct_col)
 
-        draw_text(s, title, F(24 if face_size > 50 else 20, True), color,
-                  (cx, cy + dy_title), "center")
-        draw_text(s, sub, F(13 if face_size > 50 else 11), MUTED,
-                  (cx, cy + dy_sub), "center")
+        # 噪声：超过上限 80% 变黄，给玩家「快废了」的预警
+        n_col = C_WARN if noise > noise_cap * 0.8 else C_TEXT
+        self.txt("NOISE %d/%d" % (noise, noise_cap), (WINDOW_W - HUD_PAD, top_y),
+                 self.f_main, n_col, right=True)
 
-        # 「再来一局」按钮（鼠标可直接点）
-        again = pygame.Rect(0, 0, 128, 40)
-        again.center = (cx, cy + dy_btn)
-        self.again_rect = again
-        a_hover = again.collidepoint(pygame.mouse.get_pos())
-        pygame.draw.rect(s, (14, 165, 233) if a_hover else ACCENT, again, border_radius=11)
-        draw_text(s, "再来一局", F(14, True), (255, 255, 255), again.center, "center")
-        if face_size > 50:
-            draw_text(s, "或按 R / 点笑脸", F(11), (170, 176, 188),
-                      (cx, cy + dy_btn + 34), "center")
+        # 底部：阶段标签跟 board.outer_open 走（M4 翻掉开关，文案自动变）+ 操作提示
+        phase2 = not self.board.outer_open
+        self.txt("PHASE 2 // LOCKED" if phase2 else "PHASE 1 // FREEFORM",
+                 (HUD_PAD, WINDOW_H - 62), self.f_main,
+                 C_ERASING if phase2 else C_ACCENT)
+        self.txt("[WASD] MOVE   [LMB] PAINT   [RMB] ERASE   [R] RESTART",
+                 (WINDOW_W - HUD_PAD, WINDOW_H - 62), self.f_small, C_TEXT, right=True)
 
+        if self.debug:
+            p = self.player.pos
+            self.txt("FPS %d  POS %d,%d  TARGETS %d" % (
+                int(round(1.0 / max(self._last_dt, 1e-4))), p.x, p.y, total),
+                (HUD_PAD, 10), self.f_small, C_WARN)
 
-# ============================================================
-#  主循环
-# ============================================================
+# ==== 9. main() 主循环 ====
+
+def create_window():
+    """按桌面可用空间决定窗口尺寸（正方形），保证不被屏幕/任务栏裁掉。
+
+    例：1920×1080 开 125% 缩放，逻辑桌面约 1460×910，可用高度 910-120=790，
+    窗口就是 790×790，画面整体缩到 0.79 贴进去；桌面够大时缩放因子为 1.0。
+    """
+    info = pygame.display.Info()
+    avail = min(info.current_w - FIT_MARGIN_X, info.current_h - FIT_MARGIN_Y)
+    size = max(MIN_WINDOW, min(WINDOW_W, avail))
+    return pygame.display.set_mode((size, size))
 
 def main():
     pygame.init()
-    pygame.display.set_caption("扫雷 · Minesweeper")
-    disable_ime()
-
-    # pygame 2.0.1 之前没有 WINDOWFOCUSGAINED，取不到就跳过
-    FOCUS_GAINED = getattr(pygame, "WINDOWFOCUSGAINED", None)
-
-    game = Game("easy")
+    window = create_window()
+    pygame.display.set_caption("DATA SHIFT")
     clock = pygame.time.Clock()
+    game = Game(window)
 
     running = True
     while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+        dt = min(clock.tick(FPS) / 1000.0, 1 / 30)   # dt 上限防切窗口后瞬移
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
                 running = False
-
-            elif event.type == pygame.KEYDOWN:
-                # event.key 用物理键位，event.unicode 兜底：某些输入法/键盘布局
-                # 下 key 可能不是预期的 K_r，用文字也认一次
-                key = event.key
-                ch = (getattr(event, "unicode", "") or "").lower()
-
-                if key in (pygame.K_ESCAPE, pygame.K_q) or ch == "q":
-                    running = False
-                elif key == pygame.K_r or key == pygame.K_F2 or ch == "r":
-                    game.reset()
-                elif key == pygame.K_1 or ch == "1":
-                    game.set_level("easy")
-                elif key == pygame.K_2 or ch == "2":
-                    game.set_level("medium")
-                elif key == pygame.K_3 or ch == "3":
-                    game.set_level("hard")
-
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                game.handle_mouse_down(event.pos, event.button)
-
-            elif FOCUS_GAINED is not None and event.type == FOCUS_GAINED:
-                # 重新拿回焦点时确保输入法没有抢走键盘
-                disable_ime()
-
-        game.tick_time()
+            else:
+                game.input.handle_event(e)           # 键盘状态
+                game.handle_event(e)                 # R / ESC / F1，两者不互斥
+        game.update(dt)
         game.draw()
         pygame.display.flip()
-        clock.tick(60)
+        if not game.running:
+            running = False
 
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()
