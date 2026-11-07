@@ -46,19 +46,29 @@ C_PLAYER = (108, 255, 196)        # 玩家（青绿）
 C_ACCENT = (108, 255, 196)        # 进度条 / 结算里的「涂对」
 C_WARN = (255, 176, 32)           # 警示黄
 C_MISSING = (46, 52, 62)          # 结算缩略图：该黑却没涂的格子
+C_PANEL = (26, 32, 42)            # 菜单按钮底色
+C_DIM = (74, 82, 94)              # 锁定态的文字/描边
 C_TEXT = (232, 236, 240)
 
 # ==== 规则 ====
-GAME_DURATION = 180.0
 PHASE1_DURATION = 30.0
-PHASE_SHIFT_TIME = 1.0            # 阶段切换遮罩持续时长（纯黑半透明 + 大字）
-MENU_BLINK_HZ = 2.0               # 菜单「PRESS SPACE」闪烁频率
+PHASE_SHIFT_TIME = 1.0            # 遮罩/关卡横幅持续时长（纯黑半透明 + 大字）
+MENU_BLINK_HZ = 2.0               # 菜单闪字频率
 ERASE_CAST = 0.25
-WIN_COVERAGE = 0.70
-NOISE_LIMIT_PCT = 0.25
-# 目标黑格占比下限：低于它的一版太稀、太难 70%，重摇（§14 平衡值约 220/441 ≈ 0.50）
+# 目标黑格占比下限：低于它的一版太稀、太难，重摇（§14 平衡值约 220/441 ≈ 0.50）
 ALPHA_MIN = 0.48
 ALPHA_TRY = 40                    # 重摇次数上限，兜底取最密的一版
+
+# ==== 关卡 ====
+# 只改数字、不加新机制：cover=需复原比例 / time=时长(秒)
+# spawn=怪物每分钟 / noise=噪声上限比例 / delay=首怪延迟(秒)
+LEVELS = (
+    {"cover": 0.70, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0},
+    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0},
+    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5},
+    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5},
+    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0},
+)
 
 # ==== 玩家（格子对齐移动）====
 PLAYER_START_CELL = (12, 12)      # 出生于主网格正中，一眼能看到脚下的目标区
@@ -67,8 +77,6 @@ PLAYER_BODY_W, PLAYER_BODY_H = 16, 22
 PLAYER_GLOW_R = 14
 
 # ==== 怪物 ====
-SPAWN_PER_MINUTE = 15
-SPAWN_FIRST_DELAY = 2.0
 MONSTER_SPEED = 62.0
 MONSTER_RADIUS = 9
 MONSTER_IDLE_LIMIT = 12.0
@@ -86,6 +94,10 @@ GRADE_A_NOISE_PCT = 0.4           # A 级：噪声不超过上限的 40%
 SC_W, SC_A, SC_S, SC_D = 26, 4, 22, 7
 SC_J, SC_K, SC_SPACE = 13, 14, 44   # J 涂黑 / K 抹除 / 空格=J 的别名
 SC_R, SC_ESC, SC_F1 = 21, 41, 58
+# SDL2 物理键位：字母 A=4 ... Z=29，数字 1=30 ... 0=39，Return=40，Esc=41，Space=44
+SC_ENTER = 40                     # 回车：开始 / 确认选关
+SC_KP_ENTER = 88                  # 小键盘回车，同样当确认
+SC_LEFT, SC_RIGHT = 80, 79        # 方向键左右：选关页切换
 DIR_KEYS = {SC_W: (-1, 0), SC_S: (1, 0), SC_A: (0, -1), SC_D: (0, 1)}
 
 # ==== 格子状态 ====
@@ -94,6 +106,10 @@ WHITE, BLACK, ERASING = 0, 1, 2
 # ==== 布局：HUD ====
 HUD_PAD = 80
 BAR_W, BAR_H = 320, 10
+
+# ==== 菜单按钮 ====
+BTN_W, BTN_H = 300, 92                          # 开始页的 START
+LV_BTN_W, LV_BTN_H, LV_BTN_GAP = 150, 154, 20   # 选关页的 1~5
 
 # ==== 2. 坐标工具函数（全局只用这三个做换算） ====
 
@@ -420,69 +436,159 @@ class Game:
         self.glow = pygame.Surface((PLAYER_GLOW_R * 2, PLAYER_GLOW_R * 2), pygame.SRCALPHA)
         pygame.draw.circle(self.glow, (*C_PLAYER, 46), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
 
-        # 阶段切换用的整屏遮罩，只建一次，每帧重填内容
+        # 横幅（关卡开场 / 阶段切换）用的整屏遮罩，只建一次，每帧重填内容
         self.overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
         self.menu_t = 0.0
+        self.banner_text = ""
+        self.banner_t = 0.0
+        self.banner_total = 1.0
+        self.level = 1
+        self.unlocked = 1            # 已解锁到第几关（内存里，退出游戏就归 1）
+        self.sel = 1                 # 选关页当前高亮哪一关
+        self.hover = None            # 鼠标悬停的按钮下标
 
         # 被啃格的红闪覆盖层（半透明），M3 复用，同样只做一次
         self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.flash_surf.fill((*C_MONSTER, 120))
 
         self.new_round()
-        self.state = "MENU"                       # 开局先落在菜单（此时棋盘已备好一局）
+        self.state = "TITLE"                      # 开局落在开始页（此时棋盘已备好一局）
 
     # ---------- 开局 ----------
     def new_round(self):
-        self.rng = random.Random()                # 不固定种子：R 重开必出新码
+        cfg = LEVELS[self.level - 1]              # 关卡参数只在这里读一次
+        self.goal_cover = cfg["cover"]
+        self.goal_noise = cfg["noise"]
+        self.duration = cfg["time"]
+        self.spawn_rate = cfg["spawn"]
+        self.spawn_delay = cfg["delay"]
+
+        self.rng = random.Random()                # 不固定种子：重开必出新码
         self.target = generate_target(self.rng)
         self.board = Board(self.target)
         self.player = Player()
         self.elapsed = 0.0
-        self.state = "PLAY"                       # MENU 在 M5 接入
+        self.state = "PLAY"
 
         self.monsters = []
         self.claims = {}                          # {(r,c): 有几只怪锁着这一格}
         self.spawn_acc = 0.0
         self.shifted = False                      # 30s 阶段切换只允许触发一次
-        self.shift_timer = 0.0                    # 遮罩剩余时间
         self.result = None
+        self.show_banner("LEVEL %d" % self.level, PHASE_SHIFT_TIME)
+
+    def show_banner(self, text, secs):
+        self.banner_text = text
+        self.banner_t = secs
+        self.banner_total = secs
 
     # ---------- 事件 ----------
     def handle_event(self, e):
-        if e.type != pygame.KEYDOWN:              # 与 input.handle_event 互不排斥
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            self.on_click(*self.mouse_xy())        # 鼠标只用于菜单，不参与涂色
             return
-        if e.scancode == SC_ESC:
-            if self.state == "MENU":
-                self.running = False              # 菜单是顶层，这里才真的退出
-            else:
-                self.to_menu()
-        elif e.scancode == SC_SPACE:
-            if self.state == "MENU":
-                self.start_round()
-        elif e.scancode == SC_R:
-            if self.state != "MENU":              # 局中/结算都能直接重开
-                self.start_round()
-        elif e.scancode == SC_F1:
+        if e.type != pygame.KEYDOWN:               # 与 input.handle_event 互不排斥
+            return
+        if e.scancode == SC_F1:
             self.debug = not self.debug
+            return
 
-    def start_round(self):
+        st = self.state
+        if e.scancode == SC_ESC:
+            if st == "TITLE":
+                self.running = False               # 开始页是顶层，这里才真的退出
+            elif st == "SELECT":
+                self.state = "TITLE"
+            else:
+                self.goto_select()                 # 局中/结算都回选关页
+        elif st == "TITLE":
+            if e.scancode in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+                self.state = "SELECT"
+        elif st == "SELECT":
+            self.on_select_key(e.scancode)
+        elif st == "PLAY":
+            if e.scancode == SC_R:
+                self.start_level(self.level)       # 局中 R：重开本关
+        elif st == "RESULT":
+            if e.scancode == SC_R:
+                self.next_level()
+
+    # ---------- 按钮与选关 ----------
+    def mouse_xy(self):
+        """窗口坐标 → 逻辑坐标（画布被缩放过，鼠标也得换算）。"""
+        mx, my = pygame.mouse.get_pos()
+        return int(mx / self.scale), int(my / self.scale)
+
+    def start_btn(self):
+        return pygame.Rect((WINDOW_W - BTN_W) // 2, 470, BTN_W, BTN_H)
+
+    def level_btns(self):
+        n = len(LEVELS)
+        total = n * LV_BTN_W + (n - 1) * LV_BTN_GAP
+        x0 = (WINDOW_W - total) // 2
+        return [pygame.Rect(x0 + i * (LV_BTN_W + LV_BTN_GAP), 392, LV_BTN_W, LV_BTN_H)
+                for i in range(n)]
+
+    def on_click(self, x, y):
+        if self.state == "TITLE":
+            if self.start_btn().collidepoint(x, y):
+                self.state = "SELECT"
+        elif self.state == "SELECT":
+            for i, rect in enumerate(self.level_btns()):
+                if rect.collidepoint(x, y) and i + 1 <= self.unlocked:
+                    self.sel = i + 1
+                    self.start_level(i + 1)        # 锁着的关点了没反应
+
+    def on_select_key(self, sc):
+        if sc in (SC_A, SC_LEFT):
+            self.sel = max(1, self.sel - 1)
+        elif sc in (SC_D, SC_RIGHT):
+            self.sel = min(self.unlocked, self.sel + 1)   # 只能移到已解锁的关
+        elif sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+            self.start_level(self.sel)
+
+    def goto_select(self):
+        self.sel = max(1, min(self.unlocked, self.level))
+        self.state = "SELECT"
+
+    def start_level(self, n):
+        self.level = max(1, min(len(LEVELS), n))
         self.new_round()
-        self.input.held.clear()                   # 别让菜单里按着的空格/方向漏进新一局
+        self.input.held.clear()                    # 别让菜单里按着的键漏进新一局
 
-    def to_menu(self):
-        self.new_round()                          # 重置棋盘，菜单背后不挂着一个半死的局
-        self.state = "MENU"
+    def next_level(self):
+        """结算页按 R：赢了进下一关，最后一关通关回选关页，输了重试本关。"""
+        if not self.result["won"]:
+            self.start_level(self.level)
+        elif self.level < len(LEVELS):
+            self.start_level(self.level + 1)
+        else:
+            self.goto_select()                     # 全部通关：回选关页，五关都开着
+
+    def update_hover(self):
+        """每帧轮询鼠标位置做悬停高亮（点击走事件，悬停只能轮询）。"""
+        mx, my = self.mouse_xy()
+        self.hover = None
+        if self.state == "TITLE":
+            if self.start_btn().collidepoint(mx, my):
+                self.hover = 0
+        else:
+            for i, rect in enumerate(self.level_btns()):
+                if rect.collidepoint(mx, my):
+                    self.hover = i
+                    break
 
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt                        # 仅供 F1 显示
-        if self.state == "MENU":
-            self.menu_t += dt                     # 只用来闪「PRESS SPACE」
+        if self.state in ("TITLE", "SELECT"):
+            self.menu_t += dt                     # 只用来闪字
+            self.update_hover()
             return
         if self.state != "PLAY":
             return
-        if self.shift_timer > 0:
-            self.shift_timer -= dt
+        if self.banner_t > 0:
+            self.banner_t -= dt
 
         # 1) 先走格子：移动是离散步进，脚下坐标一帧内就定死
         self.player.update(dt, self.input.dir4())
@@ -501,7 +607,7 @@ class Game:
         if not self.shifted and self.elapsed >= PHASE1_DURATION:
             self.shifted = True
             self.board.outer_open = False         # 外围锁死：已黑保留，未黑不可涂
-            self.shift_timer = PHASE_SHIFT_TIME   # 1s 遮罩 + 居中大字，只触发这一次
+            self.show_banner("PHASE SHIFT", PHASE_SHIFT_TIME)   # 只触发这一次
 
         # 5) 先让抹除收敛，再跑怪物（顺序反了会「吃到空气」）
         self.board.update(dt)
@@ -513,14 +619,14 @@ class Game:
 
         # 7) 生成：全程恒定 15/分，用累加器，不用 set_timer
         self.spawn_acc += dt
-        interval = 60.0 / SPAWN_PER_MINUTE
-        if self.elapsed > SPAWN_FIRST_DELAY and self.spawn_acc >= interval:
+        interval = 60.0 / self.spawn_rate
+        if self.elapsed > self.spawn_delay and self.spawn_acc >= interval:
             self.spawn_acc -= interval
             self.spawn_monster()
 
         # 8) 时间到 -> 结算
-        if self.elapsed >= GAME_DURATION:
-            self.elapsed = GAME_DURATION
+        if self.elapsed >= self.duration:
+            self.elapsed = self.duration
             self.finish()
 
     def spawn_monster(self):
@@ -545,9 +651,9 @@ class Game:
             m.claim(self.claims)
         correct, noise, missing = self.board.stats()
         total = self.board.target_total or 1
-        cap = round(total * NOISE_LIMIT_PCT)
+        cap = round(total * self.goal_noise)
         coverage = correct / total
-        won = coverage >= WIN_COVERAGE and noise <= cap
+        won = coverage >= self.goal_cover and noise <= cap
         if won and coverage >= GRADE_S_COVERAGE and noise <= GRADE_S_NOISE:
             grade = "S"
         elif won and noise <= cap * GRADE_A_NOISE_PCT:
@@ -557,7 +663,9 @@ class Game:
         else:
             grade = "F"
         self.result = {"coverage": coverage, "noise": noise, "cap": cap,
-                       "won": won, "grade": grade}
+                       "won": won, "grade": grade, "level": self.level}
+        if won:                                    # 过关就解锁下一关（末关解锁到头为止）
+            self.unlocked = max(self.unlocked, min(len(LEVELS), self.level + 1))
         self.state = "RESULT"
 
     # ---------- 绘制 ----------
@@ -568,14 +676,16 @@ class Game:
             self.window.blit(self.canvas, (0, 0))
 
     def draw(self):
-        if self.state == "MENU":
-            self.draw_menu()
+        if self.state == "TITLE":
+            self.draw_title()
+        elif self.state == "SELECT":
+            self.draw_select()
         elif self.state == "RESULT":
             self.draw_result()
         else:
             self.draw_world()
             self.draw_hud()
-            self.draw_shift_overlay()
+            self.draw_banner()
         self.present()
 
     def draw_world(self):
@@ -685,12 +795,16 @@ class Game:
         correct, noise, _missing = self.board.stats()
         total = self.board.target_total or 1     # 百分比一律除 target_total，不写死 441
         coverage = correct / total
-        noise_cap = round(total * NOISE_LIMIT_PCT)
+        noise_cap = round(total * self.goal_noise)
 
         top_y, mid_y = 38, 46
 
+        # 关卡号放最上面一行；计时留在下面，两行不打架
+        self.txt("LEVEL %d/%d" % (self.level, len(LEVELS)), (HUD_PAD, 10),
+                 self.f_small, C_ERASING)
+
         # 计时：剩余 ≤30s 转警示黄
-        remain = max(0.0, GAME_DURATION - self.elapsed)
+        remain = max(0.0, self.duration - self.elapsed)
         t_col = C_WARN if remain <= 30.0 else C_TEXT
         self.txt("%02d:%02d" % (int(remain) // 60, int(remain) % 60), (HUD_PAD, top_y),
                  self.f_main, t_col)
@@ -699,10 +813,10 @@ class Game:
         bar = pygame.Rect(210, mid_y, BAR_W, BAR_H)
         s.fill(C_LOCK, bar)
         s.fill(C_ACCENT, pygame.Rect(bar.x, bar.y, int(BAR_W * min(coverage, 1.0)), bar.h))
-        win_x = bar.x + int(BAR_W * WIN_COVERAGE)
+        win_x = bar.x + int(BAR_W * self.goal_cover)
         pygame.draw.line(s, C_TEXT, (win_x, bar.y - 4), (win_x, bar.y + BAR_H + 4), 2)
 
-        pct_col = C_ACCENT if coverage >= WIN_COVERAGE else C_TEXT
+        pct_col = C_ACCENT if coverage >= self.goal_cover else C_TEXT
         self.txt("%d%%" % int(coverage * 100), (bar.right + 20, top_y), self.f_main, pct_col)
 
         # 噪声：超过上限 80% 变黄，给玩家「快废了」的预警
@@ -721,37 +835,75 @@ class Game:
                  (WINDOW_W - HUD_PAD, WINDOW_H - 38), self.f_small, C_ERASING, right=True)
 
         if self.debug:
-            p = self.player.pos
-            self.txt("FPS %d  POS %d,%d  TARGETS %d" % (
-                int(round(1.0 / max(self._last_dt, 1e-4))), p.x, p.y, total),
-                (HUD_PAD, 10), self.f_small, C_WARN)
+            self.txt("FPS %d  CELL %d,%d  TARGETS %d  MON %d" % (
+                int(round(1.0 / max(self._last_dt, 1e-4))),
+                self.player.cell[0], self.player.cell[1], total, len(self.monsters)),
+                (HUD_PAD, WINDOW_H - 38), self.f_small, C_WARN)
 
     # ---------- 菜单 ----------
-    def draw_menu(self):
-        s = self.screen
+    def draw_backdrop(self, s):
+        """菜单统一背景：底色 + 废墟暗格，和局内呼应。"""
         s.fill(C_BG)
-        for x in range(0, WINDOW_W, CELL):        # 和局内呼应的废墟暗格
+        for x in range(0, WINDOW_W, CELL):
             pygame.draw.line(s, C_BG_GRID, (x, 0), (x, WINDOW_H))
         for y in range(0, WINDOW_H, CELL):
             pygame.draw.line(s, C_BG_GRID, (0, y), (WINDOW_W, y))
 
-        mid = WINDOW_W // 2
-        self.center_txt("DATA SHIFT", (mid, 320), self.f_big, C_ACCENT)
-        self.center_txt("RESTORE THE CODE. OUTRUN THE SHIFT.", (mid, 404), self.f_main, C_ERASING)
-        if int(self.menu_t * MENU_BLINK_HZ) % 2 == 0:      # 闪一下，别像静态图
-            self.center_txt("PRESS SPACE TO START", (mid, 540), self.f_mid, C_TEXT)
-        self.center_txt("[WASD] MOVE     [J] PAINT     [K] ERASE", (mid, 660), self.f_main, C_TEXT)
-        self.center_txt("[R] RESTART     [ESC] MENU     [F1] DEBUG", (mid, 700), self.f_main, C_ERASING)
-        self.center_txt("ESC: QUIT", (mid, 900), self.f_small, C_ERASING)
+    def draw_button(self, rect, label, sub, hot, locked=False):
+        """一个按钮：悬停亮青边，锁定变暗并显示 LOCKED。"""
+        fill = C_LOCK if locked else C_PANEL
+        edge = C_DIM if locked else (C_ACCENT if hot else C_ERASING)
+        pygame.draw.rect(self.screen, fill, rect, border_radius=8)
+        pygame.draw.rect(self.screen, edge, rect, 2, border_radius=8)
+        col = C_DIM if locked else (C_ACCENT if hot else C_TEXT)
+        img = self.f_mid.render(label, True, col)
+        cy = rect.centery - 12 if sub else rect.centery
+        self.screen.blit(img, img.get_rect(center=(rect.centerx, cy)))
+        if sub:
+            sub_img = self.f_small.render(sub, True, C_DIM if locked else C_ERASING)
+            self.screen.blit(sub_img, sub_img.get_rect(center=(rect.centerx, rect.bottom - 30)))
 
-    def draw_shift_overlay(self):
-        """阶段切换的 1 秒遮罩：半透明黑 + 居中大字，随计时淡出。"""
-        if self.shift_timer <= 0:
+    def draw_title(self):
+        s = self.screen
+        self.draw_backdrop(s)
+        mid = WINDOW_W // 2
+        self.center_txt("DATA SHIFT", (mid, 300), self.f_big, C_ACCENT)
+        self.center_txt("RESTORE THE CODE. OUTRUN THE SHIFT.", (mid, 384), self.f_main, C_ERASING)
+        self.draw_button(self.start_btn(), "START", "", self.hover == 0)
+        if int(self.menu_t * MENU_BLINK_HZ) % 2 == 0:      # 闪一下，别像静态图
+            self.center_txt("CLICK START  OR  PRESS ENTER", (mid, 610), self.f_small, C_ERASING)
+        self.center_txt("[WASD] MOVE     [J] PAINT     [K] ERASE", (mid, 760), self.f_main, C_TEXT)
+        self.center_txt("[R] RESTART     [ESC] BACK     [F1] DEBUG", (mid, 800),
+                        self.f_small, C_ERASING)
+        self.center_txt("ESC: QUIT", (mid, 930), self.f_small, C_ERASING)
+
+    def draw_select(self):
+        s = self.screen
+        self.draw_backdrop(s)
+        mid = WINDOW_W // 2
+        self.center_txt("SELECT LEVEL", (mid, 220), self.f_mid, C_ACCENT)
+        self.center_txt("CLEAR A LEVEL TO UNLOCK THE NEXT", (mid, 268), self.f_small, C_ERASING)
+
+        for i, rect in enumerate(self.level_btns()):
+            n = i + 1
+            locked = n > self.unlocked
+            cfg = LEVELS[i]
+            sub = "LOCKED" if locked else "%d%%  /  %dS" % (int(cfg["cover"] * 100), int(cfg["time"]))
+            # 同一时刻只亮一个：鼠标在某个按钮上就只听鼠标，鼠标不在按钮上才用键盘选中项
+            hot = (self.hover == i) if self.hover is not None else (self.sel == n and not locked)
+            self.draw_button(rect, str(n), sub, hot, locked)
+
+        self.center_txt("CLICK A LEVEL   -   A/D OR ARROWS   -   ENTER TO PLAY   -   ESC: BACK",
+                        (mid, 620), self.f_small, C_ERASING)
+
+    def draw_banner(self):
+        """关卡开场 / 阶段切换的横幅：半透明黑 + 居中大字，随计时淡出。"""
+        if self.banner_t <= 0:
             return
-        k = min(1.0, self.shift_timer / PHASE_SHIFT_TIME)   # 1 -> 0
+        k = min(1.0, self.banner_t / self.banner_total)     # 1 -> 0
         a = int(160 * k)                                    # 只让「幕」淡出
         self.overlay.fill((0, 0, 0, a))
-        img = self.f_big.render("PHASE SHIFT", True, C_TEXT)
+        img = self.f_big.render(self.banner_text, True, C_TEXT)
         # 文字始终全亮：棋盘偏白，白字要靠暗幕托着；幕淡到透明时白字本来也看不见，不突兀
         img.set_alpha(255)
         self.overlay.blit(img, img.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2)))
@@ -789,9 +941,15 @@ class Game:
         thumb = TARGET_N * THUMB_CELL
         mid_x = WINDOW_W // 2
 
-        title = "DATA RESTORED" if r["won"] else "DATA CORRUPTED"
+        last = self.level >= len(LEVELS)
+        if r["won"]:
+            title = "ALL LEVELS CLEAR" if last else "LEVEL %d CLEAR" % self.level
+        else:
+            title = "DATA CORRUPTED"
         self.center_txt(title, (mid_x, 150), self.f_mid,
                         C_ACCENT if r["won"] else C_MONSTER)
+        self.center_txt("LEVEL %d / %d" % (self.level, len(LEVELS)), (mid_x, 196),
+                        self.f_small, C_ERASING)
 
         left_x, right_x, top_y = 120, WINDOW_W - 120 - thumb, 250
         self.draw_thumb(left_x, top_y, True)
@@ -799,7 +957,7 @@ class Game:
         self.txt("TARGET", (left_x, top_y - 32), self.f_small, C_ERASING)
         self.txt("YOURS", (right_x, top_y - 32), self.f_small, C_ERASING)
 
-        cov_col = C_ACCENT if r["coverage"] >= WIN_COVERAGE else C_TEXT
+        cov_col = C_ACCENT if r["won"] else C_TEXT
         n_col = C_WARN if r["noise"] > r["cap"] * 0.8 else C_TEXT
         self.center_txt("COVERAGE %d%%" % int(r["coverage"] * 100),
                         (mid_x, 344), self.f_main, cov_col)
@@ -810,7 +968,13 @@ class Game:
         self.center_txt("GRADE", (mid_x, 522), self.f_small, C_ERASING)
         self.center_txt(r["grade"], (mid_x, 592), self.f_big, g_col)
 
-        self.center_txt("R: RETRY      ESC: QUIT", (mid_x, 760), self.f_main, C_TEXT)
+        if not r["won"]:
+            nxt = "R: RETRY"
+        elif last:
+            nxt = "R: LEVELS"
+        else:
+            nxt = "R: NEXT LEVEL"
+        self.center_txt("%s      ESC: LEVELS" % nxt, (mid_x, 760), self.f_main, C_TEXT)
 
 # ==== 9. main() 主循环 ====
 
