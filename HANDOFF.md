@@ -1,7 +1,7 @@
 # HANDOFF —— 技术交接与工作日志
 
 > 给「下一个接手的 AI」和「未来的自己」看。只写**与当前代码一致**的事实；改了代码请顺手改这里。
-> 最后更新：2026-11-07 17:20 · 代码在 `src/` 下，9 个模块 + `__init__.py`，共 1372 行
+> 最后更新：2026-11-08 19:05 · 代码在 `src/` 下，10 个模块 + `__init__.py`，共 1554 行
 
 ---
 
@@ -9,7 +9,7 @@
 
 - 代码在 **`src/`** 包里（`from src.xxx import ...`）；解释器 `.venv`（Python 3.11.5 + pygame 2.6.1），入口 `src/main.py`
 - 跑起来（都在**项目根目录**执行）：`python src/main.py` 或 `python -m src.main`；**改数值只改 `src/config.py`**
-- 中文技术规格书（1253 行，规则、数值、设计理由最全）在仓库**之外**：
+- 中文技术规格书（1364 行，规则、数值、设计理由最全）在仓库**之外**：
   `D:/Al_WorkPlace/WorrkBuddy_WorkPlace/game尝试/GameOff2026_SHIFT_TechSpec_v2.1.md`
 
 ## 1. 进度
@@ -17,9 +17,21 @@
 M1 网格与涂改 · M2 二维码与提示层 · M3 怪物 · M4 阶段锁定与结算 · M5 菜单与遮罩 · M6 关卡与选关：**全部完成**。
 只剩 **M7**（PyInstaller 打包 + itch 页面）。
 
+叙事壳（提纲的第一个里程碑）也已完成：22 行台词接进五个投放点、`src/story.py` 成为唯一文案来源、
+字幕条 `banner_kind="story"`、暗模块 `(13,8)` 开场先亮 0.2 秒。**核心机制一行没动。**
+
+**机制改造（进行中，2026-11-08 起）**：目标是把五关从「五档数值」变成「五条规则」。
+
+- ✅ **L2 紫怪只清「完成度最高的那一行」**（`PURPLE_MODE = "best_row"`）
+- ⬜ L3 三锚 / 时序免疫（怪会改道）
+- ⬜ L4 伪忆怪（白格染黑）+ 噪声上限收紧
+- ⬜ L5 格式兽（清一整份 15 格名签）—— 要先在 `qr.py` 的 `reserved` 里补格式信息坐标
+- ⬜ 尾声两个分支（`J` 涂黑 / `ESC` 离开）
+- ⬜ 第 5 关真编码 + 独立扫描屏 —— **要引入 `segno`，会破「只用 pygame」的铁律，得单独拍板**
+
 ## 2. 结构与边界（最重要）
 
-按职责拆成 9 个模块，**统一放在 `src/` 包内**，模块之间一律 `from src.xxx import ...`：
+按职责拆成 10 个模块 + `__init__.py`，**统一放在 `src/` 包内**，模块之间一律 `from src.xxx import ...`：
 
 ```
 config ──> grid ──> board ──┐
@@ -32,14 +44,15 @@ config ──> grid ──> board ──┐
 | 文件 | 行数 | 职责 | 允许 import |
 |---|---|---|---|
 | `src/__init__.py` | 5 | 空包标记，让 `from src.xxx import ...` 成立 | 无 |
-| `src/config.py` | 132 | 常量 / 颜色 / `LEVELS` / 开场动画参数 | 无（连 pygame 都不用） |
+| `src/config.py` | 139 | 常量 / 颜色 / `LEVELS` / 开场动画参数 / `PURPLE_MODE` | 无（连 pygame 都不用） |
 | `src/grid.py` | 41 | 坐标换算 4 个函数 | pygame, src.config |
-| `src/qr.py` | 64 | 生成 21×21 目标矩阵 | src.config |
-| `src/board.py` | 94 | 棋盘状态、`stats()`、涂改、抹除计时 | src.config, src.grid |
+| `src/qr.py` | 65 | 生成 21×21 目标矩阵 | src.config |
+| `src/board.py` | 113 | 棋盘状态、`stats()`、`best_row()`、涂改、抹除计时 | src.config, src.grid |
 | `src/input_state.py` | 49 | 键盘状态（只认 scancode） | pygame, src.config |
-| `src/entities.py` | 133 | `Player` + `Monster`（红怪吃一格 / 紫怪清一行） | pygame, src.config, src.grid |
-| `src/ui.py` | 350 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
-| `src/game.py` | 437 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
+| `src/entities.py` | 161 | `Player` + `Monster`（红怪吃一格 / 紫怪清一行，带 `mode` 选目标） | pygame, src.config, src.grid |
+| `src/ui.py` | 397 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
+| `src/game.py` | 459 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
+| `src/story.py` | 58 | **全部叙事文本**（22 行 + 每关 open/trigger/end） | 无 |
 | `src/main.py` | 67 | 开窗口 + 主循环（顶部有直接运行脚本的路径引导） | pygame, src.config, src.game |
 
 三条不许破的边界：
@@ -63,7 +76,8 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 
 - `PLAY` + `R` = 重开本关；`RESULT` + `R` = 失败重试 / 通关进下一关 / 末关回选关页
 - **`PLAY` 内部还有一段开场动画**：`intro_t > 0` 时不走正常更新（不计时 / 不出怪 / 不能涂 / 不响应移动），
-  只跑 `update_intro()`；动画放完才 `show_banner("LEVEL n")` 并开始计时
+  只跑 `update_intro()`；这段共 `INTRO_TOTAL` = 3.10 秒，开场句的字幕条就铺满这段时间
+  （`show_banner(story.level(n)["open"], INTRO_TOTAL, "story")`），动画结束才真正开始计时
 - 解锁：`unlocked` 初始 1，通关时 `unlocked = max(unlocked, min(5, level + 1))`，**只存内存**
 - 鼠标只用于 `TITLE` / `SELECT` 的按钮点击与悬停；`PLAY` 里没有任何鼠标逻辑
 - 窗口可能被等比缩小，鼠标坐标必须 `/ self.scale` 换算回逻辑坐标
@@ -82,6 +96,17 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 
 **紫怪（第二关起）**：跟红怪共用寻路与选目标，只有「撞上黑格那一刻」不同 —— 红怪 `force_white` 吃一格，
 紫怪调 `Board.clear_row(r)` 把整行黑格清成白色（灰提示是 target 推出来的，会自动重新出现，玩家必须重涂）。
+
+**目标选择分两种模式**（`Monster.mode`，由 `config.PURPLE_MODE` 决定）：
+
+| mode | 行为 | 用在哪 |
+|---|---|---|
+| `"nearest"` | 撞最近的黑格 → 撞到哪一行是随机的 | 红怪默认，也是紫怪的旧行为 |
+| `"best_row"` | 先问 `Board.best_row()`：哪一行已涂对的目标黑格数最多，就只盯那一行 | 紫怪当前默认 |
+
+`best_row` 的规矩：全 0（还没开涂）返回 `None` → 退回 `nearest`；那一行没黑格或被别人锁住 → 也退回 `nearest`，
+**保证它永远有事干、不站着不动**。整行清完该行自然归零，下一只自动换行，不会死循环。
+
 数量由 `LEVELS[i]["purple"]` 决定，刷新时刻在 `new_round()` 里排好（前 `PURPLE_SPAWN_WINDOW`=150s 内的随机时刻），
 出生点走同一个 `spawn_monster()`、在虚线上随机。相关常量：`PURPLE_SPEED 56` / `PURPLE_RADIUS 10` /
 `PURPLE_IDLE_LIMIT 60`（没黑格时能等更久）/ `PURPLE_SPAWN_MARGIN 6`（不会卡在最后 6 秒才刷）。
@@ -90,13 +115,24 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 啃食距离 6px · 场上无黑格 12s 后自毁 · 格子 28px / **网格 25×25** / 目标 21×21（正居中，四边各 2 格）·
 评级 S（复原 ≥95% 且噪声 ≤3）/ A（噪声 ≤ 上限 40%）/ B（通关）/ F（失败）。
 
-**开场动画**（进关先放，共 2.10s，期间不计时）：
+**开场动画**（进关先放，共 3.10s，期间不计时）：
 
 | 常量 | 值 | 含义 |
 |---|---|---|
-| `INTRO_SHOW` | 0.50s | 完整黑码停留；最后 `SHAKE_LEAD × SHAKE_STEP` = 0.21s 开始抖 |
+| `INTRO_SHOW` | 1.50s | 完整黑码停留；最后 `SHAKE_LEAD × SHAKE_STEP` = 0.21s 开始抖 |
 | `INTRO_FALL` | 1.20s | 碎片爆散 + 下沉，必须够长让碎片全部落出屏幕 |
-| `INTRO_FADE` | 0.40s | 灰色提示层从 alpha 0 淡入到满 |
+| `INTRO_FADE` | 0.40s | 灰色提示层从 alpha 0 淡入到满（**三项之和才是 3.10s**） |
+| `DARK_MODULE_LEAD` | 0.20s | 开场最初 0.2s 只亮暗模块 `(13,8)` 一格，其余格子随后才出现 |
+| `DARK_MODULE` | (13,8) | 暗模块坐标；`qr.py` 也读它，保证"画的那格"和"目标里那格"永远同源 |
+| `SHAKE_STEP` / `SHAKE_SEQ` | 0.07s / 6 组偏移 | 抖 6 下、幅度递减（前 3 下在震碎之前）；固定序列，不用 sin |
+| `SHAKE_LEAD` | 3 | 震碎**之前**先抖几下（所以是「抖两三下再碎」） |
+| `DEBRIS_GRAVITY` | 1800 | 碎片重力 px/s²；改它就要同步改 `INTRO_FALL` |
+| `DEBRIS_SPEED` / `DEBRIS_UP` / `DEBRIS_JITTER` | 110~260 / 120 / 60 | 爆散初速、向上抛偏置、水平随机 |
+
+> 注意：`INTRO_TOTAL` 是**三项相加**得到的 3.10s，不是某个写死的值。
+> `config.py` 里那行注释还写着「共 2.10s」，是 `INTRO_SHOW` 从 0.50 调到 1.50 时漏改的**注释**，
+> 计算本身没错。下次动 `config.py` 时顺手把注释改掉。
+| `DARK_MODULE_LEAD` | 0.20s | 开场最初 0.2s 只亮暗模块一格，其余格子随后出现 |
 | `SHAKE_STEP` / `SHAKE_SEQ` | 0.07s / 6 组偏移 | 抖 6 下、幅度递减；固定序列，不用 sin |
 | `SHAKE_LEAD` | 3 | 震碎**之前**先抖几下（所以是「抖两三下再碎」） |
 | `DEBRIS_GRAVITY` | 1800 | 碎片重力 px/s²；改它就要同步改 `INTRO_FALL` |
@@ -177,6 +213,43 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 
 ## 9. 工作日志（技术向，最近在上）
 
+### 2026-11-08 晚 · 机制优先：紫怪改成「只清完成度最高的那一行」
+
+- 用户决定**先把机制全部打起来，故事情境后置**。方向转向：不再往开场/台词上加东西，先把五关各自的规则、
+  尾声、真编码做完。约定顺序：**L2 → L3 结构免疫 → L4 伪忆怪 → L5 格式兽 → 尾声两分支 → 真编码+扫描屏**
+  （最后一项要引入 `segno`，会破「只用 pygame」的铁律，需要单独点头）。
+- **L2 完成（+53 行）**。紫怪原来撞「最近黑格」，撞到哪一行纯随机；现在先问 `Board.best_row()`：
+  算出每一行「已涂对的目标黑格数」，取最大的一行，只盯那一行。
+  - `config.PURPLE_MODE = "best_row"`，可切回 `"nearest"` 的旧行为
+  - `Board.best_row()` 返回整张网格的行号；全 0（还没开涂）返回 `None`
+  - `Monster.__init__(pos, speed, kind, mode="nearest")` + `_pick_best_row()`；
+    那一行没黑格、或全被别的怪锁住，就退回最近黑格 —— **保证它永远有事干，不会站着不动**
+  - `game.spawn_monster()` 按 kind 传 mode，红怪仍是 `nearest`
+- **有意留的缓冲**：`best_row()` 全 0 时返回 `None`，所以第 2 关开局前 20 秒紫怪看起来仍像随机撞。
+  等玩家涂出成果它才开始"盯"人 —— 不会一上来就被精确打击，也不会显得笨。
+- 验证：`_verify_l2.py` 7 组 15 项断言全过（锁到最高行 / 撞完清整行 / claims 释放 /
+  清完自动换下一行不死循环 / 该行被锁时退回最近 / 红怪行为不变 / 真刷出来的怪 mode 正确）；
+  `_verify_v35.py` 9 项老回归全过；`src/main.py` 能启动。
+
+### 2026-11-08 下午 · M1 叙事壳（22 行台词 + 五个投放点）
+
+- 提纲定稿后按里程碑推进，M1 = 只接文案、不碰核心机制。新增 `src/story.py`（`TITLE` / `LEVELS` 五条
+  `open/trigger/end` / `FAIL` / `UNREADABLE` + `level(i)` / `label(i)` 两个取值函数）。
+- 五个投放点：标题页副标题、选关页（`01`~`05` + 碎片名，难度数字下沉到按钮行下方）、
+  关卡开场句、局中一次性句（第一次紫怪登场，`fire_trigger()` 只触发一次）、结算页。
+- **横幅分成两种**（`show_banner(text, secs, kind)`）：
+  `big` = 整屏暗幕 + 110 号大字（只有 PHASE SHIFT）；`story` = **贴着文字宽度的小字幕条**。
+  字幕条画在棋盘下方 `924 - h`，宽 = 最宽一行 + 72，圆角 5，不压网格也不碰底部 HUD。
+  一开始做成了整屏满宽黑条，实测会压住 `PHASE 1 // FREEFORM` 那行，所以改成按文字收窄。
+- **开场句放在开场动画期间**（时长 = `INTRO_TOTAL`），不是开打后再弹：动画有 3.1 秒，
+  读完正好，且此时玩家的操作还没开始。开打后再压字幕会挡住要涂的码。
+- 按用户要求：`INTRO_SHOW` 0.50 → **1.50s**（整套 3.10s），并新增 `DARK_MODULE_LEAD=0.2`：
+  开局最初 0.2 秒只有暗模块 `(13,8)` 一格黑，之后整张码才出现（第一个叙事伏笔，无台词）。
+  `DARK_MODULE` 同时被 `qr.py` 用来放暗模块，保证"画的那一格"和"目标里那一格"永远同源。
+- 验证：11 项叙事专项（关数一致/全大写 ASCII/0.1s 只有暗模块/0.35s 整张出现/开场 1.5s 震碎/
+  横幅两种 kind 各自生效/触发只一次/成败结算句）+ 26 项回归 + 13 项紫怪全过；含字幕条绘制 4.13ms/帧。
+
+
 ### 2026-11-08 · 紫怪（第二关）：撞到黑格清掉整行
 
 - 需求：第二关在红怪之外加一个紫怪，撞到黑格后让**那一整行变白**（灰色提示不动，逼玩家重涂这一行）；
@@ -217,6 +290,7 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 - **进场动画**：点选关后不再直接开打，先放 2.10s：完整二维码以**黑色**铺满 21×21（不是灰色提示）→
   整屏抖 3 下 → 每个黑格炸成一块碎片、四散后被重力拉出屏幕（此时网格全白）→
   灰码从透明淡入 → 才开始计时。
+  *（后来 `INTRO_SHOW` 从 0.50 调到 1.50s，整套变成 3.10s；流程本身没变，见 §4。）*
 - **「不计时」怎么做的**：`Game.intro_t`，`update()` 里 `if self.intro_t > 0: self.update_intro(dt); return`，
   在计时/出怪/涂改**之前**就返回，所以这 2.1 秒里 `elapsed` 恒为 0、没有怪、按 J 也涂不上。
 - **抖动在震碎之前**：`SHAKE_LEAD = 3` 让抖动比震碎提前 3 下（0.21s），碎完还剩 3 下 —— 读起来是「抖两三下然后炸开」。

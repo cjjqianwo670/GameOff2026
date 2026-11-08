@@ -46,6 +46,25 @@ class Board:
                     noise += 1
         return correct, noise, missing
 
+    def best_row(self):
+        """紫怪专用：已涂对的目标黑格数最多的一行，返回整张网格的行号。
+
+        全 0（还没开始涂）时返回 None，让怪退回"最近黑格"的老行为。
+        这条规则就是这只怪的全部意义：它不挑随机一行，它挑你干得最好的那一行。
+        整行清完该行自然归零，下一次就轮到别的行，不会死循环。
+        """
+        orr, occ = TARGET_OFFSET
+        best, best_n = None, 0
+        for tr in range(TARGET_N):
+            row = self.target[tr]
+            n = 0
+            for tc in range(TARGET_N):
+                if row[tc] and self.state[orr + tr][occ + tc] == BLACK:
+                    n += 1
+            if n > best_n:
+                best, best_n = orr + tr, n
+        return best
+
     # --- 操作 ---
     def paint(self, r, c):
         """幂等：拖动时每帧都会调用，已是黑/正在抹除就直接返回。"""

@@ -4,7 +4,7 @@
 想换图案风格（换密度、加新的视觉符号）只改这个文件。
 """
 
-from src.config import ALPHA_MIN, ALPHA_TRY, TARGET_N
+from src.config import ALPHA_MIN, ALPHA_TRY, DARK_MODULE, TARGET_N
 
 # ==== 目标图案 ====
 
@@ -52,9 +52,10 @@ def _build_qr_like(rng, n):
             m[i][6] = 1 if i % 2 == 0 else 0
             reserved[i][6] = True
 
-    # (3) 暗模块（QR 规范里的固定黑点）
-    m[n - 8][8] = 1
-    reserved[n - 8][8] = True
+    # (3) 暗模块（QR 规范里的固定黑点），坐标与 config.DARK_MODULE 同源
+    dr, dc = DARK_MODULE
+    m[dr][dc] = 1
+    reserved[dr][dc] = True
 
     # (4) 信息区随机填充
     for r in range(n):

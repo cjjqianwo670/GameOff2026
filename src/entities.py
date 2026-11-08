@@ -56,8 +56,9 @@ class Monster:
     半径、颜色、闲置超时都从 config 按 kind 取，画的时候不用再判断类型。
     """
 
-    def __init__(self, pos, speed, kind="red"):
+    def __init__(self, pos, speed, kind="red", mode="nearest"):
         self.kind = kind
+        self.mode = mode                   # "nearest" 撞最近的 / "best_row" 专挑完成度最高的行
         self.pos = pygame.Vector2(pos)
         self.speed = speed
         self.target = None                 # (r, c) 或 None
@@ -80,9 +81,36 @@ class Monster:
                 del claims[self.target]
             self.target = None
 
+    def _pick_best_row(self, board, claims):
+        """只盯「完成度最高的那一行」，在那行里挑最近的黑格。选到了返回 True。"""
+        row = board.best_row()
+        if row is None:
+            return False                   # 一行都没涂对：退回老行为
+        best, best_d = None, None
+        for c in range(GRID_N):
+            if board.state[row][c] != BLACK:
+                continue
+            if claims.get((row, c)):       # 这一格别人锁着了，让给它
+                continue
+            cx, cy = cell_center(row, c)
+            d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+            if best_d is None or d < best_d:
+                best, best_d = (row, c), d
+        if best is None:
+            return False                   # 该行已经没黑格，或全被别人锁着
+        claims[best] = claims.get(best, 0) + 1
+        self.target = best
+        return True
+
     def retarget(self, board, claims):
-        """扫全网格找最近的黑格：优先没人锁的，全被锁了就允许重复，绝不卡死。"""
+        """扫全网格找最近的黑格：优先没人锁的，全被锁了就允许重复，绝不卡死。
+
+        mode="best_row" 的紫怪先试「完成度最高的那一行」；那一行没得选时，
+        退回最近黑格 —— 保证它永远有事干，不会站着不动。
+        """
         self.claim(claims)
+        if self.mode == "best_row" and self._pick_best_row(board, claims):
+            return
         free, any_cell = None, None
         free_d = any_d = None
         for r in range(GRID_N):

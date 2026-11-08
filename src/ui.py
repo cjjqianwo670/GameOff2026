@@ -12,11 +12,13 @@ import pygame
 if TYPE_CHECKING:            # 只为 IDE 补全与类型检查，运行时不执行，不会造成循环 import
     from src.game import Game
 
+from src import story
 from src.config import (
     BAR_H, BAR_W, BLACK, CELL, C_ACCENT, C_BG, C_BG_GRID, C_CELL_BLACK, C_CELL_LINE,
     C_CELL_WHITE, C_DIM, C_ERASING, C_LOCK, C_MISSING, C_MONSTER, C_PANEL, C_PLAYER,
     C_TEXT, C_WARN, ERASE_CAST, ERASING, GRID_N, GRID_ORIGIN, GRID_PX, HUD_PAD,
-    LEVELS, MENU_BLINK_HZ, PLAYER_BODY_H, PLAYER_BODY_W, PLAYER_GLOW_R,
+    DARK_MODULE, DARK_MODULE_LEAD, INTRO_TOTAL, LEVELS, MENU_BLINK_HZ, PLAYER_BODY_H,
+    PLAYER_BODY_W, PLAYER_GLOW_R,
     SPAWN_ORIGIN, SPAWN_PX, TARGET_N, TARGET_OFFSET, THUMB_CELL, WHITE, WINDOW_H,
     WINDOW_W
 )
@@ -50,11 +52,17 @@ def draw_world(g: "Game"):
     # 开场动画的前半段：完整二维码先用「黑色」铺出来，抖几下再震碎
     # （震碎之后这块不再画，网格恢复全白，只剩到处飞的碎片）
     if g.intro_t > 0 and not g.burst_done:
-        for tr in range(TARGET_N):
-            row = g.target[tr]
-            for tc in range(TARGET_N):
-                if row[tc]:
-                    s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
+        if INTRO_TOTAL - g.intro_t < DARK_MODULE_LEAD:
+            # 最开始 0.2 秒只有「暗模块」一格是黑的：整张码里唯一永远为黑的格子。
+            # 每次开局都从这一格开始 —— 他的手记得，他的脑子不记得。
+            dr, dc = DARK_MODULE
+            s.fill(C_CELL_BLACK, cell_to_rect(orr + dr, occ + dc))
+        else:
+            for tr in range(TARGET_N):
+                row = g.target[tr]
+                for tc in range(TARGET_N):
+                    if row[tc]:
+                        s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
 
     # 目标提示层：只有「该黑且还白」的格子才叠，强度低到不盖住网格线。
     # 开场结束时它从 0 淡入（hint_alpha 由 game 那边推进），平时恒为 255
@@ -235,7 +243,7 @@ def draw_title(g: "Game"):
     draw_backdrop(g, s)
     mid = WINDOW_W // 2
     center_txt(g, "DATA SHIFT", (mid, 300), g.f_big, C_ACCENT)
-    center_txt(g, "RESTORE THE CODE. OUTRUN THE SHIFT.", (mid, 384), g.f_main, C_ERASING)
+    center_txt(g, story.TITLE, (mid, 384), g.f_main, C_ERASING)
     draw_button(g, g.start_btn(), "START", "", g.hover == 0)
     if int(g.menu_t * MENU_BLINK_HZ) % 2 == 0:      # 闪一下，别像静态图
         center_txt(g, "CLICK START  OR  PRESS ENTER", (mid, 610), g.f_small, C_ERASING)
@@ -249,27 +257,67 @@ def draw_select(g: "Game"):
     s = g.screen
     draw_backdrop(g, s)
     mid = WINDOW_W // 2
-    center_txt(g, "SELECT LEVEL", (mid, 220), g.f_mid, C_ACCENT)
-    center_txt(g, "CLEAR A LEVEL TO UNLOCK THE NEXT", (mid, 268), g.f_small, C_ERASING)
+    center_txt(g, "SELECT FRAGMENT", (mid, 220), g.f_mid, C_ACCENT)
+    center_txt(g, story.UNREADABLE, (mid, 268), g.f_small, C_DIM)
 
     for i, rect in enumerate(g.level_btns()):
         n = i + 1
         locked = n > g.unlocked
-        cfg = LEVELS[i]
-        sub = "LOCKED" if locked else "%d%%  /  %dS" % (int(cfg["cover"] * 100), int(cfg["time"]))
+        it = story.level(n)
+        sub = "LOCKED" if locked else it["name"]
         # 同一时刻只亮一个：鼠标在某个按钮上就只听鼠标，鼠标不在按钮上才用键盘选中项
         hot = (g.hover == i) if g.hover is not None else (g.sel == n and not locked)
-        draw_button(g, rect, str(n), sub, hot, locked)
+        draw_button(g, rect, it["key"], sub, hot, locked)
 
-    center_txt(g, "CLICK A LEVEL   -   A/D OR ARROWS   -   ENTER TO PLAY   -   ESC: BACK",
+    # 选中那一关的难度（按钮上只放叙事，数字挪到这里，别让按钮变成仪表盘）
+    cfg = LEVELS[max(0, min(len(LEVELS) - 1, g.sel - 1))]
+    center_txt(g, "COVER %d%%    NOISE %d%%    LIMIT %dS" % (
+        int(cfg["cover"] * 100), int(cfg["noise"] * 100), int(cfg["time"])),
+        (mid, 578), g.f_small, C_ERASING)
+
+    center_txt(g, "CLICK A FRAGMENT   -   A/D OR ARROWS   -   ENTER TO PLAY   -   ESC: BACK",
                     (mid, 620), g.f_small, C_ERASING)
 
 
+def wrap_text(font, text, max_w):
+    """按空格断行。单词本身超宽也不硬切，宁可溢出一点。"""
+    lines, cur = [], ""
+    for word in text.split(" "):
+        t = (cur + " " + word).strip()
+        if cur and font.size(t)[0] > max_w:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = t
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def draw_banner(g: "Game"):
-    """关卡开场 / 阶段切换的横幅：半透明黑 + 居中大字，随计时淡出。"""
+    """两种横幅：
+    big   —— 整屏暗幕 + 居中大字（PHASE SHIFT 这类"事件"）
+    story —— 底部一条窄字幕（剧情句），不挡棋盘，玩家能一边读一边看码
+    """
     if g.banner_t <= 0:
         return
     k = min(1.0, g.banner_t / g.banner_total)     # 1 -> 0
+
+    if g.banner_kind == "story":
+        lines = wrap_text(g.f_main, g.banner_text, 900)
+        w = max(g.f_main.size(ln)[0] for ln in lines) + 72
+        h = 18 + 30 * len(lines)
+        top = 924 - h                              # 贴着棋盘下方往上长，不压网格也不碰 HUD
+        left = (WINDOW_W - w) // 2
+        g.band.fill((0, 0, 0, 0))
+        pygame.draw.rect(g.band, (0, 0, 0, int(160 * k)),
+                         pygame.Rect(0, 0, w, h), border_radius=5)
+        for i, ln in enumerate(lines):
+            img = g.f_main.render(ln, True, C_TEXT)
+            g.band.blit(img, img.get_rect(center=(w // 2, 9 + 30 * i + 15)))
+        g.screen.blit(g.band, (left, top))
+        return
+
     a = int(160 * k)                                    # 只让「幕」淡出
     g.overlay.fill((0, 0, 0, a))
     img = g.f_big.render(g.banner_text, True, C_TEXT)
@@ -315,14 +363,12 @@ def draw_result(g: "Game"):
     mid_x = WINDOW_W // 2
 
     last = g.level >= len(LEVELS)
-    if r["won"]:
-        title = "ALL LEVELS CLEAR" if last else "LEVEL %d CLEAR" % g.level
-    else:
-        title = "DATA CORRUPTED"
-    center_txt(g, title, (mid_x, 150), g.f_mid,
-                    C_ACCENT if r["won"] else C_MONSTER)
-    center_txt(g, "LEVEL %d / %d" % (g.level, len(LEVELS)), (mid_x, 196),
-                    g.f_small, C_ERASING)
+    # 结算只讲一句话：赢了说这一关的真相，输了统一 NOT YET READABLE.
+    line = story.level(g.level)["end"] if r["won"] else story.FAIL
+    col = C_ACCENT if r["won"] else C_MONSTER
+    lines = wrap_text(g.f_mid, line, 860)
+    for i, ln in enumerate(lines):
+        center_txt(g, ln, (mid_x, 128 + i * 58), g.f_mid, col)
 
     left_x, right_x, top_y = 120, WINDOW_W - 120 - thumb, 250
     draw_thumb(g, left_x, top_y, True)
@@ -347,4 +393,5 @@ def draw_result(g: "Game"):
         nxt = "R: LEVELS"
     else:
         nxt = "R: NEXT LEVEL"
+    center_txt(g, story.label(g.level), (mid_x, 690), g.f_small, C_ERASING)
     center_txt(g, "%s      ESC: LEVELS" % nxt, (mid_x, 760), g.f_main, C_TEXT)

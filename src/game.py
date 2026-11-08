@@ -14,15 +14,17 @@ from src.config import (
     DEBRIS_SPEED, DEBRIS_UP, FPS, GRADE_A_NOISE_PCT, GRADE_S_COVERAGE, GRADE_S_NOISE,
     INTRO_FADE, INTRO_FALL, INTRO_SHOW, INTRO_TOTAL, LEVELS, LV_BTN_GAP, LV_BTN_H, LV_BTN_W,
     MONSTER_SPD_JITTER, MONSTER_SPEED, PHASE1_DURATION, PHASE_SHIFT_TIME, PLAYER_GLOW_R,
-    PURPLE_SPAWN_MARGIN, PURPLE_SPAWN_WINDOW, PURPLE_SPEED,
+    PURPLE_SPAWN_MARGIN, PURPLE_SPAWN_WINDOW, PURPLE_SPEED, PURPLE_MODE,
     SC_A, SC_D, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER, SC_LEFT, SC_R, SC_RIGHT,
-    SC_SPACE, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX, TARGET_N, TARGET_OFFSET,
+    SC_SPACE, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX, STORY_BANNER_TIME,
+    TARGET_N, TARGET_OFFSET,
     WINDOW_H, WINDOW_W
 )
 from src.entities import Monster, Player
 from src.grid import cell_center
 from src.input_state import InputState
 from src.qr import generate_target
+from src import story
 from src.ui import draw_banner, draw_hud, draw_result, draw_select, draw_title, draw_world
 
 # ==== 游戏主类 ====
@@ -46,6 +48,7 @@ class Game:
         self.f_small = pygame.font.Font(None, 22)
         self.f_mid = pygame.font.Font(None, 52)        # 结算页标题
         self.f_big = pygame.font.Font(None, 110)       # 结算页评级
+        self.f_story = pygame.font.Font(None, 40)      # 剧情大字（结算页那句）
 
         self.center = pygame.Vector2(WINDOW_W / 2, WINDOW_H / 2)   # 怪物无目标时的漂向点
 
@@ -63,6 +66,8 @@ class Game:
         self.banner_text = ""
         self.banner_t = 0.0
         self.banner_total = 1.0
+        self.banner_kind = "big"        # "big"=整屏大字 / "story"=底部字幕条
+        self.band = pygame.Surface((WINDOW_W, 100), pygame.SRCALPHA)   # 字幕条底，只建一次
         self.level = 1
         self.unlocked = 1            # 已解锁到第几关（内存里，退出游戏就归 1）
         self.sel = 1                 # 选关页当前高亮哪一关
@@ -92,6 +97,7 @@ class Game:
         self.spawn_acc = 0.0
         self.shifted = False
         self.result = None
+        self.triggered = False      # 本关的一次性剧情句是否已触发
         self.intro_t = 0.0          # >0 表示开场动画还没放完
         self.debris = []            # 震碎的黑色格子：[[x, y, vx, vy], ...]
         self.shake_t = 0.0          # 抖动剩余时间
@@ -139,12 +145,16 @@ class Game:
         self.shake_off = (0, 0)
         self.burst_done = False
         self.hint_alpha = 0
-        self.banner_t = 0.0
+        self.triggered = False
+        # 开场句在动画期间用底部字幕条显示：动画有 3 秒，刚好够读完，且不挡棋盘
+        self.show_banner(story.level(self.level)["open"], INTRO_TOTAL, "story")
 
-    def show_banner(self, text, secs):
+    def show_banner(self, text, secs, kind="big"):
+        """kind="big" 是整屏大字（PHASE SHIFT）；"story" 是底部字幕条（剧情句，不挡棋盘）。"""
         self.banner_text = text
         self.banner_t = secs
         self.banner_total = secs
+        self.banner_kind = kind
 
     # ---------- 开场动画 ----------
     def update_intro(self, dt):
@@ -190,7 +200,6 @@ class Game:
             self.debris.clear()
             self.shake_off = (0, 0)
             self.hint_alpha = 255
-            self.show_banner("LEVEL %d" % self.level, PHASE_SHIFT_TIME)
 
     def burst(self):
         """把完整二维码的每个黑格变成一块碎片，从网格中心向外炸开。"""
@@ -338,7 +347,7 @@ class Game:
         if not self.shifted and self.elapsed >= PHASE1_DURATION:
             self.shifted = True
             self.board.outer_open = False         # 外围锁死：已黑保留，未黑不可涂
-            self.show_banner("PHASE SHIFT", PHASE_SHIFT_TIME)   # 只触发这一次
+            self.show_banner("PHASE SHIFT", PHASE_SHIFT_TIME, "big")   # 只触发这一次
 
         # 5) 先让抹除收敛，再跑怪物（顺序反了会「吃到空气」）
         self.board.update(dt)
@@ -359,11 +368,22 @@ class Game:
         if self.purple_i < len(self.purple_times) and self.elapsed >= self.purple_times[self.purple_i]:
             self.purple_i += 1
             self.spawn_monster("purple")
+            self.fire_trigger()                   # 第一只紫怪登场 → 本关那句现象描述
 
         # 8) 时间到 -> 结算
         if self.elapsed >= self.duration:
             self.elapsed = self.duration
             self.finish()
+
+    def fire_trigger(self):
+        """本关的「局中一次性」剧情句：只在第一次该事件发生时弹，之后不再打扰。"""
+        if self.triggered:
+            return
+        line = story.level(self.level)["trigger"]
+        if not line:
+            return
+        self.triggered = True
+        self.show_banner(line, STORY_BANNER_TIME, "story")
 
     def spawn_monster(self, kind="red"):
         """在 30×30 生成环的四条边上等概率取点：先选边再选 t，长边不会被多算。"""
@@ -380,7 +400,9 @@ class Game:
             pos = (x0, y0 + t)
         base = PURPLE_SPEED if kind == "purple" else MONSTER_SPEED
         speed = base * self.rng.uniform(*MONSTER_SPD_JITTER)
-        self.monsters.append(Monster(pos, speed, kind))
+        # 紫怪专挑「完成度最高的那一行」（config.PURPLE_MODE 可切回 nearest）
+        mode = PURPLE_MODE if kind == "purple" else "nearest"
+        self.monsters.append(Monster(pos, speed, kind, mode))
 
     def finish(self):
         """结算：只统计 21×21 目标区，外围诱饵不加分也不扣分。"""

@@ -47,7 +47,8 @@ C_TEXT = (232, 236, 240)
 
 # ==== 规则 ====
 PHASE1_DURATION = 30.0
-PHASE_SHIFT_TIME = 1.0            # 遮罩/关卡横幅持续时长（纯黑半透明 + 大字）
+PHASE_SHIFT_TIME = 1.0            # 阶段横幅（PHASE SHIFT）持续时长
+STORY_BANNER_TIME = 2.2           # 剧情字幕（开场句 / 一次触发句）停留时长
 MENU_BLINK_HZ = 2.0               # 菜单闪字频率
 ERASE_CAST = 0.25
 # 目标黑格占比下限：低于它的一版太稀、太难，重摇（§14 平衡值约 220/441 ≈ 0.50）
@@ -67,7 +68,7 @@ LEVELS = (
 )
 
 # ==== 关卡开场动画（完整黑码 → 抖动震碎 → 碎片下沉 → 灰色提示浮现）====
-INTRO_SHOW = 0.50                 # 完整黑色二维码停留多久（后半段开始抖）就震碎
+INTRO_SHOW = 1.50                 # 完整黑色二维码停留多久（后半段开始抖）就震碎
 INTRO_FALL = 1.20                 # 碎片爆散 + 下沉的时长（必须够长，让碎片全部落出屏幕）
 INTRO_FADE = 0.40                 # 灰色提示层浮现时长
 INTRO_TOTAL = INTRO_SHOW + INTRO_FALL + INTRO_FADE   # 共 2.10s，这期间不计时、不出怪、不能涂
@@ -76,6 +77,8 @@ SHAKE_STEP = 0.07                 # 每一下抖动持续多久
 # 固定偏移序列（抖 6 下、幅度递减）：前 3 下在震碎之前，后 3 下在震碎之后
 SHAKE_SEQ = ((9, -7), (-8, 6), (7, 6), (-6, -5), (4, 4), (0, 0))
 SHAKE_LEAD = 3                    # 震碎之前先抖几下（乘 SHAKE_STEP 就是提前量）
+DARK_MODULE_LEAD = 0.20           # 开场时先单独亮「暗模块」这一格，其余格子随后才出现
+DARK_MODULE = (13, 8)             # 暗模块在 21×21 目标里的坐标（整张码里唯一永远为黑的格）
 
 DEBRIS_GRAVITY = 1800.0           # 碎片重力 px/s²，负责把它们拽到屏幕下方
 DEBRIS_SPEED = (110.0, 260.0)     # 爆散初速范围
@@ -103,6 +106,10 @@ PURPLE_RADIUS = 10
 PURPLE_IDLE_LIMIT = 60.0          # 场上没黑格时能撑很久：它要等玩家先涂出东西
 PURPLE_SPAWN_WINDOW = 150.0       # 前 2 分半内的随机时刻刷新
 PURPLE_SPAWN_MARGIN = 6.0         # 但不会卡在最后 6 秒才出来
+# 选目标的方式：
+#   "nearest"  撞最近的黑格（撞到的那行是随机的）
+#   "best_row" 专挑「已涂对的目标黑格数最多」的那一行 —— 它看得懂你在干什么
+PURPLE_MODE = "best_row"
 
 # ==== 结算 ====
 THUMB_CELL = 10                   # 21×21 缩略图每格 10px → 210×210
