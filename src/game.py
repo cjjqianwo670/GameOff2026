@@ -14,6 +14,7 @@ from src.config import (
     DEBRIS_SPEED, DEBRIS_UP, FPS, GRADE_A_NOISE_PCT, GRADE_S_COVERAGE, GRADE_S_NOISE,
     INTRO_FADE, INTRO_FALL, INTRO_SHOW, INTRO_TOTAL, LEVELS, LV_BTN_GAP, LV_BTN_H, LV_BTN_W,
     MONSTER_SPD_JITTER, MONSTER_SPEED, PHASE1_DURATION, PHASE_SHIFT_TIME, PLAYER_GLOW_R,
+    PURPLE_SPAWN_MARGIN, PURPLE_SPAWN_WINDOW, PURPLE_SPEED,
     SC_A, SC_D, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER, SC_LEFT, SC_R, SC_RIGHT,
     SC_SPACE, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX, TARGET_N, TARGET_OFFSET,
     WINDOW_H, WINDOW_W
@@ -110,6 +111,7 @@ class Game:
         self.duration = cfg["time"]
         self.spawn_rate = cfg["spawn"]
         self.spawn_delay = cfg["delay"]
+        self.purple_count = cfg.get("purple", 0)   # 这一关有几只紫怪（0=没有）
 
         self.rng = random.Random()                # 不固定种子：重开必出新码
         self.target = generate_target(self.rng)
@@ -121,6 +123,10 @@ class Game:
         self.monsters = []
         self.claims = {}                          # {(r,c): 有几只怪锁着这一格}
         self.spawn_acc = 0.0
+        # 紫怪的刷新时刻：开局就把「前 2 分半内的 N 个随机时刻」排好，到点各刷一只
+        span = max(1.0, min(PURPLE_SPAWN_WINDOW, self.duration - PURPLE_SPAWN_MARGIN))
+        self.purple_times = sorted(self.rng.uniform(1.0, span) for _ in range(self.purple_count))
+        self.purple_i = 0                         # 已经刷到第几只
         self.shifted = False                      # 30s 阶段切换只允许触发一次
         self.result = None
 
@@ -349,12 +355,17 @@ class Game:
             self.spawn_acc -= interval
             self.spawn_monster()
 
+        # 7.5) 紫怪：数量和时间点都在 new_round 里定好，到点各刷一只
+        if self.purple_i < len(self.purple_times) and self.elapsed >= self.purple_times[self.purple_i]:
+            self.purple_i += 1
+            self.spawn_monster("purple")
+
         # 8) 时间到 -> 结算
         if self.elapsed >= self.duration:
             self.elapsed = self.duration
             self.finish()
 
-    def spawn_monster(self):
+    def spawn_monster(self, kind="red"):
         """在 30×30 生成环的四条边上等概率取点：先选边再选 t，长边不会被多算。"""
         side = self.rng.randrange(4)
         t = self.rng.random() * SPAWN_PX
@@ -367,8 +378,9 @@ class Game:
             pos = (x0 + t, y0 + SPAWN_PX)
         else:
             pos = (x0, y0 + t)
-        speed = MONSTER_SPEED * self.rng.uniform(*MONSTER_SPD_JITTER)
-        self.monsters.append(Monster(pos, speed))
+        base = PURPLE_SPEED if kind == "purple" else MONSTER_SPEED
+        speed = base * self.rng.uniform(*MONSTER_SPD_JITTER)
+        self.monsters.append(Monster(pos, speed, kind))
 
     def finish(self):
         """结算：只统计 21×21 目标区，外围诱饵不加分也不扣分。"""

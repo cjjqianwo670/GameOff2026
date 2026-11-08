@@ -16,7 +16,7 @@ from src.config import (
     BAR_H, BAR_W, BLACK, CELL, C_ACCENT, C_BG, C_BG_GRID, C_CELL_BLACK, C_CELL_LINE,
     C_CELL_WHITE, C_DIM, C_ERASING, C_LOCK, C_MISSING, C_MONSTER, C_PANEL, C_PLAYER,
     C_TEXT, C_WARN, ERASE_CAST, ERASING, GRID_N, GRID_ORIGIN, GRID_PX, HUD_PAD,
-    LEVELS, MENU_BLINK_HZ, MONSTER_RADIUS, PLAYER_BODY_H, PLAYER_BODY_W, PLAYER_GLOW_R,
+    LEVELS, MENU_BLINK_HZ, PLAYER_BODY_H, PLAYER_BODY_W, PLAYER_GLOW_R,
     SPAWN_ORIGIN, SPAWN_PX, TARGET_N, TARGET_OFFSET, THUMB_CELL, WHITE, WINDOW_H,
     WINDOW_W
 )
@@ -103,8 +103,9 @@ def draw_world(g: "Game"):
     # 怪物就是一个红圆；玩家必须画在它之后，否则怪物路过会把玩家盖住
     for m in g.monsters:
         mx, my = int(m.pos.x), int(m.pos.y)
-        pygame.draw.circle(s, C_MONSTER, (mx, my), MONSTER_RADIUS)
-        pygame.draw.circle(s, C_CELL_BLACK, (mx, my), MONSTER_RADIUS, 1)
+        # 半径与颜色都挂在怪身上（红怪/紫怪不同），这里不再判断类型
+        pygame.draw.circle(s, m.color, (mx, my), m.radius)
+        pygame.draw.circle(s, C_CELL_BLACK, (mx, my), m.radius, 1)
 
     # 角色在开场动画期间先不出现，等灰色二维码浮现完（正式开打）再登场
     if g.intro_t <= 0:

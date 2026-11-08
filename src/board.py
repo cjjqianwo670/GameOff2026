@@ -67,6 +67,20 @@ class Board:
         self.erase_t[r][c] = 0.0
         self.flash[(r, c)] = 0.15
 
+    def clear_row(self, r):
+        """紫怪：把这一整行的黑格全部变白，返回清掉几格（供调试/测试看）。
+
+        只动 BLACK 格：白格本来就是白的；灰色提示是从 target 推出来的，
+        这些格子清完又变回「该黑且还白」，提示会自动重新出现，
+        所以玩家的这一行等于白涂了，必须重来 —— 这就是这只怪的意义。
+        """
+        n = 0
+        for c in range(GRID_N):
+            if self.state[r][c] == BLACK:
+                self.force_white(r, c)       # 复用：变白 + 该格红闪
+                n += 1
+        return n
+
     def update(self, dt):
         for r in range(GRID_N):
             for c in range(GRID_N):

@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-"""活物：玩家（格子对齐步进）与侵蚀体（走向最近黑格、吃一格就死）。
+"""活物：玩家（格子对齐步进）与侵蚀体（走向最近黑格，撞到就生效然后自毁）。
+
+侵蚀体有两种，行为只差「撞到黑格那一刻」：
+  红怪（kind="red"）  —— 吃掉那一个黑格
+  紫怪（kind="purple"）—— 把那一整行的黑格全清成白色，逼玩家重涂这一行
 """
 
 import pygame
 
 from src.config import (
-    BLACK, GRID_N, MONSTER_EAT_DIST, MONSTER_IDLE_LIMIT, MONSTER_RETRY,
-    MOVE_REPEAT, PLAYER_START_CELL
+    BLACK, C_MONSTER, C_PURPLE, GRID_N, MONSTER_EAT_DIST, MONSTER_IDLE_LIMIT, MONSTER_RADIUS,
+    MONSTER_RETRY, MOVE_REPEAT, PLAYER_START_CELL, PURPLE_IDLE_LIMIT, PURPLE_RADIUS
 )
 from src.grid import cell_center
 
@@ -41,18 +45,32 @@ class Player:
 
 
 class Monster:
-    """侵蚀体：从生成环进来，锁住最近的空闲黑格，走过去吃掉它，然后自毁。
+    """侵蚀体：从生成环进来，锁住最近的空闲黑格，走过去撞上它，然后自毁。
 
-    一生只吃 1 格。没有状态机、没有动画阶段——走到就吃，吃完就删。
+    一生只生效 1 次。没有状态机、没有动画阶段——走到就生效，完事就删。
     「最近黑格」天然就是诱饵机制：外围涂的黑格离生成环最近，怪自然先扑它们。
+
+    kind 决定撞上黑格后的效果：
+      "red"    吃一格（默认）
+      "purple" 清掉那一整行的黑格（第二关起的紫怪）
+    半径、颜色、闲置超时都从 config 按 kind 取，画的时候不用再判断类型。
     """
 
-    def __init__(self, pos, speed):
+    def __init__(self, pos, speed, kind="red"):
+        self.kind = kind
         self.pos = pygame.Vector2(pos)
         self.speed = speed
         self.target = None                 # (r, c) 或 None
         self.idle = 0.0                    # 无目标存活计时，超时自毁
         self.retry = 0.0                   # 无目标时多久重试一次
+        if kind == "purple":
+            self.radius = PURPLE_RADIUS
+            self.color = C_PURPLE
+            self.idle_limit = PURPLE_IDLE_LIMIT   # 紫怪要等玩家涂出东西，能撑更久
+        else:
+            self.radius = MONSTER_RADIUS
+            self.color = C_MONSTER
+            self.idle_limit = MONSTER_IDLE_LIMIT
 
     def claim(self, claims):
         """松开手上锁的那一格，让别的怪可以抢。"""
@@ -99,14 +117,17 @@ class Monster:
             if self.retry <= 0:
                 self.retry = MONSTER_RETRY
                 self.retarget(board, claims)
-            return self.idle < MONSTER_IDLE_LIMIT
+            return self.idle < self.idle_limit
 
         self.idle = 0.0
         cx, cy = cell_center(*self.target)
         d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
         if d.length() <= MONSTER_EAT_DIST:
-            board.force_white(*self.target)      # 变白 + 该格红闪
+            if self.kind == "purple":
+                board.clear_row(self.target[0])   # 整行的黑格一起变白
+            else:
+                board.force_white(*self.target)   # 只吃掉这一格，变白 + 红闪
             self.claim(claims)
-            return False                         # 吃完必死
+            return False                          # 试完必死
         self.pos += d.normalize() * self.speed * dt
         return True

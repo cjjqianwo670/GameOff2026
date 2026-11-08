@@ -1,7 +1,7 @@
 # HANDOFF —— 技术交接与工作日志
 
 > 给「下一个接手的 AI」和「未来的自己」看。只写**与当前代码一致**的事实；改了代码请顺手改这里。
-> 最后更新：2026-11-07 17:20 · 代码在 `src/` 下，9 个模块 + `__init__.py`，共 1314 行
+> 最后更新：2026-11-07 17:20 · 代码在 `src/` 下，9 个模块 + `__init__.py`，共 1372 行
 
 ---
 
@@ -32,14 +32,14 @@ config ──> grid ──> board ──┐
 | 文件 | 行数 | 职责 | 允许 import |
 |---|---|---|---|
 | `src/__init__.py` | 5 | 空包标记，让 `from src.xxx import ...` 成立 | 无 |
-| `src/config.py` | 122 | 常量 / 颜色 / `LEVELS` / 开场动画参数 | 无（连 pygame 都不用） |
+| `src/config.py` | 132 | 常量 / 颜色 / `LEVELS` / 开场动画参数 | 无（连 pygame 都不用） |
 | `src/grid.py` | 41 | 坐标换算 4 个函数 | pygame, src.config |
 | `src/qr.py` | 64 | 生成 21×21 目标矩阵 | src.config |
-| `src/board.py` | 80 | 棋盘状态、`stats()`、涂改、抹除计时 | src.config, src.grid |
+| `src/board.py` | 94 | 棋盘状态、`stats()`、涂改、抹除计时 | src.config, src.grid |
 | `src/input_state.py` | 49 | 键盘状态（只认 scancode） | pygame, src.config |
-| `src/entities.py` | 112 | `Player` + `Monster` | pygame, src.config, src.grid |
-| `src/ui.py` | 349 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
-| `src/game.py` | 425 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
+| `src/entities.py` | 133 | `Player` + `Monster`（红怪吃一格 / 紫怪清一行） | pygame, src.config, src.grid |
+| `src/ui.py` | 350 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
+| `src/game.py` | 437 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
 | `src/main.py` | 67 | 开窗口 + 主循环（顶部有直接运行脚本的路径引导） | pygame, src.config, src.game |
 
 三条不许破的边界：
@@ -70,18 +70,24 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 
 ## 4. 数值（想调难度只看这里）
 
-`config.py` 的 `LEVELS`：`cover`（需复原比例）/ `time`（秒）/ `spawn`（怪物每分钟）/ `noise`（噪声上限比例）/ `delay`（首怪延迟秒）。
+`config.py` 的 `LEVELS`：`cover`（需复原比例）/ `time`（秒）/ `spawn`（红怪每分钟）/ `noise`（噪声上限比例）/ `delay`（首怪延迟秒）/ `purple`（紫怪数量，0 = 这一关没有）。
 
-| 关卡 | cover | time | spawn | noise | delay |
-|---|---|---|---|---|---|
-| 1 | 70% | 180s | 15 | 0.25 | 2.0s |
-| 2 | 72% | 170s | 20 | 0.22 | 2.0s |
-| 3 | 75% | 160s | 25 | 0.20 | 1.5s |
-| 4 | 78% | 150s | 30 | 0.18 | 1.5s |
-| 5 | 80% | 140s | 35 | 0.15 | 1.0s |
+| 关卡 | cover | time | spawn | purple | noise | delay |
+|---|---|---|---|---|---|---|
+| 1 | 70% | 180s | 15 | 0 | 0.25 | 2.0s |
+| 2 | 72% | 170s | 20 | **3** | 0.22 | 2.0s |
+| 3 | 75% | 160s | 25 | 0 | 0.20 | 1.5s |
+| 4 | 78% | 150s | 30 | 0 | 0.18 | 1.5s |
+| 5 | 80% | 140s | 35 | 0 | 0.15 | 1.0s |
+
+**紫怪（第二关起）**：跟红怪共用寻路与选目标，只有「撞上黑格那一刻」不同 —— 红怪 `force_white` 吃一格，
+紫怪调 `Board.clear_row(r)` 把整行黑格清成白色（灰提示是 target 推出来的，会自动重新出现，玩家必须重涂）。
+数量由 `LEVELS[i]["purple"]` 决定，刷新时刻在 `new_round()` 里排好（前 `PURPLE_SPAWN_WINDOW`=150s 内的随机时刻），
+出生点走同一个 `spawn_monster()`、在虚线上随机。相关常量：`PURPLE_SPEED 56` / `PURPLE_RADIUS 10` /
+`PURPLE_IDLE_LIMIT 60`（没黑格时能等更久）/ `PURPLE_SPAWN_MARGIN 6`（不会卡在最后 6 秒才刷）。
 
 其他关键值：抹除 `ERASE_CAST = 0.25s` · 第 30 秒锁外围 `PHASE1_DURATION` · 横幅 1s · 怪物速度 62（±12% 抖动）·
-啃食距离 6px · 场上无黑格 12s 后自毁 · 格子 28px / 网格 24×24 / 目标 21×21 ·
+啃食距离 6px · 场上无黑格 12s 后自毁 · 格子 28px / **网格 25×25** / 目标 21×21（正居中，四边各 2 格）·
 评级 S（复原 ≥95% 且噪声 ≤3）/ A（噪声 ≤ 上限 40%）/ B（通关）/ F（失败）。
 
 **开场动画**（进关先放，共 2.10s，期间不计时）：
@@ -117,6 +123,9 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
     所以取 1.20s。否则灰码淡入时天上还有碎片，看起来像没碎干净。
 12. **整帧抖动不要改绘制坐标**：先把画面正常画到 `canvas`，再用 `apply_shake()` 借 `shake_buf` 中转、
     按偏移重贴一次，四周露 `C_BG`。用 `sin` 的话帧率一抖、采样点就变，会忽大忽小，所以用固定序列。
+13. **改网格尺寸只动 `config.py` 三个常量**：`GRID_N`、`GRID_ORIGIN`、`TARGET_OFFSET`（外加 `GRID_PX` 的注释）。
+    现在是 25×25：`GRID_ORIGIN=(150,150)`（=(1000−25×28)/2）、`TARGET_OFFSET=(2,2)`。
+    **`GRID_N − TARGET_N` 必须是偶数**，21×21 才可能正居中；24×24 时差 3，只能左/上留 1 格。
 
 ## 6. 怎么验证（别只看代码）
 
@@ -167,6 +176,41 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 ---
 
 ## 9. 工作日志（技术向，最近在上）
+
+### 2026-11-08 · 紫怪（第二关）：撞到黑格清掉整行
+
+- 需求：第二关在红怪之外加一个紫怪，撞到黑格后让**那一整行变白**（灰色提示不动，逼玩家重涂这一行）；
+  第 2 关数量 3 只（要能调）；刷新时刻是开局前 2 分半内的随机时刻；出生点在虚线上随机。
+- 做法：`Monster.__init__(pos, speed, kind="red")`，紫怪只是多一个 `kind`；寻路、选目标、`claims` 全复用。
+  `update()` 里唯一的分叉：
+  ```python
+  if self.kind == "purple":
+      board.clear_row(self.target[0])
+  else:
+      board.force_white(*self.target)
+  ```
+  颜色/半径/闲置超时都在构造时按 `kind` 取，所以 `ui.py` 直接画 `m.color` / `m.radius`，不用判断类型。
+- **`clear_row` 只动 `BLACK`**：白格本来就是白的；灰提示是从 `target` 推出来的，清完后这些格子
+  又变回「该黑且还白」，提示自动回来 —— 这一行等于白涂。这正是「灰色格子别被覆盖成白色」的要求。
+- 刷怪时刻：`new_round()` 里排好 `purple_times = sorted(rng.uniform(1.0, span) ...)`，
+  `span = min(PURPLE_SPAWN_WINDOW, duration - PURPLE_SPAWN_MARGIN)`，`update()` 到点各刷一只。
+  比「每秒抽一次骰子」更稳：数量精确等于 `purple`，时刻可复现、可测试。
+- 验证：13 项紫怪专项（数量/窗口/30 次采样/整局只刷 3 只/清整行且不动其它行/生效后自毁/提示全回来/
+  红怪仍只吃一格）+ 26 项原回归全过；8 只怪同屏 4.48ms/帧。
+- 截图确认：紫怪与红怪颜色可区分；清行那一下整行闪 0.15s，随后灰色提示重新出现。
+
+
+### 2026-11-08 · 网格 24×24 → 25×25，二维码正居中
+
+- 用户要求「白色网格改成 25×25，21×21 的二维码放正中」。改完的好处是**四边各留 2 格**、完全对称；
+  原来 24×24 时 24−21=3 是奇数，只能左/上留 1 格、右/下留 2 格，视觉上是偏的。
+- 只动了 `config.py` 三个常量：`GRID_N 24→25`、`GRID_ORIGIN (164,164)→(150,150)`、`TARGET_OFFSET (1,1)→(2,2)`；
+  `GRID_PX` 672→700。**逻辑代码一行没改**（全走常量推导，`grid.py` 的换算函数自动适配）。
+- 几何：网格 150~850（700px），二维码 206~794（588px），左右/上下留白各 56px = 2 格；
+  生成环 840 不变 → 怪物进场走廊从 84px 收窄到 70px。
+- 验证：`pos_to_cell(150,150)=(0,0)`、`pos_to_cell(850,150)=None`、`cell_center(12,12)=(500,500)` 正中；
+  26 项回归全过（新增 4 项几何断言）；截图确认黑码阶段、阶段1、阶段2 锁定环（正好 2 格厚）、结算页都正常。
+- 文档：规格书升到 v3.3（§3.1 尺寸表、§3.2 原点与布局图重建、§4 常量重同步、§17 加两条验收）。
 
 ### 2026-11-07 晚 · 关卡开场动画（震碎 → 下沉 → 灰码浮现）+ 迁到 `src/`
 

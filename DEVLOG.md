@@ -12,3 +12,5 @@ Yesterday I used AI to make a first draft. The character can move and the mouse 
 2026.11.6
 Today I implemented the monster black-cell destruction mechanic and created the game cover art. I also took some time to study the underlying principles of QR codes, which I found quite fascinating. 
 I'm not sure yet whether I can incorporate those mechanics into the game.
+
+2026.11.8

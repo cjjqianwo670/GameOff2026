@@ -11,10 +11,10 @@
 WINDOW_W = WINDOW_H = 1000        # 逻辑画布尺寸（所有布局都按它算）
 FPS = 60
 CELL = 28
-GRID_N = 24
-GRID_ORIGIN = (164, 164)          # (1000-672)/2
+GRID_N = 25                       # 25×28 = 700px
+GRID_ORIGIN = (150, 150)          # (1000 - 25*28) / 2
 TARGET_N = 21
-TARGET_OFFSET = (1, 1)            # 24-21=3 是奇数，只能左/上留 1 格
+TARGET_OFFSET = (2, 2)            # (25-21)/2 = 2，四周各留 2 格 → 正居中
 SPAWN_N = 30
 SPAWN_ORIGIN = (80, 80)
 SPAWN_PX = SPAWN_N * CELL         # 840
@@ -24,7 +24,7 @@ SPAWN_PX = SPAWN_N * CELL         # 840
 FIT_MARGIN_X, FIT_MARGIN_Y = 80, 120   # 预留左右边距 + 标题栏 + 任务栏
 MIN_WINDOW = 520                        # 再小就看不清了
 
-GRID_PX = GRID_N * CELL           # 672
+GRID_PX = GRID_N * CELL           # 700
 
 # ==== 颜色 ====
 C_BG = (11, 15, 20)               # 窗外废墟底色
@@ -35,7 +35,8 @@ C_CELL_BLACK = (17, 17, 24)       # 已涂黑
 C_GHOST = (60, 60, 70, 110)       # 目标提示（半透明深灰，SRCALPHA）
 C_ERASING = (150, 150, 160)       # 抹除进行中
 C_LOCK = (30, 36, 45)             # 阶段2 锁定区遮罩
-C_MONSTER = (255, 61, 110)        # 侵蚀体猩红
+C_MONSTER = (255, 61, 110)        # 侵蚀体猩红（红怪：吃一格）
+C_PURPLE = (176, 112, 255)        # 紫怪：撞到黑格就清掉整行
 C_PLAYER = (108, 255, 196)        # 玩家（青绿）
 C_ACCENT = (108, 255, 196)        # 进度条 / 结算里的「涂对」
 C_WARN = (255, 176, 32)           # 警示黄
@@ -55,13 +56,14 @@ ALPHA_TRY = 40                    # 重摇次数上限，兜底取最密的一�
 
 # ==== 关卡 ====
 # 只改数字、不加新机制：cover=需复原比例 / time=时长(秒)
-# spawn=怪物每分钟 / noise=噪声上限比例 / delay=首怪延迟(秒)
+# spawn=红怪每分钟 / noise=噪声上限比例 / delay=首怪延迟(秒)
+# purple=紫怪数量（0=这一关没有；第二关暂定 3 只，随便调）
 LEVELS = (
-    {"cover": 0.70, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0},
-    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0},
-    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5},
-    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5},
-    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0},
+    {"cover": 0.70, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0, "purple": 0},
+    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3},
+    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0},
+    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0},
+    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0},
 )
 
 # ==== 关卡开场动画（完整黑码 → 抖动震碎 → 碎片下沉 → 灰色提示浮现）====
@@ -93,6 +95,14 @@ MONSTER_IDLE_LIMIT = 12.0
 MONSTER_EAT_DIST = 6.0            # 到这个距离就算啃到，直接吃掉
 MONSTER_RETRY = 0.5               # 场上没有黑格时，隔多久重试一次选目标
 MONSTER_SPD_JITTER = (0.88, 1.12)  # 每只怪速度随机浮动，别齐步走
+
+# ==== 紫怪（第二关起）：撞到黑格，把那一整行清成白色 ====
+# 数量按关卡配（见 LEVELS 的 purple 键），0 = 这一关不出现
+PURPLE_SPEED = 56.0               # 比红怪慢一点，给玩家反应时间
+PURPLE_RADIUS = 10
+PURPLE_IDLE_LIMIT = 60.0          # 场上没黑格时能撑很久：它要等玩家先涂出东西
+PURPLE_SPAWN_WINDOW = 150.0       # 前 2 分半内的随机时刻刷新
+PURPLE_SPAWN_MARGIN = 6.0         # 但不会卡在最后 6 秒才出来
 
 # ==== 结算 ====
 THUMB_CELL = 10                   # 21×21 缩略图每格 10px → 210×210
