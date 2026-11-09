@@ -14,6 +14,7 @@ from src.config import (
     DEBRIS_SPEED, DEBRIS_UP, FPS, GRADE_A_NOISE_PCT, GRADE_S_COVERAGE, GRADE_S_NOISE,
     INTRO_FADE, INTRO_FALL, INTRO_SHOW, INTRO_TOTAL, LEVELS, LV_BTN_GAP, LV_BTN_H, LV_BTN_W,
     MONSTER_SPD_JITTER, MONSTER_SPEED, PHASE1_DURATION, PHASE_SHIFT_TIME, PLAYER_GLOW_R,
+    PLAYER_START_CELL,
     PURPLE_SPAWN_MARGIN, PURPLE_SPAWN_WINDOW, PURPLE_SPEED, PURPLE_MODE,
     SC_A, SC_D, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER, SC_LEFT, SC_R, SC_RIGHT,
     SC_SPACE, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX, STORY_BANNER_TIME,
@@ -118,10 +119,13 @@ class Game:
         self.spawn_rate = cfg["spawn"]
         self.spawn_delay = cfg["delay"]
         self.purple_count = cfg.get("purple", 0)   # 这一关有几只紫怪（0=没有）
+        self.seen_on = cfg.get("seen", False)      # 这一关是否只照亮走过的地方
 
         self.rng = random.Random()                # 不固定种子：重开必出新码
         self.target = generate_target(self.rng)
-        self.board = Board(self.target)
+        self.board = Board(self.target, self.seen_on)
+        # 开局手上唯一确定的东西：脚下这一小片。其余地方一片白，得自己走过去看
+        self.board.mark_seen(*PLAYER_START_CELL, flash=False)
         self.player = Player()
         self.elapsed = 0.0
         self.state = "PLAY"
@@ -332,6 +336,8 @@ class Game:
 
         # 1) 先走格子：移动是离散步进，脚下坐标一帧内就定死
         self.player.update(dt, self.input.dir4())
+        # 走过的地方就记住了（重复调用无副作用，所以每帧标一次最省事）
+        self.board.mark_seen(*self.player.cell)
 
         # 2) 再处理脚下：按住 J（或空格）边走边涂，按住 K 边走边抹
         #    放在移动之后，所以走进新格子的那一帧它就变黑，不会「走过一格还得补一下」

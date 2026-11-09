@@ -18,7 +18,7 @@ from src.config import (
     C_CELL_WHITE, C_DIM, C_ERASING, C_LOCK, C_MISSING, C_MONSTER, C_PANEL, C_PLAYER,
     C_TEXT, C_WARN, ERASE_CAST, ERASING, GRID_N, GRID_ORIGIN, GRID_PX, HUD_PAD,
     DARK_MODULE, DARK_MODULE_LEAD, INTRO_TOTAL, LEVELS, MENU_BLINK_HZ, PLAYER_BODY_H,
-    PLAYER_BODY_W, PLAYER_GLOW_R,
+    PLAYER_BODY_W, PLAYER_GLOW_R, SEEN_FLASH_TIME,
     SPAWN_ORIGIN, SPAWN_PX, TARGET_N, TARGET_OFFSET, THUMB_CELL, WHITE, WINDOW_H,
     WINDOW_W
 )
@@ -65,13 +65,15 @@ def draw_world(g: "Game"):
                         s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
 
     # 目标提示层：只有「该黑且还白」的格子才叠，强度低到不盖住网格线。
-    # 开场结束时它从 0 淡入（hint_alpha 由 game 那边推进），平时恒为 255
+    # 开场结束时它从 0 淡入（hint_alpha 由 game 那边推进），平时恒为 255。
+    # 记忆层打开时，只有走过的地方才有提示 —— 没走过就是一片白，你完全不知道那里该不该涂
     if g.hint_alpha > 0:
         g.ghost.set_alpha(g.hint_alpha)
         for tr in range(TARGET_N):
             row = g.target[tr]
             for tc in range(TARGET_N):
-                if row[tc] and g.board.state[orr + tr][occ + tc] == WHITE:
+                if (row[tc] and g.board.state[orr + tr][occ + tc] == WHITE
+                        and g.board.is_seen(orr + tr, occ + tc)):
                     s.blit(g.ghost, (GRID_ORIGIN[0] + (occ + tc) * CELL,
                                         GRID_ORIGIN[1] + (orr + tr) * CELL))
 
@@ -98,6 +100,15 @@ def draw_world(g: "Game"):
                     s.fill(C_CELL_WHITE, rect.inflate(-2 * inset, -2 * inset))
     for (r, c) in g.board.flash:
         s.blit(g.flash_surf, (GRID_ORIGIN[0] + c * CELL, GRID_ORIGIN[1] + r * CELL))
+
+    # 刚点亮的那几格描一圈细边：从青绿渐变回网格线色，一闪就没。
+    # 没有它，玩家不容易注意到「我刚刚把这一片记住了」
+    for (r, c), t in g.board.seen_flash.items():
+        k = t / SEEN_FLASH_TIME
+        col = (int(C_CELL_LINE[0] + (C_ACCENT[0] - C_CELL_LINE[0]) * k),
+               int(C_CELL_LINE[1] + (C_ACCENT[1] - C_CELL_LINE[1]) * k),
+               int(C_CELL_LINE[2] + (C_ACCENT[2] - C_CELL_LINE[2]) * k))
+        pygame.draw.rect(s, col, cell_to_rect(r, c), 1)
 
     # 开场碎片：一块碎片就是一个 28px 黑方块，掉出屏幕底部后由 game 那边回收。
     # 描一圈浅边，否则飞到深色背景上就完全看不见了

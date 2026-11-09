@@ -4,14 +4,16 @@
 只管「数据」，不碰任何绘制。
 """
 
-from src.config import BLACK, ERASE_CAST, ERASING, GRID_N, TARGET_N, TARGET_OFFSET, WHITE
+from src.config import (
+    BLACK, ERASE_CAST, ERASING, GRID_N, SEEN_FLASH_TIME, SEEN_RADIUS, TARGET_N, TARGET_OFFSET, WHITE
+)
 from src.grid import to_target
 
 # ==== 棋盘 ====
 
 
 class Board:
-    def __init__(self, target):
+    def __init__(self, target, seen_on=False):
         self.target = target                                   # 21×21 的 0/1
         self.target_total = sum(map(sum, target))              # 目标黑格总数
         self.state = [[WHITE] * GRID_N for _ in range(GRID_N)]
@@ -20,7 +22,18 @@ class Board:
         # M1/M2 恒为 True：全网格可涂。M4 只需在 30s 时把它置 False，外围即锁死
         self.outer_open = True
 
+        # ---- 记忆层 ----
+        # seen[r][c] = 这一格的灰影亮没亮过。只照亮过的地方，其余一片白。
+        # 关掉时全部预置 True，等于老行为：整张目标随时可见（is_seen 永远为真）
+        self.seen_on = seen_on
+        self.seen = [[not seen_on] * GRID_N for _ in range(GRID_N)]
+        self.seen_flash = {}                                   # {(r,c): 剩余秒}，刚点亮那一下的细边
+
     # --- 查询 ---
+    def is_seen(self, r, c):
+        """这一格的灰影该不该显示。关掉记忆层时恒为 True。"""
+        return self.seen[r][c]
+
     def cell_ok_for_paint(self, r, c):
         if self.outer_open:
             return True
@@ -45,6 +58,26 @@ class Board:
                 elif st == BLACK:
                     noise += 1
         return correct, noise, missing
+
+    def mark_seen(self, r, c, flash=True):
+        """玩家站在 (r,c)：以他为中心的 (2R+1)² 一片灰影永久亮起。
+
+        这是「记忆」变成机制的地方 —— 走过才知道，没走过就是白的。
+        返回新点亮了几格（供测试断言用）。关掉记忆层时什么都不做。
+        """
+        if not self.seen_on:
+            return 0
+        k = SEEN_RADIUS
+        n = 0
+        for rr in range(max(0, r - k), min(GRID_N, r + k + 1)):
+            srow = self.seen[rr]
+            for cc in range(max(0, c - k), min(GRID_N, c + k + 1)):
+                if not srow[cc]:
+                    srow[cc] = True
+                    n += 1
+                    if flash:
+                        self.seen_flash[(rr, cc)] = SEEN_FLASH_TIME
+        return n
 
     def best_row(self):
         """紫怪专用：已涂对的目标黑格数最多的一行，返回整张网格的行号。
@@ -111,3 +144,7 @@ class Board:
             self.flash[k] -= dt
             if self.flash[k] <= 0:
                 del self.flash[k]
+        for k in list(self.seen_flash):
+            self.seen_flash[k] -= dt
+            if self.seen_flash[k] <= 0:
+                del self.seen_flash[k]

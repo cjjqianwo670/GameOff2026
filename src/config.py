@@ -55,23 +55,29 @@ ERASE_CAST = 0.25
 ALPHA_MIN = 0.48
 ALPHA_TRY = 40                    # 重摇次数上限，兜底取最密的一版
 
+# ==== 记忆层（seen）：灰影只照你走过的地方 ====
+# 每走到一格，以他为中心 (2*SEEN_RADIUS+1)² 的灰影永久亮起；没走过的地方就是一片白。
+# 这是把玩法从「照着涂」变成「要不要花时间去换信息」的唯一开关。
+SEEN_RADIUS = 2                   # 2 → 5×5；觉得太容易/太累先调这个（1 是 3×3）
+SEEN_FLASH_TIME = 0.22            # 新点亮的那几格亮一下细边，让玩家注意到「我记住了这里」
+
 # ==== 关卡 ====
 # 只改数字、不加新机制：cover=需复原比例 / time=时长(秒)
 # spawn=红怪每分钟 / noise=噪声上限比例 / delay=首怪延迟(秒)
-# purple=紫怪数量（0=这一关没有；第二关暂定 3 只，随便调）
+# purple=紫怪数量（0=这一关没有） / seen=这一关是否只照亮走过的地方
 LEVELS = (
-    {"cover": 0.70, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0, "purple": 0},
-    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3},
-    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0},
-    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0},
-    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0},
+    {"cover": 0.62, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0, "purple": 0, "seen": True},
+    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3, "seen": False},
+    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0, "seen": False},
+    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0, "seen": False},
+    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0, "seen": False},
 )
 
 # ==== 关卡开场动画（完整黑码 → 抖动震碎 → 碎片下沉 → 灰色提示浮现）====
 INTRO_SHOW = 1.50                 # 完整黑色二维码停留多久（后半段开始抖）就震碎
 INTRO_FALL = 1.20                 # 碎片爆散 + 下沉的时长（必须够长，让碎片全部落出屏幕）
 INTRO_FADE = 0.40                 # 灰色提示层浮现时长
-INTRO_TOTAL = INTRO_SHOW + INTRO_FALL + INTRO_FADE   # 共 2.10s，这期间不计时、不出怪、不能涂
+INTRO_TOTAL = INTRO_SHOW + INTRO_FALL + INTRO_FADE   # 共 3.10s，这期间不计时、不出怪、不能涂
 
 SHAKE_STEP = 0.07                 # 每一下抖动持续多久
 # 固定偏移序列（抖 6 下、幅度递减）：前 3 下在震碎之前，后 3 下在震碎之后

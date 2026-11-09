@@ -1,7 +1,7 @@
 # HANDOFF —— 技术交接与工作日志
 
 > 给「下一个接手的 AI」和「未来的自己」看。只写**与当前代码一致**的事实；改了代码请顺手改这里。
-> 最后更新：2026-11-08 19:05 · 代码在 `src/` 下，10 个模块 + `__init__.py`，共 1554 行
+> 最后更新：2026-11-09 14:00 · 代码在 `src/` 下，10 个模块 + `__init__.py`，共 1614 行
 
 ---
 
@@ -22,12 +22,14 @@ M1 网格与涂改 · M2 二维码与提示层 · M3 怪物 · M4 阶段锁定�
 
 **机制改造（进行中，2026-11-08 起）**：目标是把五关从「五档数值」变成「五条规则」。
 
+- ✅ **记忆层 `seen`**：灰影只照走过的地方（第 1 关已开，约 +60 行，见 §9）
 - ✅ **L2 紫怪只清「完成度最高的那一行」**（`PURPLE_MODE = "best_row"`）
 - ⬜ L3 三锚 / 时序免疫（怪会改道）
 - ⬜ L4 伪忆怪（白格染黑）+ 噪声上限收紧
 - ⬜ L5 格式兽（清一整份 15 格名签）—— 要先在 `qr.py` 的 `reserved` 里补格式信息坐标
 - ⬜ 尾声两个分支（`J` 涂黑 / `ESC` 离开）
 - ⬜ 第 5 关真编码 + 独立扫描屏 —— **要引入 `segno`，会破「只用 pygame」的铁律，得单独拍板**
+- ⬜ 记忆层开满 2~5 关，并重配这四关的 `cover`（现在只有第 1 关开，见 §4）
 
 ## 2. 结构与边界（最重要）
 
@@ -44,14 +46,14 @@ config ──> grid ──> board ──┐
 | 文件 | 行数 | 职责 | 允许 import |
 |---|---|---|---|
 | `src/__init__.py` | 5 | 空包标记，让 `from src.xxx import ...` 成立 | 无 |
-| `src/config.py` | 139 | 常量 / 颜色 / `LEVELS` / 开场动画参数 / `PURPLE_MODE` | 无（连 pygame 都不用） |
+| `src/config.py` | 145 | 常量 / 颜色 / `LEVELS` / 开场动画参数 / `PURPLE_MODE` / 记忆层参数 | 无（连 pygame 都不用） |
 | `src/grid.py` | 41 | 坐标换算 4 个函数 | pygame, src.config |
 | `src/qr.py` | 65 | 生成 21×21 目标矩阵 | src.config |
-| `src/board.py` | 113 | 棋盘状态、`stats()`、`best_row()`、涂改、抹除计时 | src.config, src.grid |
+| `src/board.py` | 150 | 棋盘状态、`stats()`、`best_row()`、`seen` 记忆位图、涂改、抹除计时 | src.config, src.grid |
 | `src/input_state.py` | 49 | 键盘状态（只认 scancode） | pygame, src.config |
 | `src/entities.py` | 161 | `Player` + `Monster`（红怪吃一格 / 紫怪清一行，带 `mode` 选目标） | pygame, src.config, src.grid |
-| `src/ui.py` | 397 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
-| `src/game.py` | 459 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
+| `src/ui.py` | 408 | 所有 `draw_*`（首参 `Game`，只读） | pygame, src.config, src.grid（`Game` 仅 `TYPE_CHECKING`） |
+| `src/game.py` | 465 | `Game`：状态机 / 回合 / 关卡 / 开场动画 / 每帧更新 | 全部业务模块 + ui |
 | `src/story.py` | 58 | **全部叙事文本**（22 行 + 每关 open/trigger/end） | 无 |
 | `src/main.py` | 67 | 开窗口 + 主循环（顶部有直接运行脚本的路径引导） | pygame, src.config, src.game |
 
@@ -84,15 +86,26 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 
 ## 4. 数值（想调难度只看这里）
 
-`config.py` 的 `LEVELS`：`cover`（需复原比例）/ `time`（秒）/ `spawn`（红怪每分钟）/ `noise`（噪声上限比例）/ `delay`（首怪延迟秒）/ `purple`（紫怪数量，0 = 这一关没有）。
+`config.py` 的 `LEVELS`：`cover`（需复原比例）/ `time`（秒）/ `spawn`（红怪每分钟）/ `noise`（噪声上限比例）/ `delay`（首怪延迟秒）/ `purple`（紫怪数量，0 = 这一关没有）/ `seen`（记忆层开不开）。
 
-| 关卡 | cover | time | spawn | purple | noise | delay |
-|---|---|---|---|---|---|---|
-| 1 | 70% | 180s | 15 | 0 | 0.25 | 2.0s |
-| 2 | 72% | 170s | 20 | **3** | 0.22 | 2.0s |
-| 3 | 75% | 160s | 25 | 0 | 0.20 | 1.5s |
-| 4 | 78% | 150s | 30 | 0 | 0.18 | 1.5s |
-| 5 | 80% | 140s | 35 | 0 | 0.15 | 1.0s |
+| 关卡 | cover | time | spawn | purple | noise | delay | seen |
+|---|---|---|---|---|---|---|---|
+| 1 | 62% | 180s | 15 | 0 | 0.25 | 2.0s | **True** |
+| 2 | 72% | 170s | 20 | **3** | 0.22 | 2.0s | False |
+| 3 | 75% | 160s | 25 | 0 | 0.20 | 1.5s | False |
+| 4 | 78% | 150s | 30 | 0 | 0.18 | 1.5s | False |
+| 5 | 80% | 140s | 35 | 0 | 0.15 | 1.0s | False |
+
+**记忆层（`seen`）**：`Board.seen` 是 25×25 的 bool，`True` = 这一格的灰影亮着。
+`game.update()` 每帧调一次 `board.mark_seen(*player.cell)`（幂等，重复调不花什么钱），
+把以玩家为中心的 `(2×SEEN_RADIUS+1)²` 置 True，并给新亮的格子记一个 `seen_flash` 计时（`ui.py` 用它描一圈
+从青绿渐变回网格线的细边，0.22s 消失）。`ui.draw_world()` 的灰影循环多一个 `board.is_seen(...)` 条件。
+
+关掉这一关的记忆层时，`Board.__init__` 直接把 `seen` 全预置成 `True`，`is_seen()` 恒真、`mark_seen()` 直接返回 0 ——
+**代码路径完全一样，等于老玩法**，所以 A/B 不用切换分支。
+
+`seen` 只在 `new_round()` 里初始化一次（`mark_seen(*PLAYER_START_CELL, flash=False)`，故意不闪，
+否则开场动画里会有个怪光圈），开局动画期间玩家不能动，所以整段动画只有脚下 5×5 有灰影。
 
 **紫怪（第二关起）**：跟红怪共用寻路与选目标，只有「撞上黑格那一刻」不同 —— 红怪 `force_white` 吃一格，
 紫怪调 `Board.clear_row(r)` 把整行黑格清成白色（灰提示是 target 推出来的，会自动重新出现，玩家必须重涂）。
@@ -130,13 +143,7 @@ TITLE ──(Enter / 点 START)──> SELECT ──(Enter / 点关卡)──> P
 | `DEBRIS_SPEED` / `DEBRIS_UP` / `DEBRIS_JITTER` | 110~260 / 120 / 60 | 爆散初速、向上抛偏置、水平随机 |
 
 > 注意：`INTRO_TOTAL` 是**三项相加**得到的 3.10s，不是某个写死的值。
-> `config.py` 里那行注释还写着「共 2.10s」，是 `INTRO_SHOW` 从 0.50 调到 1.50 时漏改的**注释**，
-> 计算本身没错。下次动 `config.py` 时顺手把注释改掉。
-| `DARK_MODULE_LEAD` | 0.20s | 开场最初 0.2s 只亮暗模块一格，其余格子随后出现 |
-| `SHAKE_STEP` / `SHAKE_SEQ` | 0.07s / 6 组偏移 | 抖 6 下、幅度递减；固定序列，不用 sin |
-| `SHAKE_LEAD` | 3 | 震碎**之前**先抖几下（所以是「抖两三下再碎」） |
-| `DEBRIS_GRAVITY` | 1800 | 碎片重力 px/s²；改它就要同步改 `INTRO_FALL` |
-| `DEBRIS_SPEED` / `DEBRIS_UP` / `DEBRIS_JITTER` | 110~260 / 120 / 60 | 爆散初速、向上抛偏置、水平随机 |
+> （`config.py` 里那行注释曾错写成「共 2.10s」，2026-11-09 已改为 3.10s，计算本身一直没错。）
 
 ## 5. 踩过的坑（别重犯）
 
@@ -203,6 +210,10 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 
 ## 8. 下一步
 
+0. **先试玩第 1 关，只回答一个问题**：「我刚才是不是为了看地图，放弃了补某一格？」
+   是 → 机制成立，把 `seen` 开满 2~5 关并重配 `cover`；不是（或者发现自己只是"先跑一圈把图点亮再正常玩"）
+   → 先把 `SEEN_RADIUS` 从 2 调到 1 再试，还不行就说明这个机制没造出取舍，**砍掉，别硬撑**。
+   想让它更硬可以加"亮过的地方 25~30 秒没再踩就退回未知"，但那样一次动两个变量，试玩时分不清是谁起的作用。
 1. **M7 打包**：`pyinstaller --onefile --windowed src/main.py`（`src/main.py` 顶部有路径引导，
    打包后也能找到 `src.*` 模块）；打完记得在干净机器上试跑一次
 2. 解锁进度不落盘，重开归零；要持久化就存一个小 txt（代价：多一个外部文件）
@@ -212,6 +223,29 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 ---
 
 ## 9. 工作日志（技术向，最近在上）
+
+### 2026-11-09 · 记忆层：灰影只照你走过的地方（+60 行）
+
+- **为什么做这个**：玩法的死结是「四步都不需要判断」——看灰影 → 走过去 → 涂黑 → 怪吃掉 → 补一格，
+  成本只有 2 格路（`MOVE_REPEAT=0.13`，7.7 格/秒，而通关只要 0.86 格/秒）。
+  守与不守都不花钱，所以这个本该是核心的问题根本不成其为问题。设计提案 `DATA_SHIFT_设计提案_v1.md` §3 的全部赌注就在这一条。
+- **改了什么**（4 个文件，`entities.py` 一行没动）：
+  - `board.py` +37：`Board(target, seen_on)`、`seen` 25×25 bool、`is_seen()`、`mark_seen(r,c,flash=True)`（返回新亮了几格）、
+    `seen_flash` 计时字典，并在 `update()` 里衰减
+  - `game.py` +6：`new_round()` 里按关卡的 `seen` 建棋盘 + 开局 `mark_seen(*PLAYER_START_CELL, flash=False)`；
+    `update()` 走完格子后每帧 `mark_seen(*player.cell)`（幂等，不判"有没有动过"更省事）
+  - `ui.py` +11：灰影循环加 `board.is_seen(...)`；新增一轮细边描边（颜色从 `C_ACCENT` 线性插值回 `C_CELL_LINE`）
+  - `config.py` +6：`SEEN_RADIUS=2`（5×5）/ `SEEN_FLASH_TIME=0.22` / `LEVELS` 每关加 `seen` 键
+- **为什么做成逐关开关而不是全局**：一次只改一个变量才能判断是机制的问题还是数值的问题。
+  第 1 关开、2~5 关关，等第 1 关手感确认了再一次性开满并重配 `cover`。
+  关掉时 `Board.__init__` 直接把 `seen` 全预置 `True`，`is_seen()` 恒真 —— **代码路径完全一样**，不是 if 分支绕过去。
+- **数值**：第 1 关 `cover` 70% → **62%**。地图变暗后要额外花约 20 秒探索，先让玩家能过，
+  不然测试时会把"没过"误读成"机制不对"。`time` 仍是 180s，没动。
+- **验证**：`_verify_seen.py` 32 项全过，含**像素断言**——没走过的目标黑格中心像素必须是 `(247,247,249)` 纯白，
+  走过的必须是 `(166,166,172)`（灰影合成色），两者必须不同。这是铁律 9 要求的"不能只读代码"。
+  `_verify_l2.py` 15 项、`_verify_v35.py` 9 项老回归全过。
+- **性能反而变快了**：局内 2.01ms/帧（原 3.2ms）——灰影只画见过的格子，blit 次数少了。
+- 出图确认三种状态：开局只有脚下 5×5 / 探索 5.7 秒后点亮 145 格、形状是一条"走过的走廊" / 中局边探边涂。
 
 ### 2026-11-08 晚 · 机制优先：紫怪改成「只清完成度最高的那一行」
 
