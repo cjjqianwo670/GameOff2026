@@ -62,15 +62,18 @@ SEEN_RADIUS = 2                   # 2 → 5×5；觉得太容易/太累先调这
 SEEN_FLASH_TIME = 0.22            # 新点亮的那几格亮一下细边，让玩家注意到「我记住了这里」
 
 # ==== 关卡 ====
-# 只改数字、不加新机制：cover=需复原比例 / time=时长(秒)
-# spawn=红怪每分钟 / noise=噪声上限比例 / delay=首怪延迟(秒)
-# purple=紫怪数量（0=这一关没有） / seen=这一关是否只照亮走过的地方
+# 分工：**规则负责难，数字负责公平**。
+# 五关的难点应该来自各自的规则（紫怪 / 结构 / 噪声 / 名签），不是来自数字一路往上爬。
+# 所以 cover 只在 62~72 之间缓升、时长 180~165 缓降 —— 数字拉平了，玩家才能感觉到
+# 「这一关和上一关不一样」，而不是「这一关更赶」。
+# cover=需复原比例 / time=时长(秒) / spawn=红怪每分钟 / noise=噪声上限比例 /
+# delay=首怪延迟(秒) / purple=紫怪数量（0=没有） / seen=这一关是否只照亮走过的地方
 LEVELS = (
     {"cover": 0.62, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0, "purple": 0, "seen": True},
-    {"cover": 0.72, "time": 170.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3, "seen": False},
-    {"cover": 0.75, "time": 160.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0, "seen": False},
-    {"cover": 0.78, "time": 150.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0, "seen": False},
-    {"cover": 0.80, "time": 140.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0, "seen": False},
+    {"cover": 0.64, "time": 175.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3, "seen": True},
+    {"cover": 0.66, "time": 170.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0, "seen": True},
+    {"cover": 0.68, "time": 170.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0, "seen": True},
+    {"cover": 0.72, "time": 165.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0, "seen": True},
 )
 
 # ==== 关卡开场动画（完整黑码 → 抖动震碎 → 碎片下沉 → 灰色提示浮现）====
