@@ -9,7 +9,7 @@
 
 - 代码在 **`src/`** 包里（`from src.xxx import ...`）；解释器 `.venv`（Python 3.11.5 + pygame 2.6.1），入口 `src/main.py`
 - 跑起来（都在**项目根目录**执行）：`python src/main.py` 或 `python -m src.main`；**改数值只改 `src/config.py`**
-- 中文技术规格书（1364 行，规则、数值、设计理由最全）在仓库**之外**：
+- 中文技术规格书（1603 行，内容到 **v3.7**，规则、数值、设计理由最全，含 §7.4 记忆层）在仓库**之外**：
   `D:/Al_WorkPlace/WorrkBuddy_WorkPlace/game尝试/GameOff2026_SHIFT_TechSpec_v2.1.md`
 
 ## 1. 进度
