@@ -480,7 +480,7 @@ def _draw_monologue(g, s):
     widest = max(g.f_mono.size(ln)[0] for ln in lines) if lines else 0
     rows = max(1, len(vis))
     ph = rows * MONO_LINE_H + 28
-    plate = pygame.Rect(0, MONO_TOP, widest + 96, ph)
+    plate = pygame.Rect(0, MONO_TOP, widest + 80, ph)
     plate.centerx = PLAY_W // 2
 
     band = pygame.Surface(plate.size, pygame.SRCALPHA)
