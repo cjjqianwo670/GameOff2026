@@ -23,3 +23,10 @@ Today I wanted to try getting AI to implement a scene and gameplay mechanic I’
 What the AI produced today felt really stiff. The stuff I built a few days ago was so basic that I didn’t notice this issue at all. I even started questioning whether I should use Pygame with AI for my game. Still, I’m sticking with Pygame.
 I learned a new term today: vibe coding. It feels like that’s exactly what I’m doing right now. I don’t think I could build a game from scratch without AI anytime soon. Even coding a simple Sokoban game on my own would be a huge challenge for me.
 After today’s experience, I realize that unless I fully understand the overall code logic, I won’t be able to get the AI to wrap the story and gameplay I envision into one cohesive game. And since everything in Pygame is written purely in code… I’m honestly overwhelmed.
+
+2026，11，10
+这两天我重新写了方案，我还是决定把情节和机制一起做，然后慢慢去推进度。我也不知道这样行不行，我感觉用pygame去做还是好难啊。我不敢想像如果不靠ai我该怎么把我的想法表达出来。
+玩法一遍再变，按我现在的想法做下去游戏时常应该不会很长。美工也是个问题呢，精灵图也挺有意思的，不过我就不手搓了哈哈哈，那太折磨了。
+其实我也很担心我这个月学不到什么东西，因为除了设计之外，其他几乎都是ai做的了。我其实也很愿意一天坐在电脑前去看看ai到底是怎么做这个游戏的，但是这样的话我的学业就没办法平衡了。
+前面我还想每次写完工作日志然后自己去用英语翻译一遍，然后锻炼一下自己的英语翻译能力，显然从11月8号开始我就基本放弃了，哈哈哈哈。
+翻译什么的之后再说吧。加油！！！
