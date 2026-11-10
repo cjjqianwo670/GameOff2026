@@ -39,3 +39,16 @@ def to_target(r, c):
     if 0 <= tr < TARGET_N and 0 <= tc < TARGET_N:
         return tr, tc
     return None
+
+
+def target_rect():
+    """圣坛（21×21）在屏幕上的矩形。"""
+    return pygame.Rect(GRID_ORIGIN[0] + TARGET_OFFSET[1] * CELL,
+                       GRID_ORIGIN[1] + TARGET_OFFSET[0] * CELL,
+                       TARGET_N * CELL, TARGET_N * CELL)
+
+
+def altar_center():
+    r = target_rect()
+    return r.centerx, r.centery
+

@@ -1,32 +1,36 @@
 # -*- coding: utf-8 -*-
-"""游戏主类：状态机、回合、关卡推进、输入分发、每帧更新。
+"""游戏主类：状态机、每帧更新、输入分发。
 
 只管「规则」：画法在 ui.py，数值在 config.py。
+
+第一幕 Phase A 的状态机（剧情层 Phase B 再往上加）：
+    TITLE ──> PLAY ──(100 格全复原)──> CLEAR ──> END
+                └──(血量归零)──> DEAD ──(点击)──> PLAY（回检查点）
 """
 
+import math
 import random
 
 import pygame
 
 from src.board import Board
 from src.config import (
-    BTN_H, BTN_W, CELL, C_BG, C_GHOST, C_MONSTER, C_PLAYER, DEBRIS_GRAVITY, DEBRIS_JITTER,
-    DEBRIS_SPEED, DEBRIS_UP, FPS, GRADE_A_NOISE_PCT, GRADE_S_COVERAGE, GRADE_S_NOISE,
-    INTRO_FADE, INTRO_FALL, INTRO_SHOW, INTRO_TOTAL, LEVELS, LV_BTN_GAP, LV_BTN_H, LV_BTN_W,
-    MONSTER_SPD_JITTER, MONSTER_SPEED, PHASE1_DURATION, PHASE_SHIFT_TIME, PLAYER_GLOW_R,
-    PLAYER_START_CELL,
-    PURPLE_SPAWN_MARGIN, PURPLE_SPAWN_WINDOW, PURPLE_SPEED, PURPLE_MODE,
-    SC_A, SC_D, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER, SC_LEFT, SC_R, SC_RIGHT,
-    SC_SPACE, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX, STORY_BANNER_TIME,
-    TARGET_N, TARGET_OFFSET,
-    WINDOW_H, WINDOW_W
+    BANNER_TIME, CELL, C_MIRAGE, C_MONSTER, C_PLAYER, FPS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE,
+    PANEL_X, PLAYER_GLOW_R, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_MARGIN,
+    RED_SPAWN_PER_MIN, RED_SPD_JITTER, RED_SPEED, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K,
+    SC_KP_ENTER, SC_R, SC_SHIFT, SC_SPACE, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT,
+    CLEAR_GLOW_TIME, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, WINDOW_H, WINDOW_W
 )
 from src.entities import Monster, Player
-from src.grid import cell_center
+from src.grid import altar_center, cell_center, target_rect
 from src.input_state import InputState
-from src.qr import generate_target
-from src import story
-from src.ui import draw_banner, draw_hud, draw_result, draw_select, draw_title, draw_world
+from src.qr import generate_target, required_cells
+from src.ui import draw_dead, draw_end, draw_hud, draw_title, draw_world
+
+# 系统提示文本（HUD 类，全大写）。剧情台词不在这个文件里。
+MSG_STAIN = "THAT IS NOT DARK. IT IS A STAIN.  [K] TO CLEAR IT."
+MSG_STEP_IN = "STEP INTO THE ALTAR"
+MSG_ACT_END = "ACT 1 \u2014 END"
 
 # ==== 游戏主类 ====
 
@@ -45,353 +49,273 @@ class Game:
         self._last_dt = 1.0 / FPS              # 给 F1 调试显示用
 
         # 字体只在初始化时创建一次，绝不在 draw 里新建
-        self.f_main = pygame.font.Font(None, 28)
-        self.f_small = pygame.font.Font(None, 22)
-        self.f_mid = pygame.font.Font(None, 52)        # 结算页标题
-        self.f_big = pygame.font.Font(None, 110)       # 结算页评级
-        self.f_story = pygame.font.Font(None, 40)      # 剧情大字（结算页那句）
+        self.f_small = pygame.font.Font(None, 21)
+        self.f_main = pygame.font.Font(None, 27)
+        self.f_panel = pygame.font.Font(None, 30)
+        self.f_mid = pygame.font.Font(None, 46)
+        self.f_big = pygame.font.Font(None, 104)
 
-        self.center = pygame.Vector2(WINDOW_W / 2, WINDOW_H / 2)   # 怪物无目标时的漂向点
-
-        # 28×28 的半透明提示块反复复用（每帧新建 400 个 Surface 会掉帧）
-        self.ghost = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
-        self.ghost.fill(C_GHOST)
-
-        # 玩家脚下光晕，同样只做一次
+        # --- 复用贴图（每帧新建 Surface 会掉帧）---
+        self.mirage_tile = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.mirage_tile.fill(C_MIRAGE)
         self.glow = pygame.Surface((PLAYER_GLOW_R * 2, PLAYER_GLOW_R * 2), pygame.SRCALPHA)
         pygame.draw.circle(self.glow, (*C_PLAYER, 46), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
+        self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.flash_surf.fill((*C_MONSTER, 120))
+        self.stain_tile = make_stain_tile()
 
-        # 横幅（关卡开场 / 阶段切换）用的整屏遮罩，只建一次，每帧重填内容
-        self.overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        # --- 运行时状态（start_act 里铺开）---
+        self.state = "TITLE"
         self.menu_t = 0.0
+        self.hover = None
+        # 旧五关版残留字段：新版不进入 SELECT / RESULT，留着让 ui 里那几个旧界面不报错
+        self.level = 1
+        self.unlocked = 1
+        self.sel = 1
+        self.result = None
+
+        self.rng = random.Random()
+        self.target = []
+        self.qr_content = ""
+        self.must = set()
+        self.board = None
+        self.player = None
+        self.health = HEALTH_MAX
+        self.monsters = []
+        self.claims = {}                       # {(r,c): 有几只怪锁着这一格}
+        self.elapsed = 0.0                     # 战斗计时（从检查点开始算）
+        self.spawn_rate = RED_SPAWN_PER_MIN
+        self.spawn_acc = 0.0
+        self.accel_step = 0
+        self.checkpoint = None
+        self.stain_warned = False
+        self.reveal_used = False
+
+        self.hint_text = ""
+        self.hint_t = 0.0
         self.banner_text = ""
         self.banner_t = 0.0
         self.banner_total = 1.0
-        self.banner_kind = "big"        # "big"=整屏大字 / "story"=底部字幕条
-        self.band = pygame.Surface((WINDOW_W, 100), pygame.SRCALPHA)   # 字幕条底，只建一次
-        self.level = 1
-        self.unlocked = 1            # 已解锁到第几关（内存里，退出游戏就归 1）
-        self.sel = 1                 # 选关页当前高亮哪一关
-        self.hover = None            # 鼠标悬停的按钮下标
 
-        # 被啃格的红闪覆盖层（半透明），M3 复用，同样只做一次
-        self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
-        self.flash_surf.fill((*C_MONSTER, 120))
-
-        # 开场动画：抖动是把画好的整帧挪一下，所以留一块缓冲区做中转
-        self.shake_buf = pygame.Surface((WINDOW_W, WINDOW_H))
-
-        # 下面这些真正在 new_round() 里赋值；这里先给默认值，
-        # 一是让 IDE 能静态识别属性（不报 defined outside __init__），二是断言它们永远存在
-        self.goal_cover = LEVELS[0]["cover"]
-        self.goal_noise = LEVELS[0]["noise"]
-        self.duration = LEVELS[0]["time"]
-        self.spawn_rate = LEVELS[0]["spawn"]
-        self.spawn_delay = LEVELS[0]["delay"]
-        self.rng = random.Random()
-        self.target = []
-        self.board = None
-        self.player = None
-        self.elapsed = 0.0
-        self.monsters = []
-        self.claims = {}
-        self.spawn_acc = 0.0
-        self.shifted = False
-        self.result = None
-        self.triggered = False      # 本关的一次性剧情句是否已触发
-        self.intro_t = 0.0          # >0 表示开场动画还没放完
-        self.debris = []            # 震碎的黑色格子：[[x, y, vx, vy], ...]
-        self.shake_t = 0.0          # 抖动剩余时间
-        self.shake_started = False  # 抖动是否已开始（比震碎早几下）
-        self.shake_off = (0, 0)     # 当前这一帧的抖动偏移
-        self.burst_done = False     # 是否已经炸开
-        self.hint_alpha = 255       # 灰色提示层不透明度（开场从 0 淡入）
-
-        self.new_round()
-        self.state = "TITLE"                      # 开局落在开始页（此时棋盘已备好一局）
+        self.clear_phase = None                # "glow" / "wave" / "hold"
+        self.clear_t = 0.0
+        self.wave_r = 0.0
+        self.glow_t = 0.0
 
     # ---------- 开局 ----------
-    def new_round(self):
-        cfg = LEVELS[self.level - 1]              # 关卡参数只在这里读一次
-        self.goal_cover = cfg["cover"]
-        self.goal_noise = cfg["noise"]
-        self.duration = cfg["time"]
-        self.spawn_rate = cfg["spawn"]
-        self.spawn_delay = cfg["delay"]
-        self.purple_count = cfg.get("purple", 0)   # 这一关有几只紫怪（0=没有）
-        self.seen_on = cfg.get("seen", False)      # 这一关是否只照亮走过的地方
-
-        self.rng = random.Random()                # 不固定种子：重开必出新码
-        self.target = generate_target(self.rng)
-        self.board = Board(self.target, self.seen_on)
-        # 开局手上唯一确定的东西：脚下这一小片。其余地方一片白，得自己走过去看
-        self.board.mark_seen(*PLAYER_START_CELL, flash=False)
+    def start_act(self):
+        """第一幕开局 = 检查点。Phase A 没有剧情，直接从「老者离开那一刻」开始。"""
+        self.target, self.qr_content = generate_target(self.rng)
+        self.must = required_cells(self.target)
+        self.board = Board(self.target, self.must)
         self.player = Player()
+        self.health = HEALTH_MAX
+        self.monsters = []
+        self.claims = {}
         self.elapsed = 0.0
+        self.spawn_acc = 0.0
+        self.spawn_rate = RED_SPAWN_PER_MIN
+        self.accel_step = 0
+        self.stain_warned = False
+        self.reveal_used = False
+        self.hint_text = ""
+        self.hint_t = 0.0
+        self.banner_text = ""
+        self.banner_t = 0.0
+        self.clear_phase = None
+        self.clear_t = 0.0
+        self.wave_r = 0.0
+        self.glow_t = 0.0
+        self.checkpoint = self.make_checkpoint()
+        self.state = "PLAY"
+        self.input.held.clear()
+
+    def make_checkpoint(self):
+        """「老者离开那一刻」的快照：棋盘 + 血量 + 刷怪节奏。"""
+        return {
+            "board": self.board.snapshot(),
+            "health": self.health,
+            "elapsed": self.elapsed,
+            "spawn_rate": self.spawn_rate,
+            "accel_step": self.accel_step,
+        }
+
+    def restore_checkpoint(self):
+        cp = self.checkpoint
+        self.board.restore(cp["board"])
+        self.health = cp["health"]
+        self.elapsed = cp["elapsed"]
+        self.spawn_rate = cp["spawn_rate"]
+        self.accel_step = cp["accel_step"]
+        for m in self.monsters:                 # claims 必须归零，否则后面的怪以为全被占了
+            m.claim(self.claims)
+        self.monsters.clear()
+        self.claims.clear()
+        self.spawn_acc = 0.0
+        self.player.reset()
+        self.hint_text = ""
+        self.hint_t = 0.0
+        self.clear_phase = None
+        self.clear_t = 0.0
+        self.wave_r = 0.0
+        self.input.held.clear()
         self.state = "PLAY"
 
-        self.monsters = []
-        self.claims = {}                          # {(r,c): 有几只怪锁着这一格}
-        self.spawn_acc = 0.0
-        # 紫怪的刷新时刻：开局就把「前 2 分半内的 N 个随机时刻」排好，到点各刷一只
-        span = max(1.0, min(PURPLE_SPAWN_WINDOW, self.duration - PURPLE_SPAWN_MARGIN))
-        self.purple_times = sorted(self.rng.uniform(1.0, span) for _ in range(self.purple_count))
-        self.purple_i = 0                         # 已经刷到第几只
-        self.shifted = False                      # 30s 阶段切换只允许触发一次
-        self.result = None
+    # ---------- 提示 ----------
+    def show_hint(self, text, secs=HINT_TIME):
+        """底部一行系统提示（全大写）。"""
+        self.hint_text = text
+        self.hint_t = secs
 
-        # 开场动画：完整黑码 → 抖两下震碎 → 碎片下沉 → 灰色提示浮现
-        # 这 2 秒里不计时、不出怪、不响应涂改，动画放完才显示 LEVEL n 横幅
-        self.intro_t = INTRO_TOTAL
-        self.debris = []
-        self.shake_t = 0.0
-        self.shake_started = False
-        self.shake_off = (0, 0)
-        self.burst_done = False
-        self.hint_alpha = 0
-        self.triggered = False
-        # 开场句在动画期间用底部字幕条显示：动画有 3 秒，刚好够读完，且不挡棋盘
-        self.show_banner(story.level(self.level)["open"], INTRO_TOTAL, "story")
-
-    def show_banner(self, text, secs, kind="big"):
-        """kind="big" 是整屏大字（PHASE SHIFT）；"story" 是底部字幕条（剧情句，不挡棋盘）。"""
+    def show_banner(self, text, secs=BANNER_TIME):
         self.banner_text = text
         self.banner_t = secs
         self.banner_total = secs
-        self.banner_kind = kind
-
-    # ---------- 开场动画 ----------
-    def update_intro(self, dt):
-        """完整黑码 → 抖动震碎 → 碎片下沉 → 灰色提示浮现。期间不计时。"""
-        t = INTRO_TOTAL - self.intro_t            # 动画已经过去的时长
-        self.intro_t -= dt
-
-        # 1) 先抖三下，抖到中段才震碎：抖动起点比震碎点提前 SHAKE_LEAD 下
-        if not self.shake_started and t >= INTRO_SHOW - SHAKE_STEP * SHAKE_LEAD:
-            self.shake_t = SHAKE_STEP * len(SHAKE_SEQ)
-            self.shake_started = True
-        if not self.burst_done and t >= INTRO_SHOW:
-            self.burst()                          # 每个黑格变成一块碎片
-            self.burst_done = True
-
-        # 2) 抖动：按固定序列取偏移，抖 6 下、幅度递减（比 sin 更可控）
-        if self.shake_t > 0:
-            self.shake_t = max(0.0, self.shake_t - dt)
-            total = SHAKE_STEP * len(SHAKE_SEQ)
-            idx = int((total - self.shake_t) / SHAKE_STEP)
-            self.shake_off = SHAKE_SEQ[min(idx, len(SHAKE_SEQ) - 1)]
-        else:
-            self.shake_off = (0, 0)
-
-        # 3) 碎片物理：初速向外炸，重力把它们一路拽到屏幕下方
-        alive = []
-        for d in self.debris:
-            d[3] += DEBRIS_GRAVITY * dt
-            d[0] += d[2] * dt
-            d[1] += d[3] * dt
-            if d[1] < WINDOW_H + CELL:            # 掉出屏幕底部就回收
-                alive.append(d)
-        self.debris = alive
-
-        # 4) 灰色提示层淡入（碎片基本落完之后才开始浮现）
-        fade_start = INTRO_SHOW + INTRO_FALL
-        if t >= fade_start:
-            self.hint_alpha = int(255 * min(1.0, (t - fade_start) / INTRO_FADE))
-
-        # 5) 结束：恢复正常玩法，计时从这里才开始跑
-        if self.intro_t <= 0:
-            self.intro_t = 0.0
-            self.debris.clear()
-            self.shake_off = (0, 0)
-            self.hint_alpha = 255
-
-    def burst(self):
-        """把完整二维码的每个黑格变成一块碎片，从网格中心向外炸开。"""
-        orr, occ = TARGET_OFFSET
-        cx, cy = WINDOW_W / 2.0, WINDOW_H / 2.0
-        self.debris = []
-        for tr in range(TARGET_N):
-            row = self.target[tr]
-            for tc in range(TARGET_N):
-                if not row[tc]:
-                    continue
-                x, y = cell_center(orr + tr, occ + tc)
-                dx, dy = x - cx, y - cy
-                dist = (dx * dx + dy * dy) ** 0.5 or 1.0
-                speed = random.uniform(*DEBRIS_SPEED)
-                vx = dx / dist * speed + random.uniform(-DEBRIS_JITTER, DEBRIS_JITTER)
-                vy = dy / dist * speed - random.uniform(0, DEBRIS_UP)
-                self.debris.append([x - CELL / 2.0, y - CELL / 2.0, vx, vy])
 
     # ---------- 事件 ----------
     def handle_event(self, e):
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             self.on_click(*self.mouse_xy())        # 鼠标只用于菜单，不参与涂色
             return
-        if e.type != pygame.KEYDOWN:               # 与 input.handle_event 互不排斥
+        if e.type != pygame.KEYDOWN:
             return
-        if e.scancode == SC_F1:
+
+        sc = e.scancode
+        if sc == SC_F1:
             self.debug = not self.debug
             return
 
         st = self.state
-        if e.scancode == SC_ESC:
+        if sc == SC_ESC:
             if st == "TITLE":
-                self.running = False               # 开始页是顶层，这里才真的退出
-            elif st == "SELECT":
-                self.state = "TITLE"
+                self.running = False
             else:
-                self.goto_select()                 # 局中/结算都回选关页
-        elif st == "TITLE":
-            if e.scancode in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
-                self.state = "SELECT"
-        elif st == "SELECT":
-            self.on_select_key(e.scancode)
-        elif st == "PLAY":
-            if e.scancode == SC_R:
-                self.start_level(self.level)       # 局中 R：重开本关
-        elif st == "RESULT":
-            if e.scancode == SC_R:
-                self.next_level()
+                self.state = "TITLE"               # 回开始页（无存档，重开就重摇一张码）
+                self.input.held.clear()
+            return
 
-    # ---------- 按钮与选关 ----------
+        if st == "TITLE":
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+                self.start_act()
+            return
+
+        if st == "DEAD":
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+                self.restore_checkpoint()
+            return
+
+        if st == "END":
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE, SC_R):
+                self.start_act()
+            return
+
+        if st != "PLAY":
+            return
+
+        if sc == SC_R:
+            self.start_act()
+        elif sc in SC_SHIFT:
+            self.cast_anomaly()
+
+    def cast_anomaly(self):
+        """Shift：照出脚下 5×5 的灰域。只在圣坛内有效，涂的时候不能照。"""
+        if self.input.down(SC_J):
+            return                                  # 正在涂：按不动异象
+        n = self.board.reveal_around(*self.player.cell)
+        if n > 0:
+            self.reveal_used = True
+
+    def on_click(self, x, y):
+        if self.state == "TITLE":
+            self.start_act()
+        elif self.state == "DEAD":
+            self.restore_checkpoint()
+        elif self.state == "END":
+            self.start_act()
+
     def mouse_xy(self):
         """窗口坐标 → 逻辑坐标（画布被缩放过，鼠标也得换算）。"""
         mx, my = pygame.mouse.get_pos()
         return int(mx / self.scale), int(my / self.scale)
 
-    def start_btn(self):
-        return pygame.Rect((WINDOW_W - BTN_W) // 2, 470, BTN_W, BTN_H)
-
-    def level_btns(self):
-        n = len(LEVELS)
-        total = n * LV_BTN_W + (n - 1) * LV_BTN_GAP
-        x0 = (WINDOW_W - total) // 2
-        return [pygame.Rect(x0 + i * (LV_BTN_W + LV_BTN_GAP), 392, LV_BTN_W, LV_BTN_H)
-                for i in range(n)]
-
-    def on_click(self, x, y):
-        if self.state == "TITLE":
-            if self.start_btn().collidepoint(x, y):
-                self.state = "SELECT"
-        elif self.state == "SELECT":
-            for i, rect in enumerate(self.level_btns()):
-                if rect.collidepoint(x, y) and i + 1 <= self.unlocked:
-                    self.sel = i + 1
-                    self.start_level(i + 1)        # 锁着的关点了没反应
-
-    def on_select_key(self, sc):
-        if sc in (SC_A, SC_LEFT):
-            self.sel = max(1, self.sel - 1)
-        elif sc in (SC_D, SC_RIGHT):
-            self.sel = min(self.unlocked, self.sel + 1)   # 只能移到已解锁的关
-        elif sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
-            self.start_level(self.sel)
-
-    def goto_select(self):
-        self.sel = max(1, min(self.unlocked, self.level))
-        self.state = "SELECT"
-
-    def start_level(self, n):
-        self.level = max(1, min(len(LEVELS), n))
-        self.new_round()
-        self.input.held.clear()                    # 别让菜单里按着的键漏进新一局
-
-    def next_level(self):
-        """结算页按 R：赢了进下一关，最后一关通关回选关页，输了重试本关。"""
-        if not self.result["won"]:
-            self.start_level(self.level)
-        elif self.level < len(LEVELS):
-            self.start_level(self.level + 1)
-        else:
-            self.goto_select()                     # 全部通关：回选关页，五关都开着
-
     def update_hover(self):
-        """每帧轮询鼠标位置做悬停高亮（点击走事件，悬停只能轮询）。"""
-        mx, my = self.mouse_xy()
         self.hover = None
-        if self.state == "TITLE":
-            if self.start_btn().collidepoint(mx, my):
-                self.hover = 0
-        else:
-            for i, rect in enumerate(self.level_btns()):
-                if rect.collidepoint(mx, my):
-                    self.hover = i
-                    break
+
+    def shift_held(self):
+        return any(self.input.down(sc) for sc in SC_SHIFT)
 
     # ---------- 更新 ----------
     def update(self, dt):
-        self._last_dt = dt                        # 仅供 F1 显示
-        if self.state in ("TITLE", "SELECT"):
-            self.menu_t += dt                     # 只用来闪字
-            self.update_hover()
+        self._last_dt = dt                          # 仅供 F1 显示
+        if self.state in ("TITLE", "DEAD", "END"):
+            self.menu_t += dt
+            if self.banner_t > 0:
+                self.banner_t -= dt
+            return
+        if self.state == "CLEAR":
+            self.update_clear(dt)
             return
         if self.state != "PLAY":
             return
-        if self.intro_t > 0:                      # 开场动画期间：不计时、不出怪、不能涂
-            self.update_intro(dt)
-            return
-        if self.banner_t > 0:
-            self.banner_t -= dt
 
-        # 1) 先走格子：移动是离散步进，脚下坐标一帧内就定死
+        self.tick_timers(dt)
+
+        # 1) 走格子
         self.player.update(dt, self.input.dir4())
-        # 走过的地方就记住了（重复调用无副作用，所以每帧标一次最省事）
-        self.board.mark_seen(*self.player.cell)
 
-        # 2) 再处理脚下：按住 J（或空格）边走边涂，按住 K 边走边抹
-        #    放在移动之后，所以走进新格子的那一帧它就变黑，不会「走过一格还得补一下」
-        if self.input.down(SC_J) or self.input.down(SC_SPACE):
-            self.board.paint(*self.player.cell)
+        # 2) 脚下：按住 J 边走边涂；按住 K 边走边抹。
+        #    按着 Shift 的时候涂不上去（异象和涂不能同时）
+        if self.input.down(SC_J) and not self.shift_held():
+            self.paint_here()
         elif self.input.down(SC_K):
             self.board.start_erase(*self.player.cell)
 
-        # 3) 计时
-        self.elapsed += dt
-
-        # 4) 阶段切换：只触发一次，靠布尔守卫（不能用 abs(elapsed-30) < dt）
-        if not self.shifted and self.elapsed >= PHASE1_DURATION:
-            self.shifted = True
-            self.board.outer_open = False         # 外围锁死：已黑保留，未黑不可涂
-            self.show_banner("PHASE SHIFT", PHASE_SHIFT_TIME, "big")   # 只触发这一次
-
-        # 5) 先让抹除收敛，再跑怪物（顺序反了会「吃到空气」）
         self.board.update(dt)
 
-        # 6) 怪物：目标失效会自己改道，吃到就死，闲着超时也死
+        # 3) 红怪：吃黑域 / 追人
         for m in self.monsters[:]:
-            if not m.update(dt, self.board, self.claims, self.center):
+            res = m.update(dt, self.board, self.claims, self.player)
+            if res != "alive":
+                if res == "hit":
+                    self.health = max(0, self.health - HIT_DAMAGE)
+                    self.show_hint("HIT  -%d%%" % HIT_DAMAGE, 1.4)
                 self.monsters.remove(m)
 
-        # 7) 生成：全程恒定 15/分，用累加器，不用 set_timer
-        self.spawn_acc += dt
-        interval = 60.0 / self.spawn_rate
-        if self.elapsed > self.spawn_delay and self.spawn_acc >= interval:
-            self.spawn_acc -= interval
-            self.spawn_monster()
+        # 4) 刷怪：每 30 秒提速 5%
+        self.elapsed += dt
+        step = int(self.elapsed // RED_SPAWN_ACCEL_PERIOD)
+        if step > self.accel_step:
+            self.accel_step = step
+            self.spawn_rate *= RED_SPAWN_ACCEL
+        if self.elapsed >= RED_SPAWN_MARGIN:
+            self.spawn_acc += dt
+            interval = 60.0 / self.spawn_rate
+            while self.spawn_acc >= interval:
+                self.spawn_acc -= interval
+                self.spawn_monster()
 
-        # 7.5) 紫怪：数量和时间点都在 new_round 里定好，到点各刷一只
-        if self.purple_i < len(self.purple_times) and self.elapsed >= self.purple_times[self.purple_i]:
-            self.purple_i += 1
-            self.spawn_monster("purple")
-            self.fire_trigger()                   # 第一只紫怪登场 → 本关那句现象描述
-
-        # 8) 时间到 -> 结算
-        if self.elapsed >= self.duration:
-            self.elapsed = self.duration
-            self.finish()
-
-    def fire_trigger(self):
-        """本关的「局中一次性」剧情句：只在第一次该事件发生时弹，之后不再打扰。"""
-        if self.triggered:
+        # 5) 判定
+        if self.health <= 0:
+            self.state = "DEAD"
+            self.menu_t = 0.0
+            self.banner_t = 0.0
             return
-        line = story.level(self.level)["trigger"]
-        if not line:
-            return
-        self.triggered = True
-        self.show_banner(line, STORY_BANNER_TIME, "story")
+        if self.board.is_complete():
+            self.enter_clear()
 
-    def spawn_monster(self, kind="red"):
+    def tick_timers(self, dt):
+        if self.hint_t > 0:
+            self.hint_t = max(0.0, self.hint_t - dt)
+        if self.banner_t > 0:
+            self.banner_t = max(0.0, self.banner_t - dt)
+
+    def paint_here(self):
+        res = self.board.paint(*self.player.cell)
+        if res == "dirty" and not self.stain_warned:
+            self.stain_warned = True
+            self.show_hint(MSG_STAIN, 4.0)
+
+    def spawn_monster(self):
         """在 30×30 生成环的四条边上等概率取点：先选边再选 t，长边不会被多算。"""
         side = self.rng.randrange(4)
         t = self.rng.random() * SPAWN_PX
@@ -404,62 +328,100 @@ class Game:
             pos = (x0 + t, y0 + SPAWN_PX)
         else:
             pos = (x0, y0 + t)
-        base = PURPLE_SPEED if kind == "purple" else MONSTER_SPEED
-        speed = base * self.rng.uniform(*MONSTER_SPD_JITTER)
-        # 紫怪专挑「完成度最高的那一行」（config.PURPLE_MODE 可切回 nearest）
-        mode = PURPLE_MODE if kind == "purple" else "nearest"
-        self.monsters.append(Monster(pos, speed, kind, mode))
+        speed = RED_SPEED * self.rng.uniform(*RED_SPD_JITTER)
+        self.monsters.append(Monster(pos, speed))
 
-    def finish(self):
-        """结算：只统计 21×21 目标区，外围诱饵不加分也不扣分。"""
-        for m in self.monsters:            # 结算时松开所有占用，claims 必须归零
+    # ---------- 清屏 ----------
+    def enter_clear(self):
+        self.state = "CLEAR"
+        self.clear_phase = "glow"
+        self.clear_t = 0.0
+        self.wave_r = 0.0
+        self.glow_t = 0.0
+        for m in self.monsters:                     # 仪式已成：它们不再吃黑域，被光牵着走
             m.claim(self.claims)
-        correct, noise, missing = self.board.stats()
-        total = self.board.target_total or 1
-        cap = round(total * self.goal_noise)
-        coverage = correct / total
-        won = coverage >= self.goal_cover and noise <= cap
-        if won and coverage >= GRADE_S_COVERAGE and noise <= GRADE_S_NOISE:
-            grade = "S"
-        elif won and noise <= cap * GRADE_A_NOISE_PCT:
-            grade = "A"
-        elif won:
-            grade = "B"
-        else:
-            grade = "F"
-        self.result = {"coverage": coverage, "noise": noise, "cap": cap,
-                       "won": won, "grade": grade, "level": self.level}
-        if won:                                    # 过关就解锁下一关（末关解锁到头为止）
-            self.unlocked = max(self.unlocked, min(len(LEVELS), self.level + 1))
-        self.state = "RESULT"
+            m.mode = "hunt"
+            m.target = None
+        self.claims.clear()
+        self.show_hint(MSG_STEP_IN, 999.0)
+
+    def update_clear(self, dt):
+        self.tick_timers(dt)
+        self.glow_t += dt
+        cx, cy = altar_center()
+        # 清屏期间红怪不再伤害玩家：它们被圣坛的光牵着，往中心漂
+        for m in self.monsters:
+            d = pygame.Vector2(cx - m.pos.x, cy - m.pos.y)
+            if d.length_squared() > 1.0:
+                m.pos += d.normalize() * m.speed * 0.5 * dt
+
+        if self.clear_phase == "glow":
+            self.clear_t += dt
+            # 圣坛边缘发光 → 玩家走进圣坛就开始扩散波
+            if self.board.in_altar(*self.player.cell):
+                self.clear_phase = "wave"
+                self.clear_t = 0.0
+                self.wave_r = 0.0
+        elif self.clear_phase == "wave":
+            self.wave_r += CLEAR_WAVE_SPEED * dt
+            self.clear_monsters_in_wave()
+            far = max(math.hypot(x - cx, y - cy) for x in (0, WINDOW_W) for y in (0, WINDOW_H))
+            if self.wave_r >= far:
+                self.board.wipe_stains()            # 顺手把全部脏格抹掉（设计的一部分）
+                self.clear_phase = "hold"
+                self.clear_t = 0.0
+        elif self.clear_phase == "hold":
+            self.clear_t += dt
+            if self.clear_t >= CLEAR_WAVE_HOLD:
+                self.state = "END"
+                self.menu_t = 0.0
+                self.hint_t = 0.0                     # 收掉「走进圣坛」的旧提示
+                self.show_banner(MSG_ACT_END, 999.0)
+
+    def clear_monsters_in_wave(self):
+        cx, cy = altar_center()
+        keep = []
+        for m in self.monsters:
+            if math.hypot(m.pos.x - cx, m.pos.y - cy) <= self.wave_r:
+                m.claim(self.claims)
+            else:
+                keep.append(m)
+        self.monsters = keep
 
     # ---------- 绘制（具体画法都在 ui.py） ----------
     def present(self):
-        """把逻辑画布整帧缩放进真实窗口。"""
         if self.needs_scale:
             pygame.transform.smoothscale(self.canvas, self.window.get_size(), self.window)
         else:
             self.window.blit(self.canvas, (0, 0))
 
-    def apply_shake(self):
-        """整屏抖动：把已经画好的画面按偏移量重新贴一次（只在开场那几帧发生）。"""
-        dx, dy = self.shake_off
-        if dx == 0 and dy == 0:
-            return
-        self.shake_buf.blit(self.canvas, (0, 0))
-        self.canvas.fill(C_BG)
-        self.canvas.blit(self.shake_buf, (dx, dy))
-
     def draw(self):
         if self.state == "TITLE":
             draw_title(self)
-        elif self.state == "SELECT":
-            draw_select(self)
-        elif self.state == "RESULT":
-            draw_result(self)
         else:
             draw_world(self)
             draw_hud(self)
-            draw_banner(self)
-            self.apply_shake()
+            if self.state == "DEAD":
+                draw_dead(self)
+            elif self.state == "END":
+                draw_end(self)
         self.present()
+
+    # ---------- 旧五关版残留（新版不进入这些状态）----------
+    def start_btn(self):
+        return pygame.Rect((WINDOW_W - 300) // 2, 470, 300, 92)
+
+    def level_btns(self):
+        return []
+
+    def goto_select(self):
+        self.state = "TITLE"
+
+
+def make_stain_tile():
+    """脏黑的样子：黑底 + 白色斜条。必须和「纯黑的有效黑域」一眼可分。"""
+    surf = pygame.Surface((CELL, CELL))
+    surf.fill((17, 17, 24))
+    for i in range(-CELL, CELL * 2, 10):
+        pygame.draw.line(surf, (226, 226, 232), (i, 0), (i + CELL, CELL), 4)
+    return surf

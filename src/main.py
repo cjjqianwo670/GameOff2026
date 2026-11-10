@@ -21,22 +21,24 @@ if __package__ in (None, ""):
 
 import pygame
 
-from src.config import FIT_MARGIN_X, FIT_MARGIN_Y, FPS, MIN_WINDOW, WINDOW_W
+from src.config import FIT_MARGIN_X, FIT_MARGIN_Y, FPS, MIN_SCALE, WINDOW_H, WINDOW_W
 from src.game import Game
 
 # ==== 入口 ====
 
 
 def create_window():
-    """按桌面可用空间决定窗口尺寸（正方形），保证不被屏幕/任务栏裁掉。
+    """按桌面可用空间等比决定窗口尺寸，保证不被屏幕/任务栏裁掉。
 
-    例：1920×1080 开 125% 缩放，逻辑桌面约 1460×910，可用高度 910-120=790，
-    窗口就是 790×790，画面整体缩到 0.79 贴进去；桌面够大时缩放因子为 1.0。
+    逻辑画布是 1360×1000（非正方形），窗口按同一个比例缩，
+    所以 Game.scale = 窗口宽 / WINDOW_W 这一个因子就能把鼠标坐标换算回逻辑坐标。
     """
     info = pygame.display.Info()
-    avail = min(info.current_w - FIT_MARGIN_X, info.current_h - FIT_MARGIN_Y)
-    size = max(MIN_WINDOW, min(WINDOW_W, avail))
-    return pygame.display.set_mode((size, size))
+    avail_w = info.current_w - FIT_MARGIN_X
+    avail_h = info.current_h - FIT_MARGIN_Y
+    scale = min(1.0, avail_w / float(WINDOW_W), avail_h / float(WINDOW_H))
+    scale = max(MIN_SCALE, scale)
+    return pygame.display.set_mode((int(WINDOW_W * scale), int(WINDOW_H * scale)))
 
 
 def main():
