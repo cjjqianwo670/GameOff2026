@@ -21,7 +21,8 @@ from src import story
 from src.config import (
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
     C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_MISSING, C_MONSTER, C_MUST,
-    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PLAYER, C_PROP_DEAD, C_PROP_TOOL, C_STAFF, C_TEXT, C_WARN,
+    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PLAYER, C_PROP_DEAD, C_PROP_TOOL, C_RING, C_STAFF,
+    C_TEXT, C_WARN,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
     ERASE_CAST, ERASING, GRID_N,
@@ -70,7 +71,7 @@ def draw_world(g: "Game"):
     for y in range(0, WINDOW_H, CELL):
         pygame.draw.line(s, C_BG_GRID, (0, y), (PLAY_W, y))
 
-    draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)))
+    draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)), color=C_RING)
     s.fill(C_CELL_WHITE, pygame.Rect(GRID_ORIGIN, (GRID_PX, GRID_PX)))
 
     # ---- 开场：完整码铺出 → 碎 → 只剩脚下一小片 ----
@@ -327,7 +328,7 @@ def mix(a, b, k):
             int(a[2] + (b[2] - a[2]) * k))
 
 
-def draw_bar(g: "Game", rect, frac, color, back=(9, 12, 17)):
+def draw_bar(g: "Game", rect, frac, color, back=(19, 14, 11)):
     s = g.screen
     s.fill(back, rect)
     w = int(rect.w * max(0.0, min(1.0, frac)))
@@ -484,7 +485,7 @@ def _draw_monologue(g, s):
     plate.centerx = PLAY_W // 2
 
     band = pygame.Surface(plate.size, pygame.SRCALPHA)
-    pygame.draw.rect(band, (0, 0, 0, int(MONO_PLATE_ALPHA * alpha / 255)),
+    pygame.draw.rect(band, (14, 9, 6, int(MONO_PLATE_ALPHA * alpha / 255)),
                      band.get_rect(), border_radius=8)
     s.blit(band, plate.topleft)
     # 左边一道细竖条：这是「他的内心」，不是有人在说话
@@ -574,7 +575,8 @@ def draw_dialog(g):
     box = pygame.Rect(x, DLG_BOTTOM - h, w, h)
     who = C_OLDMAN if speaker == story.OLD_MAN else C_ACCENT
 
-    s.fill((7, 9, 14), box)                 # 实心：半透明会把底下的白格透出来，显得脏
+    s.fill((20, 14, 11), box)               # 实心：半透明会把底下的白格透出来，显得脏
+    pygame.draw.rect(s, C_PANEL_LINE, box, 1)   # 一层极细的边：褐底上不然会糊在一起
     _corner_brackets(s, box, 20, who)
 
     # 名牌：骑在框的上沿，实心，深色字
@@ -630,7 +632,7 @@ def draw_end(g: "Game"):
 def make_stain_tile():
     """脏黑的样子：黑底 + 白色斜条。必须和「纯黑的有效黑域」一眼可分。"""
     surf = pygame.Surface((CELL, CELL))
-    surf.fill((17, 17, 24))
+    surf.fill(C_CELL_BLACK)
     for i in range(-CELL, CELL * 2, 10):
         pygame.draw.line(surf, (226, 226, 232), (i, 0), (i + CELL, CELL), 4)
     return surf
