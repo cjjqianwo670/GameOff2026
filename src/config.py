@@ -102,6 +102,7 @@ BANNER_TIME = 2.4                 # 中央大字横幅（ACT 1 — END 之类）
 # ==== 剧情层（Phase B）====
 MONOLOGUE_TIME = 3.6              # 内心独白停留（2.5~3 秒 + 读完一点余量）
 TUTORIAL_MOVE_SECONDS = 5.0       # 必须「移动」满 5 秒才提示 Shift（站着不动不算）
+ANOMALY_MISS_LIMIT = 3            # 在坛外连按 3 次 Shift 都没灰域 → 放行，别把教程变成死胡同
 CALL_RANGE_PX = 150.0             # 呼喊范围（约 5 格）：进这个圈才显示 PRESS [T]
 CLOSE_RANGE_PX = 72.0             # 「走近再说」的范围（约 2.5 格）
 OLDMAN_CELL = (1, 12)             # 老者站位：圣坛上方那条平地上，背对玩家（朝世界外）
@@ -133,7 +134,9 @@ PLAYER_GLOW_R = 14
 # ==== 输入：scancode 是物理键位，与输入法/CapsLock/Shift 无关 ====
 SC_W, SC_A, SC_S, SC_D = 26, 4, 22, 7
 SC_J, SC_K, SC_SPACE = 13, 14, 44
-SC_T, SC_B = 20, 48
+# ⚠️ 这是 SDL 的 scancode（HID 表：A=4 … Z=29），**不是** PS/2 扫描码。
+# T = 4+19 = 23（20 是 Q）；B = 4+1 = 5（48 是 ]）。写错过一次，按键全无反应。
+SC_T, SC_B = 23, 5
 SC_ESC, SC_ENTER, SC_KP_ENTER, SC_F1 = 41, 40, 88, 58
 # Shift：SDL2 scancode 左 225 / 右 229（已用 SDL_GetScancodeFromKey 实测，见 HANDOFF §3）。
 # ⚠️ 别写成 42 / 54 —— 那是 PS/2 扫描码，SDL2 里 42 是退格键。

@@ -34,7 +34,7 @@ from src.config import (
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
     SC_R, SC_SHIFT, SC_SPACE, SC_T, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX,
     SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT, TARGET_N, TARGET_OFFSET, THREAT_TIME,
-    TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W
+    ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W
 )
 from src.entities import Item, Monster, OldMan, Player, SceneRed
 from src.grid import altar_center, cell_center
@@ -138,6 +138,7 @@ class Game:
         self.move_time = 0.0
         self.last_cell = None
         self.reveal_used = False
+        self.anomaly_miss = 0
         self.stain_warned = False
 
         # 过场
@@ -196,6 +197,7 @@ class Game:
         self.move_time = 0.0
         self.last_cell = self.player.cell
         self.reveal_used = False
+        self.anomaly_miss = 0
         self.stain_warned = False
 
         self.cs_t, self.cs_red_in, self.cs_flee, self.cs_m3 = 0.0, False, False, False
@@ -490,6 +492,10 @@ class Game:
 
     # ---------- 教程 ----------
     def update_tutorial(self, dt):
+        # 走到老者跟前，就说明该往下走了 —— 教程只是提示，不许把人锁死
+        if self.oldman_dist() <= CALL_RANGE_PX:
+            self.enter_free_roam()
+            return
         if self.move_time >= TUTORIAL_MOVE_SECONDS and self.prompt_text != story.TUTORIAL_SHIFT:
             self.prompt_text = story.TUTORIAL_SHIFT
 
@@ -499,13 +505,17 @@ class Game:
         if self.input.down(SC_J):
             return                                      # 正在涂：按不动异象
         n = self.board.reveal_around(*self.player.cell)
-        if n <= 0:
+        if n > 0:
+            if not self.reveal_used:
+                self.reveal_used = True
+                self.say(story.M2)                      # 第一次真的照出灰域 → M2
+                if self.state == "TUTORIAL":
+                    self.enter_free_roam()
             return
-        if not self.reveal_used:
-            self.reveal_used = True
-            if self.state == "TUTORIAL":
-                self.say(story.M2)
-                self.enter_free_roam()
+        # 按了却什么都没照出来（多半是站在平地上）：不给提示，但要防止永远卡住
+        self.anomaly_miss += 1
+        if self.state == "TUTORIAL" and self.anomaly_miss >= ANOMALY_MISS_LIMIT:
+            self.enter_free_roam()
 
     def enter_free_roam(self):
         self.state = "FREE_ROAM"
@@ -595,12 +605,14 @@ class Game:
             self.oldman.face_to(self.player.pos)
             self.start_dialog(story.branch(True), run_over=True)
         else:
-            if not self.oldman_turned:
-                self.oldman_turned = True                # 只是转身（带着疑惑）
-                self.oldman.face_to(self.player.pos)
+            # 坛外喊：隔着距离喊，他只会转身（带着疑惑），得走近再喊一次；
+            # 但已经贴到跟前了，就没必要让他先转个身——直接开口。
+            if d > CLOSE_RANGE_PX:
+                if not self.oldman_turned:
+                    self.oldman_turned = True
+                    self.oldman.face_to(self.player.pos)
                 return
-            if d <= CLOSE_RANGE_PX:
-                self.start_dialog(story.branch(False))
+            self.start_dialog(story.branch(False))
 
     # ---------- 对话 ----------
     def start_dialog(self, lines, run_over=False):

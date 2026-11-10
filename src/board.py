@@ -99,7 +99,7 @@ class Board:
         self.flash[(r, c)] = 0.15
 
     def reveal_around(self, r, c):
-        """异象：以 (r,c) 为中心 (2R+1)² 照出灰域，返回新照亮的格数。
+        """异象：以 (r,c) 为中心 (2R+1)² 照出灰域，返回被点亮（含给旧灰域续期）的格数。
 
         - 只在圣坛内生效；站在平地上按 Shift 一个灰域都没有（叙事设定 + 玩法边界）
         - 只照「该黑且还白」的格子：已经涂黑的、本来就不该黑的，照了也没意义
@@ -119,8 +119,7 @@ class Board:
                     continue
                 if self.state[rr][cc] != WHITE:
                     continue
-                if self.reveal[rr][cc] <= 0:
-                    n += 1
+                n += 1
                 self.reveal[rr][cc] = MIRAGE_FADE
         return n
 

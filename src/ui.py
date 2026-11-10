@@ -384,7 +384,7 @@ def draw_hud(g: "Game"):
         center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 8), g.f_main, C_ACCENT)
     else:
         # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
-        txt(g, "[WASD] MOVE    [SHIFT] ANOMALY    [J] DARK    [K] ERASE    [R] RESTART",
+        txt(g, "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL",
             (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
             txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 4), g.f_main, C_ACCENT, right=True)
