@@ -131,6 +131,7 @@ config ──> grid ──> board ──┐
 
 | 文件 | 行 | 职责 |
 |---|---|---|
+| `src/__init__.py` | 5 | 空包标记 |
 | `src/config.py` | 237 | 全部常量、颜色（含角色分层配色）、幕参数、异象/脏格/血量 |
 | `src/grid.py` | 54 | 坐标换算 4 个函数 |
 | `src/qr.py` | 64 | 用 `segno` 生成真二维码 + `required_cells()` 算必涂格 |
