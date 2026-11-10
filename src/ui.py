@@ -22,9 +22,13 @@ from src.config import (
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
     C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_MISSING, C_MONSTER, C_MUST,
     C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PLAYER, C_PROP_DEAD, C_PROP_TOOL, C_STAFF, C_TEXT, C_WARN,
-    DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOX, DLG_LINE_H, ERASE_CAST, ERASING, GRID_N,
+    DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
+    DLG_MIN_ROWS, DLG_PAD,
+    ERASE_CAST, ERASING, GRID_N,
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
-    INTRO_TOTAL, MAP_CELL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, OLDMAN_BODY_H,
+    INTRO_TOTAL, MAP_CELL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
+    MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_PLATE_ALPHA, MONO_TOP, MONO_WIDTH,
+    OLDMAN_BODY_H,
     OLDMAN_BODY_W, PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y, PLAYER_BODY_H, PLAYER_BODY_W,
     PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT, TARGET_N,
     TARGET_OFFSET, THREAT_Y, VALID, WINDOW_H, WINDOW_W
@@ -379,15 +383,17 @@ def draw_hud(g: "Game"):
         _draw_map(g, s, x, 604)
 
     # ---- 底部：键位 + 提示 + 系统消息 ----
-    if g.state == "TUTORIAL" and g.prompt_text:
+    if g.state == "DIALOG":
+        pass                                    # 对话框自带 ENTER 提示，底部别再摆键位表
+    elif g.state == "TUTORIAL" and g.prompt_text:
         # 教程阶段那句提示本身就是键位表，不用再摆一遍
-        center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 8), g.f_main, C_ACCENT)
+        center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 10), g.f_prompt, C_ACCENT)
     else:
         # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
         txt(g, "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL",
             (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
-            txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 4), g.f_main, C_ACCENT, right=True)
+            txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 6), g.f_prompt, C_ACCENT, right=True)
 
     if g.mono_t > 0 and g.mono_text:
         _draw_monologue(g, s)
@@ -434,13 +440,70 @@ def _draw_map(g, s, x, y):
     pygame.draw.rect(s, C_PANEL_LINE, pygame.Rect(mx, my, size, size), 1)
 
 
+def _reveal(lines, n):
+    """打字机：按字符数截断折好的行，返回 (可见行, 是否还在打)。"""
+    out = []
+    for ln in lines:
+        if n <= 0:
+            break
+        out.append(ln[:n])
+        n -= len(ln)
+    return out, n > 0
+
+
+def _wrap_paragraphs(font, text, max_w):
+    """按 \\n 分段折行：`If I can.` 这种要单独成行的得保住。"""
+    out = []
+    for para in text.split("\n"):
+        out.extend(wrap_text(font, para, max_w))
+    return out
+
+
 def _draw_monologue(g, s):
-    """内心独白：屏幕下方，斜着来两句，不打断操作。"""
-    lines = g.mono_text.split("\n")
-    for i, ln in enumerate(lines):
-        img = g.f_main.render(ln, True, C_ERASING)
-        img.set_alpha(235)
-        s.blit(img, img.get_rect(center=(PLAY_W // 2, 842 + i * 28)))
+    """心声：不套框，浮在世界下方的字幕带；先淡入、逐字打、最后淡出。"""
+    if g.mono_t <= 0 or not g.mono_text:
+        return
+    lines = _wrap_paragraphs(g.f_mono, g.mono_text, MONO_WIDTH)
+    total = sum(len(ln) for ln in lines)
+    shown = int((g.mono_total - g.mono_t) * MONO_CPS)
+    vis, typing = _reveal(lines, min(total, shown))
+
+    # 淡入淡出
+    alpha = 255
+    if g.mono_total - g.mono_t < MONO_FADE_IN:
+        alpha = int(255 * (g.mono_total - g.mono_t) / MONO_FADE_IN)
+    if g.mono_t < MONO_FADE_OUT:
+        alpha = int(255 * g.mono_t / MONO_FADE_OUT)
+    alpha = max(0, min(255, alpha))
+
+    # 底衬按「已经打出来的行数」长，顶边固定 —— 免得打字过程中整块跳
+    widest = max(g.f_mono.size(ln)[0] for ln in lines) if lines else 0
+    rows = max(1, len(vis))
+    ph = rows * MONO_LINE_H + 28
+    plate = pygame.Rect(0, MONO_TOP, widest + 96, ph)
+    plate.centerx = PLAY_W // 2
+
+    band = pygame.Surface(plate.size, pygame.SRCALPHA)
+    pygame.draw.rect(band, (0, 0, 0, int(MONO_PLATE_ALPHA * alpha / 255)),
+                     band.get_rect(), border_radius=8)
+    s.blit(band, plate.topleft)
+    # 左边一道细竖条：这是「他的内心」，不是有人在说话
+    bar = pygame.Rect(plate.x + 16, plate.y + 14, 3, plate.h - 28)
+    bar_s = pygame.Surface(bar.size, pygame.SRCALPHA)
+    bar_s.fill((*C_ACCENT, int(150 * alpha / 255)))
+    s.blit(bar_s, bar.topleft)
+
+    for i, ln in enumerate(vis):
+        img = g.f_mono.render(ln, True, (238, 242, 247))
+        img.set_alpha(alpha)
+        s.blit(img, (plate.x + 40, plate.y + 14 + i * MONO_LINE_H))
+    if typing and vis:                            # 打字光标
+        last = vis[-1]
+        cx = plate.x + 40 + g.f_mono.size(last)[0] + 4
+        cy = plate.y + 14 + (len(vis) - 1) * MONO_LINE_H + 8
+        caret = pygame.Surface((10, MONO_FONT - 12), pygame.SRCALPHA)
+        caret.fill((*C_ACCENT, int(200 * alpha / 255)))
+        s.blit(caret, (cx, cy))
 
 
 def _draw_hint(g, s):
@@ -472,34 +535,74 @@ def wrap_text(font, text, max_w):
     return lines
 
 
-def dialog_lines(g: "Game"):
+def dialog_lines(g):
     """当前这句台词折行之后的结果（测试也用它，保证「放得下」是算出来的）。"""
     if not g.dlg_lines:
         return [], ""
     speaker, text = g.dlg_lines[g.dlg_i]
     x, y, w, h = DLG_BOX
-    out = []
-    for para in text.split("\n"):
-        out.extend(wrap_text(g.f_dlg, para, w - 48))
-    return out, speaker
+    return _wrap_paragraphs(g.f_dlg, text, w - DLG_PAD * 2), speaker
 
 
-def draw_dialog(g: "Game"):
+def dialog_char_total(g):
+    lines, _ = dialog_lines(g)
+    return sum(len(ln) for ln in lines)
+
+
+def dlg_box_lines():
+    """对话框里能吃几行字（测试用它断言「都放得下」）。"""
+    return (DLG_BOX[3] - 64) // DLG_LINE_H
+
+
+def _corner_brackets(s, rect, size, color, width=2):
+    """四角括号：比一整圈边框轻，像被「标出来」而不是「装起来」。"""
+    x, y, w, h = rect
+    for cx, cy, dx, dy in ((x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)):
+        pygame.draw.line(s, color, (cx, cy), (cx + dx * size, cy), width)
+        pygame.draw.line(s, color, (cx, cy), (cx, cy + dy * size), width)
+
+
+def draw_dialog(g):
     if not g.dlg_lines or g.dlg_phase == "run":
         return
     s = g.screen
     lines, speaker = dialog_lines(g)
-    x, y, w, h = DLG_BOX
-    box = pygame.Rect(x, y, w, h)
-    s.fill((9, 12, 17), box)
-    pygame.draw.rect(s, C_PANEL_LINE, box, 1)
-    name_col = C_OLDMAN if speaker == story.OLD_MAN else C_ACCENT
-    s.blit(g.f_name.render(speaker, True, name_col), (x + 24, y + 16))
-    pygame.draw.line(s, C_PANEL_LINE, (x + 24, y + 44), (x + w - 24, y + 44))
-    for i, ln in enumerate(lines):
-        s.blit(g.f_dlg.render(ln, True, C_TEXT), (x + 24, y + 56 + i * DLG_LINE_H))
-    s.blit(g.f_small.render("ENTER", True, C_DIM),
-           g.f_small.render("ENTER", True, C_DIM).get_rect(bottomright=(x + w - 20, y + h - 12)))
+    x, _, w, hmax = DLG_BOX
+    # 框底不动，高度跟着这一句的行数缩：短句不留一大片空，长句最多 4 行
+    rows = max(DLG_MIN_ROWS, min(dlg_box_lines(), len(lines)))
+    h = min(hmax, rows * DLG_LINE_H + 64)
+    box = pygame.Rect(x, DLG_BOTTOM - h, w, h)
+    who = C_OLDMAN if speaker == story.OLD_MAN else C_ACCENT
+
+    s.fill((7, 9, 14), box)                 # 实心：半透明会把底下的白格透出来，显得脏
+    _corner_brackets(s, box, 20, who)
+
+    # 名牌：骑在框的上沿，实心，深色字
+    name_img = g.f_dlg_name.render(speaker, True, (8, 10, 14))
+    tab = pygame.Rect(box.x + DLG_PAD, box.y - 17, name_img.get_width() + 32, 34)
+    s.fill(who, tab)
+    s.blit(name_img, name_img.get_rect(center=tab.center))
+
+    # 正文：按**整句**的行数做垂直居中，打字过程中版面不跳
+    total = sum(len(ln) for ln in lines)
+    shown = min(total, int(g.dlg_t * DLG_CPS))
+    vis, typing = _reveal(lines, shown)
+    top = box.y + 44
+    for i, ln in enumerate(vis):
+        s.blit(g.f_dlg.render(ln, True, C_TEXT), (box.x + DLG_PAD, top + i * DLG_LINE_H))
+    if typing and vis:
+        last = vis[-1]
+        cx = box.x + DLG_PAD + g.f_dlg.size(last)[0] + 4
+        cy = top + (len(vis) - 1) * DLG_LINE_H + 8
+        s.fill(who, pygame.Rect(cx, cy, 10, DLG_FONT - 10))
+    elif int(g.dlg_t * 3) % 2 == 0:
+        # 打完了：右下角闪一个「继续」
+        ax, ay = box.right - 52, box.bottom - 34
+        pygame.draw.polygon(s, who, [(ax, ay), (ax + 16, ay), (ax + 8, ay + 12)])
+
+    hint = g.f_small.render("ENTER", True, C_DIM)
+    s.blit(hint, hint.get_rect(bottomleft=(box.x + DLG_PAD, box.bottom - 18)))
+
 
 # ==== 覆盖层 ====
 

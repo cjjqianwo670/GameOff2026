@@ -28,7 +28,8 @@ from src.config import (
     BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_MIRAGE, C_MONSTER,
     C_PLAYER, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
-    CLEAR_GLOW_TIME, INTRO_TOTAL, ITEM_PICK_RANGE, ITEM_RISE_TIME, MONOLOGUE_TIME, OLDMAN_CELL,
+    CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_NAME_FONT, INTRO_TOTAL, ITEM_PICK_RANGE,
+    ITEM_RISE_TIME, MONO_CPS, MONO_FONT, MONOLOGUE_TIME, OLDMAN_CELL, PROMPT_FONT,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
     PROP_TOOL_CELL, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN, RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
@@ -70,8 +71,10 @@ class Game:
         self.f_mid = pygame.font.Font(None, 46)
         self.f_big = pygame.font.Font(None, 104)
         self.f_tiny = pygame.font.Font(None, 18)      # 道具标签
-        self.f_name = pygame.font.Font(None, 24)      # 对话说话人
-        self.f_dlg = pygame.font.Font(None, 25)       # 对话台词
+        self.f_dlg_name = pygame.font.Font(None, DLG_NAME_FONT)  # 对话名牌
+        self.f_dlg = pygame.font.Font(None, DLG_FONT)         # 对话台词
+        self.f_mono = pygame.font.Font(None, MONO_FONT)       # 内心独白
+        self.f_prompt = pygame.font.Font(None, PROMPT_FONT)   # 底部提示
 
         # 复用贴图（每帧新建 Surface 会掉帧）
         self.mirage_tile = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
@@ -127,6 +130,7 @@ class Game:
         # 文本通道
         self.mono_text = ""
         self.mono_t = 0.0
+        self.mono_total = 0.0
         self.hint_text = ""
         self.hint_t = 0.0
         self.prompt_text = ""
@@ -152,9 +156,11 @@ class Game:
         # 对话
         self.dlg_lines = None
         self.dlg_i = 0
+        self.dlg_t = 0.0
         self.dlg_phase = "talk"
         self.dlg_run_t = 0.0
         self.dlg_hold = 0.0
+        self.dlg_t = 0.0
 
         # 可选互动
         self.prop_done = {"dead": False, "tool": False}
@@ -279,6 +285,7 @@ class Game:
         """内心独白：屏幕下方，不打断操作。"""
         self.mono_text = text
         self.mono_t = secs
+        self.mono_total = secs
 
     def show_hint(self, text, secs=HINT_TIME):
         """系统提示：底部一条，全大写。"""
@@ -624,7 +631,9 @@ class Game:
         self.dlg_phase = "run" if run_over else "talk"
         self.dlg_run_t = 0.0
         self.dlg_hold = 0.0
+        self.dlg_t = 0.0
         self.prompt_text = ""
+        self.mono_text, self.mono_t = "", 0.0      # 开口说话时，心里那句立刻收掉
 
     def update_dialog(self, dt):
         if self.dlg_phase == "run":
@@ -634,19 +643,29 @@ class Game:
             if done or self.dlg_run_t > 1.8:
                 self.dlg_phase = "talk"
             return
+        self.dlg_t += dt
         if self.dlg_hold > 0:
             self.dlg_hold = max(0.0, self.dlg_hold - dt)
             if self.dlg_hold <= 0:
                 self.end_dialog()
 
+    def dlg_typing(self):
+        """这一句还没打完？"""
+        from src.ui import dialog_char_total
+        return self.dlg_t * DLG_CPS < dialog_char_total(self)
+
     def advance_dialog(self):
         if self.dlg_phase != "talk" or self.dlg_lines is None:
             return
+        self.hint_t = 0.0
+        if self.dlg_typing():
+            self.dlg_t = 99.0                            # 先补完这一句，视觉小说的手感
+            return
+        self.dlg_t = 0.0
         if self.dlg_i < len(self.dlg_lines) - 1:
             self.dlg_i += 1
         else:
             self.dlg_hold = 1.0                          # `If I can.` 停 1 秒
-        self.hint_t = 0.0
 
     def end_dialog(self):
         self.dlg_lines = None

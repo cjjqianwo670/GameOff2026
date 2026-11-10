@@ -99,7 +99,8 @@ HINT_TIME = 2.6                   # 底部系统提示停留时长
 BANNER_TIME = 2.4                 # 中央大字横幅（ACT 1 — END 之类）
 
 # ==== 剧情层（Phase B）====
-MONOLOGUE_TIME = 3.6              # 内心独白停留（2.5~3 秒 + 读完一点余量）
+MONOLOGUE_TIME = 5.0              # 内心独白停留（含打字；长句也能读完）
+PROMPT_FONT = 34                  # 底部提示字号（原来 27，偏小）
 TUTORIAL_MOVE_SECONDS = 5.0       # 必须「移动」满 5 秒才提示 Shift（站着不动不算）
 ANOMALY_MISS_LIMIT = 3            # 在坛外连按 3 次 Shift 都没灰域 → 放行，别把教程变成死胡同
 CALL_RANGE_PX = 150.0             # 呼喊范围（约 5 格）：进这个圈才显示 PRESS [T]
@@ -111,8 +112,25 @@ OLDMAN_LEAVE_SPEED = 140.0        # 对话结束后往世界外走
 THREAT_TIME = 2.0                 # 红怪狠话停留
 THREAT_Y = 250                    # 屏幕中央偏上
 GAP_SECONDS = 10.0                # 老者离开后的空档
-DLG_BOX = (40, 688, 760, 204)     # 对话框：x / y / 宽 / 高
-DLG_LINE_H = 34
+# ==== 字幕呈现（心声 / 对话）====
+# 对话：底部一块带名牌的框，正文 36px，最多 5 行
+DLG_BOX = (24, 620, 792, 264)     # x / y / 宽 / 高（264 = 4 行的满高，也是上限）
+DLG_BOTTOM = 884                  # 框底固定，高度按这一句的行数往下缩（最少 2 行）
+DLG_MIN_ROWS = 2
+DLG_PAD = 34                      # 框内左右留白
+DLG_FONT = 32                     # 正文字号（原来 25；32 是「4 行能装下全部台词」的上限）
+DLG_LINE_H = 48
+DLG_NAME_FONT = 26                # 名牌字号
+DLG_CPS = 58                      # 打字速度：字符/秒
+# 心声：不开框，直接浮在世界下方的字幕带，字比对话更大、更淡
+MONO_FONT = 40
+MONO_LINE_H = 54
+MONO_TOP = 690                    # 字幕带顶边（往下长，打字时不会跳）
+MONO_WIDTH = 700                  # 折行宽度
+MONO_CPS = 46
+MONO_FADE_IN = 0.22
+MONO_FADE_OUT = 0.55
+MONO_PLATE_ALPHA = 200            # 字幕带底衬的不透明度（白格上也要读得清）
 PROP_DEAD_CELL = (4, 1)           # 死亡的红怪（可选独白 M4）
 PROP_TOOL_CELL = (19, 1)          # 用过的道具（可选独白 M5）
 PROP_RANGE_PX = 54.0
