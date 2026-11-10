@@ -228,6 +228,9 @@ class Game:
         self.gap_t = 0.0
         self.prompt_text = ""
         self.dlg_lines = None
+        if self.oldman is not None:               # 他已经走了
+            self.oldman.gone = True
+            self.oldman.leaving = False
         self.checkpoint = self.make_checkpoint()
 
     def make_checkpoint(self):
