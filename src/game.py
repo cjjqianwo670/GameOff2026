@@ -60,6 +60,7 @@ class Game:
         self.input = InputState()
         self.running = True
         self.debug = False
+        self.last_sc = -1
         self._last_dt = 1.0 / FPS
 
         # 字体只建一次
@@ -298,6 +299,7 @@ class Game:
             return
 
         sc = e.scancode
+        self.last_sc = sc                             # F1 调试用：最后按下的 scancode
         if sc == SC_F1:
             self.debug = not self.debug
             return

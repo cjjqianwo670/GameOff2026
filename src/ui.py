@@ -396,9 +396,9 @@ def draw_hud(g: "Game"):
         _draw_hint(g, s)
 
     if g.debug:
-        txt(g, "FPS %d  CELL %d,%d  QR %s  STATE %s  WAVE %.0f" % (
+        txt(g, "FPS %d  CELL %d,%d  QR %s  STATE %s  WAVE %.0f  LAST SC %d" % (
             int(round(1.0 / max(g._last_dt, 1e-4))), g.player.cell[0], g.player.cell[1],
-            g.qr_content, g.state, g.wave_r),
+            g.qr_content, g.state, g.wave_r, g.last_sc),
             (HUD_X, HUD_Y + 30), g.f_small, C_DIM)
 
 
