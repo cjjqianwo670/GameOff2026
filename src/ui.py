@@ -115,10 +115,8 @@ def draw_world(g: "Game"):
     for (r, c) in b.flash:
         s.blit(g.flash_surf, cell_to_rect(r, c).topleft)
 
-    # 地上的死红怪 / 用过的道具（可选互动）——醒来那两个相位里世界还没被"看见"
-    seen_world = g.state not in ("INTRO", "TUTORIAL")
-    if seen_world:
-        _draw_props(g, s)
+    # 地上的死红怪 / 用过的道具：**一直在世界上**，不要等某个相位才画出来
+    _draw_props(g, s)
 
     # 圣坛边框：平时暗框；清屏阶段跟着光脉动
     frame = target_rect().inflate(6, 6)
@@ -150,8 +148,8 @@ def draw_world(g: "Game"):
         pygame.draw.circle(s, m.color, (mx, my), m.radius)
         pygame.draw.circle(s, C_CELL_BLACK, (mx, my), m.radius, 1)
 
-    # 老者：等他被"抬头看见"那一刻才出现在画面里
-    if seen_world and g.oldman is not None and not g.oldman.gone:
+    # 老者同理：他从第一帧就站在那儿（只有走了以后才不画）
+    if g.oldman is not None and not g.oldman.gone:
         _draw_oldman(g, s)
 
     # 开场动画期间不画玩家（角色会浮在碎码中间）
