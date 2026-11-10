@@ -266,7 +266,7 @@ def draw_end(g: "Game"):
     """第一幕收尾：整屏压暗 + ACT 1 — END。"""
     s = g.screen
     veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-    veil.fill((0, 0, 0, 195))
+    veil.fill((0, 0, 0, 216))
     s.blit(veil, (0, 0))
     center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
     if int(g.menu_t * 2.0) % 2 == 0:
