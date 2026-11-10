@@ -1,7 +1,7 @@
 # HANDOFF —— 技术交接与工作日志
 
 > 给「下一个接手的 AI」和「未来的自己」看。
-> 最后更新：2026-11-10 21:50 · **第一幕（含剧情层）已跑通，`src/` 共 2853 行，15 个验证脚本 288 项全绿**
+> 最后更新：2026-11-10 22:05 · **第一幕（含剧情层 + 角色贴图）已跑通，`src/` 共 2855 行，15 个验证脚本 288 项全绿**
 
 ---
 
@@ -72,7 +72,7 @@ M7（打包）未做。**这些里程碑不再推进，只当引擎参考。**
 
 ## 2. 结构与边界（最重要）
 
-按职责拆成 10 个模块 + `__init__.py`，**统一放在 `src/` 包内**，模块之间一律 `from src.xxx import ...`：
+按职责拆成 11 个模块 + `__init__.py`，**统一放在 `src/` 包内**，模块之间一律 `from src.xxx import ...`：
 
 ```
 config ──> grid ──> board ──┐
@@ -80,26 +80,27 @@ config ──> grid ──> board ──┐
    └──> qr ──────────────────┘        ↑
    └──> input_state ──────────────────┘
                         ui ───────────┘（game 调 ui 画，ui 只读 game）
+                         └──> sprites（ui 调它画三个角色；sprites 只认 config）
 ```
 
 | 文件 | 行数 | 职责 | 允许 import |
 |---|---|---|---|
 | `src/__init__.py` | 5 | 空包标记，让 `from src.xxx import ...` 成立 | 无 |
-| `src/config.py` | 226 | 常量 / 颜色 / 相位与数值 / 异象与脏格 / 血量 / 开场动画 | 无（连 pygame 都不用） |
+| `src/config.py` | 237 | 常量 / 颜色 / 相位与数值 / 异象与脏格 / 血量 / 开场动画 / 角色配色 | 无（连 pygame 都不用） |
 | `src/grid.py` | 54 | 坐标换算 4 个函数 | pygame, src.config |
 | `src/qr.py` | 64 | **segno 真码**（`version=1 / error="l"`）+ `required_cells()` 算必涂格 | src.config, **segno** |
 | `src/board.py` | 181 | 四态棋盘、`progress()`、`is_complete()`、`reveal` 计时、`stains` 累计、`snapshot/restore` | src.config, src.grid |
 | `src/input_state.py` | 49 | 键盘状态（只认 scancode） | pygame, src.config |
-| `src/entities.py` | 234 | `Player` + `Monster`（红怪 `eat`/`hunt` 两模式）+ `OldMan`（矩形 + 拐杖）+ `Item`（浮起） | pygame, src.config, src.grid |
+| `src/entities.py` | 238 | `Player`（格子步进）+ `Monster`（红怪 `eat`/`hunt` 两模式，带 `phase`）+ `OldMan`（站位 / 面向 / 挥杖计时）+ `SceneRed` + `Item`。**只存状态，画法在 `sprites.py`** | pygame, src.config, src.grid |
 | `src/ui.py` | 649 | 所有 `draw_*`（首参 `Game`，只读）；角色只调 `sprites` | pygame, src.sprites, src.config, src.grid |
-| `src/sprites.py` | 268 | 三个角色的像素级画法（影子/剪影/体积/高光/描边） | pygame, src.config |
-| `src/game.py` | 913 | `Game`：11 个相位 / 对话推进 / 检查点 / 每帧更新 | 全部业务模块 + ui |
+| `src/sprites.py` | 269 | 三个角色的像素级画法（影子/剪影/体积/高光/描边） | pygame, src.config |
+| `src/game.py` | 920 | `Game`：11 个相位 / 对话推进 / 检查点 / 每帧更新 / 贴图时基 `anim_t` | 全部业务模块 + ui |
 | `src/story.py` | 120 | **第一幕全部英文文案**：5 条独白（`M1~M5`）/ 8 条系统提示 / 2 条道具说明 / 对话 22 条（坛内 13、坛外 8+共享 9、末尾 `LEAVE_LINE`）/ `branch(on_altar)` 双支线。**文件末尾还留着旧版 4 个常量，是死代码** | 无 |
 | `src/main.py` | 69 | 开窗口（等比缩放）+ 主循环（顶部有直接运行脚本的路径引导） | pygame, src.config, src.game |
 
-**共 2853 行**（旧五关版是 1617 行，第一幕 +1236 行）。
+**共 2855 行**（旧五关版是 1617 行，第一幕 +1238 行）。
 
-第一幕要新增的东西**没有新开模块**，都落在了现有模块里：
+第一幕要新增的东西基本都落在现有模块里；**唯一新开的是 `sprites.py`**（2026-11-10 追加的角色贴图，纯画法，不碰规则）：
 
 | 需求 | 落在哪 |
 |---|---|
@@ -463,15 +464,17 @@ done
 
 - **依赖：`pygame` + `segno` + 标准库**。不引入 numpy / PIL / opencv（numpy 对 441 格没有任何必要）
 - 不用 asyncio；普通 `while` + `clock.tick(60)`
-- **不做粒子 / 残影**；怪物就是一个 `draw.circle`。
-  **震屏只有一处例外：开场动画**，别处一律禁止
+- **不做粒子 / 残影**。**震屏只有一处例外：开场动画**，别处一律禁止。
+  ⚠️ 2026-11-10 起**怪物不再是一个 `draw.circle`**：三个角色改在 `sprites.py` 里逐层画
+  （红怪 = 9 顶点缓慢起伏的肉块 + 眼 + 触须）。这是用户明确要求的例外，
+  但**没有放宽「不做粒子」** —— 所有抖动都是每帧重算一个多边形，不存粒子对象、不留残影、不做拖尾
 - **界面全英文**。分两档：
   - **HUD、按钮、系统提示 → 全大写**（`NOISE 3` / `PRESS T`）
   - **剧情台词、独白、对话 → 正常大小写**（一整句全大写的英文读起来很累，而且没有语气）
 - 字体只建一次（`pygame.font.Font(None, size)`）。**英文字体够了，不需要外挂字体文件**
 - 键盘只用 `event.scancode`；初始化 `pygame.key.stop_text_input()`；`WINDOWFOCUSLOST` 清空按键集合
 - 涂改只作用于**脚下这一格**；鼠标只允许点菜单按钮
-- 数值只在 `config.py`，画法只在 `ui.py`，规则只在 `game.py`
+- 数值只在 `config.py`，画法只在 `ui.py` + `sprites.py`（角色），规则只在 `game.py`
 - 代码都在 `src/` 包内，import 一律 `from src.xxx import ...`
 - **脏格计数必须是「本幕累计值」**，不是「当前画面上的脏格数」。擦掉不返还，见 §4.4
 - **异象只在圣坛内生效**；平地上按 Shift 不给灰域（这是叙事设定，也是玩法边界）
@@ -503,7 +506,7 @@ done
 ### 2026-11-10 深夜 · 三个角色重画（新建 `src/sprites.py`）
 
 - 需求：「码序使、老者还有红色怪物的建模能再丰富一点吗？现在看起来太简单了」。
-- 新增 `src/sprites.py`（268 行）：`draw_sequencer` / `draw_oldman` / `draw_red` / `draw_dead_red`，
+- 新增 `src/sprites.py`（269 行）：`draw_sequencer` / `draw_oldman` / `draw_red` / `draw_dead_red`，
   统一「影子 → 剪影 → 体积 → 高光 → 描边」五层。`ui.py` 里原来那三段画法删掉，只留一行调用。
 - 玩家：兜帽 + 收腰斗篷 + 袖子 + 面罩亮屏 + 呼吸核心 + 头顶 I 型光标（闪）+ 影子；四向面罩位置不同，
   背对时只剩后脑一条缝。
@@ -598,7 +601,8 @@ done
   淡入**只画玩家脚下 5×5**，不再是整张灰码；配合 `enter_tutorial()` 里的 `reveal_around` 接上真异象。
 - **教程计时**：`note_move()` 按「有没有按着方向键」累计 `move_time`，不是按格子变化——
   否则长按 5 秒只能攒到 0.7 秒（每 0.13s 才动一格）。
-- **老者**：`entities.OldMan`（矩形 + 拐杖线 + 挥杖相位）。站位 `config.OLDMAN_CELL=(1,12)`
+- **老者**：`entities.OldMan`（当时是「矩形 + 拐杖线 + 挥杖相位」，**画法已在 2026-11-10 移到
+  `sprites.draw_oldman`**）。站位 `config.OLDMAN_CELL=(1,12)`
   —— 原来放 `(12,1)` 时贴着画布左边缘，驱赶那一段几乎看不见。过场红怪从上方进场、往上逃走。
 - **对话**：`Game.dlg_lines` 是普通列表，`story.branch(on_altar)` 拼出两条支线；
   `LEAVE_LINE` 贴在末尾（`If I can.` 用 `\n` 单独成行），最后一句回车后 `dlg_hold=1.0` 秒再关。
