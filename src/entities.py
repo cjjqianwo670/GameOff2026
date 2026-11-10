@@ -6,6 +6,8 @@
   场上没有黑域             → 改为追玩家，追上就 -5% 血量，然后自毁
 """
 
+import random
+
 import pygame
 
 from src.config import (
@@ -59,6 +61,7 @@ class Monster:
 
     def __init__(self, pos, speed, kind="red"):
         self.kind = kind
+        self.phase = random.random() * 6.283    # 贴图抖动的相位：一群怪别一起呼吸
         self.pos = pygame.Vector2(pos)
         self.speed = speed
         self.target = None                  # (r, c) 或 None（None = 场上没黑域，追人）
@@ -208,6 +211,7 @@ class SceneRed:
     """开场被老者赶走的那两只。只沿一条直线进退，逃出画面就回收。"""
 
     def __init__(self, pos, vel, radius=9):
+        self.phase = random.random() * 6.283
         self.pos = pygame.Vector2(pos)
         self.vel = pygame.Vector2(vel)
         self.radius = radius

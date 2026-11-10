@@ -31,7 +31,8 @@ from src.config import (
     CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_NAME_FONT, INTRO_TOTAL, ITEM_PICK_RANGE,
     ITEM_RISE_TIME, MONO_CPS, MONO_FONT, MONOLOGUE_TIME, OLDMAN_CELL, PROMPT_FONT,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
-    PROP_TOOL_CELL, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN, RED_SPD_JITTER,
+    PROP_TOOL_CELL, RED_RADIUS, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
+    RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
     SC_R, SC_SHIFT, SC_SPACE, SC_T, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX,
     SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT, TARGET_N, TARGET_OFFSET, THREAT_TIME,
@@ -82,7 +83,11 @@ class Game:
         self.ghost = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.ghost.fill((*C_MIRAGE, 255))
         self.glow = pygame.Surface((PLAYER_GLOW_R * 2, PLAYER_GLOW_R * 2), pygame.SRCALPHA)
-        pygame.draw.circle(self.glow, (*C_PLAYER, 46), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
+        pygame.draw.circle(self.glow, (*C_PLAYER, 42), (PLAYER_GLOW_R, PLAYER_GLOW_R), PLAYER_GLOW_R)
+        # 红怪身下的一圈暗红光：贴图里现画会掉帧，预生成一张
+        self.red_glow = pygame.Surface((RED_RADIUS * 2 + 20, RED_RADIUS * 2 + 20), pygame.SRCALPHA)
+        pygame.draw.circle(self.red_glow, (*C_MONSTER, 22),
+                           (RED_RADIUS + 10, RED_RADIUS + 10), RED_RADIUS + 5)
         self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.flash_surf.fill((*C_MONSTER, 120))
         self.stain_tile = make_stain_tile()
@@ -112,6 +117,7 @@ class Game:
         self.claims = {}
         self.scene_reds = []
 
+        self.anim_t = 0.0                            # 只给贴图动画用（呼吸 / 触须 / 光标闪）
         self.elapsed = 0.0
         self.spawn_rate = RED_SPAWN_PER_MIN
         self.spawn_acc = 0.0
@@ -372,6 +378,7 @@ class Game:
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt
+        self.anim_t += dt                            # 贴图动画的时基：所有相位都在走
         st = self.state
         if st in ("TITLE", "DEAD", "END"):
             self.menu_t += dt

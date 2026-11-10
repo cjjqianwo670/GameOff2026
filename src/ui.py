@@ -17,11 +17,12 @@ import pygame
 if TYPE_CHECKING:            # 只为 IDE 补全与类型检查，运行时不执行，不会造成循环 import
     from src.game import Game
 
-from src import story
+from src import sprites, story
 from src.config import (
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
     C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_MISSING, C_MONSTER, C_MUST,
-    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PLAYER, C_PROP_DEAD, C_PROP_TOOL, C_RING, C_STAFF,
+    C_OUTLINE,
+    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PROP_TOOL, C_RING,
     C_TEXT, C_WARN,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
@@ -29,8 +30,7 @@ from src.config import (
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
     INTRO_TOTAL, MAP_CELL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
     MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_PLATE_ALPHA, MONO_TOP, MONO_WIDTH,
-    OLDMAN_BODY_H,
-    OLDMAN_BODY_W, PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y, PLAYER_BODY_H, PLAYER_BODY_W,
+    PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
     PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT, TARGET_N,
     TARGET_OFFSET, THREAT_Y, VALID, WINDOW_H, WINDOW_W
 )
@@ -141,12 +141,15 @@ def draw_world(g: "Game"):
 
     # 红怪（战斗单位 + 过场里的两只）
     for r in g.scene_reds:
-        pygame.draw.circle(s, C_MONSTER, (int(r.pos.x), int(r.pos.y)), r.radius)
-        pygame.draw.circle(s, C_CELL_BLACK, (int(r.pos.x), int(r.pos.y)), r.radius, 1)
+        sprites.draw_red(s, r.pos.x, r.pos.y, r.radius, g.anim_t, r.phase,
+                         look=g.player.pos if g.player else None)
     for m in g.monsters:
-        mx, my = int(m.pos.x), int(m.pos.y)
-        pygame.draw.circle(s, m.color, (mx, my), m.radius)
-        pygame.draw.circle(s, C_CELL_BLACK, (mx, my), m.radius, 1)
+        look = cell_center(*m.target) if m.target is not None else (
+            g.player.pos if g.player is not None else None)
+        sprites.draw_red(s, m.pos.x, m.pos.y, m.radius, g.anim_t, m.phase,
+                         hunting=(m.mode == "hunt"), look=look,
+                         glow=g.red_glow, base=m.color,
+                         dark=sprites._mix(m.color, C_CELL_BLACK, 0.52))
 
     # 老者同理：他从第一帧就站在那儿（只有走了以后才不画）
     if g.oldman is not None and not g.oldman.gone:
@@ -215,33 +218,22 @@ def _draw_mirage(g, s):
 
 def _draw_props(g, s):
     """圣坛外的两件背景物：一只死掉的红怪、几件用过的道具。"""
-    x, y = cell_center(*PROP_DEAD_CELL)
-    pygame.draw.circle(s, C_PROP_DEAD, (x, y), 9)
-    pygame.draw.circle(s, C_CELL_BLACK, (x, y), 9, 1)
+    sprites.draw_dead_red(s, *cell_center(*PROP_DEAD_CELL))
+
+    # 用过的道具：一块歪掉的板 + 一根探针，都蒙着灰
     x, y = cell_center(*PROP_TOOL_CELL)
-    pygame.draw.rect(s, C_PROP_TOOL, pygame.Rect(x - 12, y - 8, 9, 16), border_radius=2)
-    pygame.draw.rect(s, C_PROP_TOOL, pygame.Rect(x, y - 4, 12, 9), border_radius=2)
+    plate = pygame.Rect(x - 12, y - 7, 10, 15)
+    pygame.draw.rect(s, C_OUTLINE, plate.inflate(2, 2), border_radius=3)
+    pygame.draw.rect(s, C_PROP_TOOL, plate, border_radius=2)
+    s.fill(C_OUTLINE, pygame.Rect(plate.x + 2, plate.y + 3, 6, 1))
+    s.fill(C_OUTLINE, pygame.Rect(plate.x + 2, plate.y + 6, 4, 1))
+    pygame.draw.line(s, C_OUTLINE, (x + 3, y + 6), (x + 11, y - 4), 4)
+    pygame.draw.line(s, C_PROP_TOOL, (x + 3, y + 6), (x + 11, y - 4), 2)
+    pygame.draw.circle(s, C_OUTLINE, (x + 11, y - 5), 3)
 
 
 def _draw_oldman(g, s):
-    om = g.oldman
-    px, py = int(om.pos.x), int(om.pos.y)
-    body = pygame.Rect(px - OLDMAN_BODY_W // 2, py - OLDMAN_BODY_H // 2 + 4,
-                       OLDMAN_BODY_W, OLDMAN_BODY_H)
-    pygame.draw.circle(s, C_OLDMAN, (px, body.top - 4), 7)          # 头
-    pygame.draw.rect(s, C_OLDMAN, body, border_radius=6)            # 身体
-
-    # 眼睛：朝向哪边就贴哪边
-    ex = px + (-4 if om.facing == 2 else 4 if om.facing == 3 else 0)
-    ey = body.top - 4 + (-2 if om.facing == 0 else 2 if om.facing == 1 else 0)
-    s.fill(C_CELL_BLACK, pygame.Rect(ex - 1, ey - 1, 3, 3))
-
-    # 拐杖：一条线。挥的时候在左右摆
-    side = -1 if om.facing == 2 else 1
-    swing = math.sin(om.staff_t * 16.0) * 10.0 if om.staff_t > 0 else 0.0
-    base = (px + side * 12, body.bottom - 2)
-    tip = (px + side * 20 + swing, body.top - 26)
-    pygame.draw.line(s, C_STAFF, base, tip, 3)
+    sprites.draw_oldman(s, g.oldman, g.anim_t)
 
 
 def _draw_item(g, s, it):
@@ -280,21 +272,8 @@ def _draw_spread(g, s):
 
 def draw_player(g: "Game", s):
     p = g.player
-    px, py = int(p.pos.x), int(p.pos.y)
-    s.blit(g.glow, (px - PLAYER_GLOW_R, py - PLAYER_GLOW_R))
-    body = pygame.Rect(px - PLAYER_BODY_W // 2, py - PLAYER_BODY_H // 2,
-                       PLAYER_BODY_W, PLAYER_BODY_H)
-    pygame.draw.rect(s, C_PLAYER, body, border_radius=5)
-    ex, ey = px - 2, py - 2
-    if p.facing == 0:
-        ey = body.top + 4
-    elif p.facing == 1:
-        ey = body.bottom - 8
-    elif p.facing == 2:
-        ex = body.left + 3
-    else:
-        ex = body.right - 7
-    s.fill(C_CELL_BLACK, pygame.Rect(ex, ey, 4, 4))
+    moving = g.input.dir4() is not None
+    sprites.draw_sequencer(s, p.pos.x, p.pos.y, p.facing, g.anim_t, moving, glow=g.glow)
 
 
 def draw_dashed_rect(s, rect, dash=12, color=C_CELL_LINE):

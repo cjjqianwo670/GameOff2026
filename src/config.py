@@ -57,6 +57,17 @@ C_OLDMAN = (214, 198, 160)        # 老者（暖米色，和玩家的青绿分�
 C_STAFF = (150, 132, 96)          # 拐杖
 C_ITEM = (255, 214, 102)          # 道具（BAG / MAP）
 C_PROP_DEAD = (120, 44, 58)       # 地上死掉的红怪（暗红）
+# ---- 角色分层配色（sprites.py 用：剪影 / 体积 / 高光 / 描边各一层）----
+C_OUTLINE = (14, 11, 10)          # 角色统一描边：近黑，压在褐底或白格上都分得开
+C_PLAYER_DEEP = (13, 44, 39)      # 码序使：斗篷剪影
+C_PLAYER_DARK = (28, 84, 71)      # 码序使：受光的体积
+C_PLAYER_LIGHT = (192, 255, 226)  # 码序使：面罩 / 光标 / 核心高光
+C_OLDMAN_DARK = (168, 148, 114)   # 老者：袍子暗部 / 头发
+C_OLDMAN_LIGHT = (242, 233, 210)  # 老者：胡须
+C_SASH = (146, 106, 66)           # 腰带 / 拐杖缠布
+C_MONSTER_DARK = (130, 16, 46)    # 红怪：外圈肉
+C_MONSTER_CORE = (255, 232, 238)  # 红怪：眼珠高光
+C_MONSTER_RING = (255, 138, 168)  # 红怪：追人时的红环
 C_PROP_TOOL = (96, 104, 116)      # 用过的道具（灰）
 C_PANEL = (31, 23, 17)            # 右侧面板底
 C_PANEL_LINE = (62, 47, 36)       # 面板分隔线
@@ -107,7 +118,6 @@ ANOMALY_MISS_LIMIT = 3            # 在坛外连按 3 次 Shift 都没灰域 →
 CALL_RANGE_PX = 150.0             # 呼喊范围（约 5 格）：进这个圈才显示 PRESS [T]
 CLOSE_RANGE_PX = 72.0             # 「走近再说」的范围（约 2.5 格）
 OLDMAN_CELL = (1, 12)             # 老者站位：圣坛上方那条平地上，背对玩家（朝世界外）
-OLDMAN_BODY_W, OLDMAN_BODY_H = 18, 26
 OLDMAN_RUN_SPEED = 230.0          # 坛内呼喊时他兴奋地跑过来
 OLDMAN_LEAVE_SPEED = 140.0        # 对话结束后往世界外走
 THREAT_TIME = 2.0                 # 红怪狠话停留
@@ -146,7 +156,6 @@ MAP_CELL = 11                     # 21×21 进度图每格像素（231px）
 # ==== 玩家（格子对齐移动）====
 PLAYER_START_CELL = (12, 12)      # ⬜ B1 未拍板：设计建议挪到 (13,10)，先按原方案
 MOVE_REPEAT = 0.13                # 长按方向键时每走一格的间隔（按下瞬间必定先走一格）
-PLAYER_BODY_W, PLAYER_BODY_H = 16, 22
 PLAYER_GLOW_R = 14
 
 # ==== 输入：scancode 是物理键位，与输入法/CapsLock/Shift 无关 ====
