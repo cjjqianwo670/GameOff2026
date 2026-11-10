@@ -135,9 +135,9 @@ SC_W, SC_A, SC_S, SC_D = 26, 4, 22, 7
 SC_J, SC_K, SC_SPACE = 13, 14, 44
 SC_T, SC_B = 20, 48
 SC_ESC, SC_ENTER, SC_KP_ENTER, SC_F1 = 41, 40, 88, 58
-# Shift：SDL2 的 scancode 是 225(左) / 229(右)；42 / 54 是 Windows 扫描码，
-# 两个都收，只当兜底 —— 真实按键只会命中其中一对。见 HANDOFF §5 第 1 条的教训。
-SC_SHIFT = (225, 229, 42, 54)
+# Shift：SDL2 scancode 左 225 / 右 229（已用 SDL_GetScancodeFromKey 实测，见 HANDOFF §3）。
+# ⚠️ 别写成 42 / 54 —— 那是 PS/2 扫描码，SDL2 里 42 是退格键。
+SC_SHIFT = (225, 229)
 DIR_KEYS = {SC_W: (-1, 0), SC_S: (1, 0), SC_A: (0, -1), SC_D: (0, 1)}
 
 # ==== 格子状态 ====

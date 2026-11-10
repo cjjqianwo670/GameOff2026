@@ -4,9 +4,9 @@ A story-driven puzzle game about restoring a QR code you can only half-remember.
 
 Game Off 2026 · theme **SHIFT** · Python + pygame · 5 acts · English UI
 
-> **开发状态（2026-11-10）**
-> 玩法层正在从「五关街机版」重写为「五幕剧情版」。`src/` 里现在跑的还是**旧版**（5 关、限时涂到百分比、S/A/B/F 评级），
-> 可以参考它的引擎部分，但**不要参考它的玩法**。本文档描述的是**目标方案**，尚未实现的部分标了 ⬜。
+> **开发状态（2026-11-10 深夜）**
+> **第一幕已经跑通**：开场碎码 → 学走路 → 学异象 → 看见老者赶走红怪 → 自由探索 → 双支线对话 →
+> 10 秒空档 → 战斗 → 清屏 → 拾取 BAG / MAP → `ACT 1 — END`。第二~五幕还没写（设计未定）。
 
 ---
 
