@@ -23,6 +23,8 @@ class Board:
         self.state = [[WHITE] * GRID_N for _ in range(GRID_N)]
         self.erase_t = [[0.0] * GRID_N for _ in range(GRID_N)]
         self.reveal = [[0.0] * GRID_N for _ in range(GRID_N)]   # 异象灰域剩余秒
+        # 地图道具用：这一格**被异象照过**（灰域退了也还记着）
+        self.seen = [[False] * TARGET_N for _ in range(TARGET_N)]
         self.flash = {}                                        # {(r,c): 剩余秒}，被怪啃那一下的红闪
         self.stains = 0                                        # ⚠️ 本幕**累计**涂错格数，擦掉不返还
 
@@ -43,8 +45,16 @@ class Board:
         return n
 
     def is_complete(self):
-        """完成条件：100 格全为有效黑域，**且**脏格累计 ≤ 上限。"""
-        return self.progress() >= len(self.must) and self.stains <= STAIN_LIMIT
+        """完成条件：100 格全为有效黑域。
+
+        脏格**不再**卡通关：超出额度改为每次扣血（见 game.paint_here），
+        所以手滑的代价是命，不是「这局废了」。
+        """
+        return self.progress() >= len(self.must)
+
+    def stains_over(self):
+        """超出额度的脏格数（0 表示还在额度内）。"""
+        return max(0, self.stains - STAIN_LIMIT)
 
     def dark_cells(self):
         """场上还有哪些有效黑域（红怪找吃的用）。"""
@@ -102,7 +112,10 @@ class Board:
         for rr in range(max(0, r - k), min(GRID_N, r + k + 1)):
             for cc in range(max(0, c - k), min(GRID_N, c + k + 1)):
                 t = to_target(rr, cc)
-                if t is None or not self.target[t[0]][t[1]]:
+                if t is None:
+                    continue
+                self.seen[t[0]][t[1]] = True          # 地图记住：这里我看过
+                if not self.target[t[0]][t[1]]:
                     continue
                 if self.state[rr][cc] != WHITE:
                     continue
@@ -156,6 +169,7 @@ class Board:
             "state": [row[:] for row in self.state],
             "erase_t": [row[:] for row in self.erase_t],
             "reveal": [row[:] for row in self.reveal],
+            "seen": [row[:] for row in self.seen],
             "stains": self.stains,
         }
 
@@ -163,5 +177,6 @@ class Board:
         self.state = [row[:] for row in snap["state"]]
         self.erase_t = [row[:] for row in snap["erase_t"]]
         self.reveal = [row[:] for row in snap["reveal"]]
+        self.seen = [row[:] for row in snap.get("seen", self.seen)]
         self.stains = snap["stains"]
         self.flash.clear()

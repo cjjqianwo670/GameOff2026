@@ -52,6 +52,11 @@ C_PLAYER = (108, 255, 196)        # 玩家（青绿）
 C_ACCENT = (108, 255, 196)        # 进度 / 正向强调
 C_WARN = (255, 176, 32)           # 警示黄
 C_MISSING = (46, 52, 62)          # 该黑却没涂
+C_OLDMAN = (214, 198, 160)        # 老者（暖米色，和玩家的青绿分开）
+C_STAFF = (150, 132, 96)          # 拐杖
+C_ITEM = (255, 214, 102)          # 道具（BAG / MAP）
+C_PROP_DEAD = (120, 44, 58)       # 地上死掉的红怪（暗红）
+C_PROP_TOOL = (96, 104, 116)      # 用过的道具（灰）
 C_PANEL = (20, 25, 33)            # 右侧面板底
 C_PANEL_LINE = (38, 46, 58)       # 面板分隔线
 C_DIM = (74, 82, 94)              # 弱化文字 / 描边
@@ -59,7 +64,8 @@ C_TEXT = (232, 236, 240)
 
 # ==== 第一幕 · 规则 ====
 MUST_TOTAL = 100                  # 三个定位图案（各 33）+ 暗模块 1
-STAIN_LIMIT = 10                  # 第一幕脏格上限（累计值）
+STAIN_LIMIT = 10                  # 第一幕脏格额度（累计值）；**超过不判负**，改成扣血
+STAIN_DAMAGE = 5                  # 额度之外的每一格脏格 = 一次外伤：血量 -5%
 ERASE_CAST = 0.25                 # K 抹除的塌陷时长
 
 # ==== 异象（the Anomaly）：Shift 照出脚下 5×5 灰域 ====
@@ -92,6 +98,31 @@ CLEAR_WAVE_WIDTH = 5              # 波环描边粗细
 # ==== 提示 / 横幅 ====
 HINT_TIME = 2.6                   # 底部系统提示停留时长
 BANNER_TIME = 2.4                 # 中央大字横幅（ACT 1 — END 之类）
+
+# ==== 剧情层（Phase B）====
+MONOLOGUE_TIME = 3.6              # 内心独白停留（2.5~3 秒 + 读完一点余量）
+TUTORIAL_MOVE_SECONDS = 5.0       # 必须「移动」满 5 秒才提示 Shift（站着不动不算）
+CALL_RANGE_PX = 150.0             # 呼喊范围（约 5 格）：进这个圈才显示 PRESS [T]
+CLOSE_RANGE_PX = 72.0             # 「走近再说」的范围（约 2.5 格）
+OLDMAN_CELL = (1, 12)             # 老者站位：圣坛上方那条平地上，背对玩家（朝世界外）
+OLDMAN_BODY_W, OLDMAN_BODY_H = 18, 26
+OLDMAN_RUN_SPEED = 230.0          # 坛内呼喊时他兴奋地跑过来
+OLDMAN_LEAVE_SPEED = 140.0        # 对话结束后往世界外走
+THREAT_TIME = 2.0                 # 红怪狠话停留
+THREAT_Y = 250                    # 屏幕中央偏上
+GAP_SECONDS = 10.0                # 老者离开后的空档
+DLG_BOX = (40, 688, 760, 204)     # 对话框：x / y / 宽 / 高
+DLG_LINE_H = 34
+PROP_DEAD_CELL = (4, 1)           # 死亡的红怪（可选独白 M4）
+PROP_TOOL_CELL = (19, 1)          # 用过的道具（可选独白 M5）
+PROP_RANGE_PX = 54.0
+ITEM_PICK_RANGE = 46.0
+ITEM_RISE_TIME = 0.8
+REWARD_DELAY = 1.6                # 波扫完到道具浮出的延迟
+REWARD_WAIT = 5.0                 # 两个都捡起来之后，等光扩散
+SPREAD_TIME = 2.0                 # 圣坛的光扩散到整个世界
+BAG_SLOTS = 8                     # 背包格数
+MAP_CELL = 11                     # 21×21 进度图每格像素（231px）
 
 # ==== 玩家（格子对齐移动）====
 PLAYER_START_CELL = (12, 12)      # ⬜ B1 未拍板：设计建议挪到 (13,10)，先按原方案

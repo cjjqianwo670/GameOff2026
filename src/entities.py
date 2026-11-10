@@ -158,3 +158,77 @@ class Monster:
             return "eat"
         self.pos += d.normalize() * self.speed * dt
         return "alive"
+
+# ==== 老者（the old man）====
+
+
+class OldMan:
+    """老者：一个比玩家大一圈的矩形 + 一根拐杖。不做美术。
+
+    他先是背对玩家（朝世界外），被呼喊后转身；坛内呼喊时他会兴奋地跑过来。
+    staff_t > 0 的这段时间里，拐杖在挥 —— 开场驱赶那两只红怪用的就是它。
+    """
+
+    def __init__(self, cell, facing=2):
+        self.cell = cell
+        self.pos = pygame.Vector2(cell_center(*cell))
+        self.facing = facing            # 0上 1下 2左 3右
+        self.staff_t = 0.0
+        self.walk_t = 0.0               # 走路摆动的相位（只在移动时累加）
+        self.leaving = False
+        self.gone = False
+
+    def wave(self, secs):
+        self.staff_t = secs
+
+    def face_to(self, pos):
+        dx, dy = pos.x - self.pos.x, pos.y - self.pos.y
+        self.facing = (1 if dy > 0 else 0) if abs(dy) > abs(dx) else (3 if dx > 0 else 2)
+
+    def update(self, dt):
+        if self.staff_t > 0:
+            self.staff_t = max(0.0, self.staff_t - dt)
+
+    def move_toward(self, target, speed, dt):
+        """朝目标走一步，返回是否已经到位。"""
+        d = pygame.Vector2(target[0] - self.pos.x, target[1] - self.pos.y)
+        if d.length() <= speed * dt + 1.0:
+            self.pos.update(target)
+            return True
+        self.pos += d.normalize() * speed * dt
+        self.walk_t += dt
+        self.face_to(pygame.Vector2(target))
+        return False
+
+
+# ==== 过场里的红怪（不是战斗单位，只是演出）====
+
+
+class SceneRed:
+    """开场被老者赶走的那两只。只沿一条直线进退，逃出画面就回收。"""
+
+    def __init__(self, pos, vel, radius=9):
+        self.pos = pygame.Vector2(pos)
+        self.vel = pygame.Vector2(vel)
+        self.radius = radius
+        self.gone = False
+
+    def update(self, dt, stop_y=None):
+        self.pos += self.vel * dt
+        if stop_y is not None and self.pos.y >= stop_y:
+            self.pos.y = stop_y
+            self.vel.update(0, 0)
+
+
+# ==== 道具（BAG / MAP）====
+
+
+class Item:
+    """清屏之后从已复原的黑格上浮出来的道具。t 是浮起进度 0→1。"""
+
+    def __init__(self, kind, cell):
+        self.kind = kind                # "bag" / "map"
+        self.cell = cell
+        self.pos = pygame.Vector2(cell_center(*cell))
+        self.t = 0.0
+        self.picked = False

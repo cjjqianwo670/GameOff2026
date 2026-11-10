@@ -1,18 +1,16 @@
 # -*- coding: utf-8 -*-
 """界面绘制：所有 draw_* 都在这里，第一个参数是 Game 实例。
 
-改界面不用翻游戏逻辑，改逻辑也不会碰画法。
-只读 Game 的属性，不修改任何游戏状态。
+改界面不用翻游戏逻辑，改逻辑也不会碰画法。只读 Game 的属性，不修改任何游戏状态。
 
 布局（逻辑画布 1360×1000）：
-    0~840    世界（30×30 生成环，正中 25×25 主网格）
-    840~1360 状态面板（血条 / 进度 / 脏格，Phase B 再加 8 格物品栏与 21×21 进度图）
-    12~48    顶部 HUD    ·    906~    底部操作提示 / 系统消息
+    0~840     世界（30×30 生成环，正中 25×25 主网格，圣坛是中间 21×21）
+    840~1360  状态面板（血量 / 进度 / 脏格 / 红怪数；捡到道具后再出 8 格物品栏与 21×21 进度图）
+    12~48     顶部 HUD  ·  830~900 内心独白  ·  918 键位与提示  ·  940~ 系统消息
 """
 
-from typing import TYPE_CHECKING
-
 import math
+from typing import TYPE_CHECKING
 
 import pygame
 
@@ -21,17 +19,23 @@ if TYPE_CHECKING:            # 只为 IDE 补全与类型检查，运行时不�
 
 from src import story
 from src.config import (
-    CELL, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK, C_CELL_LINE, C_CELL_WHITE,
-    C_DIM, C_ERASING, C_MISSING, C_MONSTER, C_MUST, C_PANEL, C_PANEL_LINE, C_PLAYER, C_TEXT,
-    C_WARN, DIRTY, ERASE_CAST, ERASING, GRID_N, GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX,
-    HINT_Y, HUD_X, HUD_Y, MIRAGE_ALPHA_MAX, MIRAGE_FADE, PANEL_H, PANEL_PAD, PANEL_W, PANEL_X,
-    PANEL_Y, PLAYER_BODY_H, PLAYER_BODY_W, PLAYER_GLOW_R, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT,
-    TARGET_OFFSET, VALID, WINDOW_H, WINDOW_W, CLEAR_WAVE_WIDTH
+    BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
+    C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_MISSING, C_MONSTER, C_MUST,
+    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PLAYER, C_PROP_DEAD, C_PROP_TOOL, C_STAFF, C_TEXT, C_WARN,
+    DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOX, DLG_LINE_H, ERASE_CAST, ERASING, GRID_N,
+    GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
+    INTRO_TOTAL, MAP_CELL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, OLDMAN_BODY_H,
+    OLDMAN_BODY_W, PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y, PLAYER_BODY_H, PLAYER_BODY_W,
+    PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT, TARGET_N,
+    TARGET_OFFSET, THREAT_Y, VALID, WINDOW_H, WINDOW_W
 )
-from src.grid import cell_to_rect, target_rect
+from src.grid import cell_center, cell_to_rect, target_rect
 
 PLAY_W = PANEL_X             # 左侧世界区域的宽度
+PANEL_INNER = PANEL_W - PANEL_PAD * 2
 
+
+# ==== 开始页 ====
 
 def draw_title(g: "Game"):
     s = g.screen
@@ -50,45 +54,44 @@ def draw_title(g: "Game"):
     center_txt(g, "ESC: QUIT      F1: DEBUG", (WINDOW_W // 2, 750), g.f_small, C_DIM)
 
 
+# ==== 世界 ====
+
 def draw_world(g: "Game"):
     s = g.screen
     b = g.board
     s.fill(C_BG)
 
-    # 废墟暗格：只铺世界区域，右侧面板自己会盖住
     for x in range(0, PLAY_W, CELL):
         pygame.draw.line(s, C_BG_GRID, (x, 0), (x, WINDOW_H))
     for y in range(0, WINDOW_H, CELL):
         pygame.draw.line(s, C_BG_GRID, (0, y), (PLAY_W, y))
 
-    # 生成环虚线框：提示红怪从这条线外来
     draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)))
-
-    # 白底一次铺满整个 25×25（不逐格 fill）
     s.fill(C_CELL_WHITE, pygame.Rect(GRID_ORIGIN, (GRID_PX, GRID_PX)))
 
-    # 异象灰域：只画「照出来了、该黑、还是白」的格子，越接近 5 秒越淡
-    for r in range(GRID_N):
-        for c in range(GRID_N):
-            if not b.revealed(r, c):
-                continue
-            k = b.reveal[r][c] / MIRAGE_FADE
-            g.mirage_tile.set_alpha(int(MIRAGE_ALPHA_MAX * k))
-            s.blit(g.mirage_tile, cell_to_rect(r, c).topleft)
+    # ---- 开场：完整码铺出 → 碎 → 只剩脚下一小片 ----
+    in_intro = g.intro_t > 0
+    if in_intro:
+        if not g.burst_done:
+            _draw_intro_code(g, s)
+        elif g.hint_alpha > 0:
+            _draw_ghost(g, s)                 # 只剩脚下 5×5 那一小片
+    else:
+        _draw_mirage(g, s)
 
-    # 绿框：本轮必涂格。照出来才看得见 —— 没照过的格子你根本不知道要涂
+    # 绿框：本轮必涂格。照出来才看得见
     for (r, c) in b.must:
         if b.revealed(r, c):
             pygame.draw.rect(s, C_MUST, cell_to_rect(r, c), 2)
 
-    # 网格线：整片画线比每格描边便宜，且不会被提示块吃掉
+    # 网格线
     for i in range(GRID_N + 1):
         x = GRID_ORIGIN[0] + i * CELL
         y = GRID_ORIGIN[1] + i * CELL
         pygame.draw.line(s, C_CELL_LINE, (x, GRID_ORIGIN[1]), (x, GRID_ORIGIN[1] + GRID_PX))
         pygame.draw.line(s, C_CELL_LINE, (GRID_ORIGIN[0], y), (GRID_ORIGIN[0] + GRID_PX, y))
 
-    # 格子状态：有效黑域 / 脏黑（黑白相间）/ 抹除中
+    # 格子状态
     for r in range(GRID_N):
         srow = b.state[r]
         for c in range(GRID_N):
@@ -107,30 +110,169 @@ def draw_world(g: "Game"):
     for (r, c) in b.flash:
         s.blit(g.flash_surf, cell_to_rect(r, c).topleft)
 
-    # 圣坛边框：平时是暗框；清屏阶段跟着光脉动
+    # 地上的死红怪 / 用过的道具（可选互动）——醒来那两个相位里世界还没被"看见"
+    seen_world = g.state not in ("INTRO", "TUTORIAL")
+    if seen_world:
+        _draw_props(g, s)
+
+    # 圣坛边框：平时暗框；清屏阶段跟着光脉动
     frame = target_rect().inflate(6, 6)
-    if g.state == "CLEAR":
-        k = (math.cos(g.glow_t * 6.0) + 1.0) * 0.5      # 0~1 往返
-        col = mix(C_ALTAR, C_ACCENT, k)
-        pygame.draw.rect(s, col, frame, 3)
+    if g.state in ("CLEAR", "REWARD"):
+        k = (math.cos(g.glow_t * 6.0) + 1.0) * 0.5
+        pygame.draw.rect(s, mix(C_ALTAR, C_ACCENT, k), frame, 3)
     else:
         pygame.draw.rect(s, C_ALTAR, frame, 2)
 
-    # 清屏的圆形波：一个半径随时间增大的圆环描边（不许做成粒子），裁在世界区域内
-    if g.state == "CLEAR" and g.clear_phase in ("wave", "hold") and g.wave_r > 0:
+    # 清屏的圆形波 / 奖励阶段的光扩散（都裁在世界区域内）
+    if g.wave_r > 0 and g.state == "CLEAR":
         old = s.get_clip()
         s.set_clip(pygame.Rect(0, 0, PLAY_W, WINDOW_H))
-        cx, cy = frame.center
-        pygame.draw.circle(s, C_ACCENT, (cx, cy), int(g.wave_r), CLEAR_WAVE_WIDTH)
+        pygame.draw.circle(s, C_ACCENT, frame.center, int(g.wave_r), CLEAR_WAVE_WIDTH)
         s.set_clip(old)
+    if g.state == "REWARD" and g.reward_phase == "spread":
+        _draw_spread(g, s)
 
-    # 红怪就是一个圆；玩家必须画在它之后，否则怪物路过会把玩家盖住
+    # 道具
+    for it in g.items:
+        _draw_item(g, s, it)
+
+    # 红怪（战斗单位 + 过场里的两只）
+    for r in g.scene_reds:
+        pygame.draw.circle(s, C_MONSTER, (int(r.pos.x), int(r.pos.y)), r.radius)
+        pygame.draw.circle(s, C_CELL_BLACK, (int(r.pos.x), int(r.pos.y)), r.radius, 1)
     for m in g.monsters:
         mx, my = int(m.pos.x), int(m.pos.y)
         pygame.draw.circle(s, m.color, (mx, my), m.radius)
         pygame.draw.circle(s, C_CELL_BLACK, (mx, my), m.radius, 1)
 
-    draw_player(g, s)
+    # 老者：等他被"抬头看见"那一刻才出现在画面里
+    if seen_world and g.oldman is not None and not g.oldman.gone:
+        _draw_oldman(g, s)
+
+    # 开场动画期间不画玩家（角色会浮在碎码中间）
+    if not in_intro:
+        draw_player(g, s)
+
+    # 碎片画在最上层
+    for d in g.debris:
+        rect = pygame.Rect(int(d[0]), int(d[1]), CELL, CELL)
+        s.fill(C_MISSING, rect)
+        pygame.draw.rect(s, C_CELL_LINE, rect, 1)
+
+    # 威胁台词（红怪的狠话）
+    if g.threat_t > 0:
+        _draw_threat(g, s)
+
+
+def _draw_intro_code(g, s):
+    """开场前 1.5 秒：整张码用黑色铺出来（先单独亮一下暗模块）。"""
+    t = INTRO_TOTAL - g.intro_t
+    if t < DARK_MODULE_LEAD:
+        dr, dc = DARK_MODULE
+        s.fill(C_CELL_BLACK, cell_to_rect(TARGET_OFFSET[0] + dr, TARGET_OFFSET[1] + dc))
+        return
+    orr, occ = TARGET_OFFSET
+    for tr in range(TARGET_N):
+        row = g.target[tr]
+        for tc in range(TARGET_N):
+            if row[tc]:
+                s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
+
+
+def _draw_ghost(g, s):
+    """灰码淡入：**只画脚下 5×5**（醒来时只剩这一小片）。"""
+    b = g.board
+    g.ghost.set_alpha(g.hint_alpha)
+    orr, occ = TARGET_OFFSET
+    pr, pc = g.player.cell
+    for tr in range(TARGET_N):
+        row = g.target[tr]
+        for tc in range(TARGET_N):
+            if not row[tc]:
+                continue
+            r, c = orr + tr, occ + tc
+            if b.state[r][c] != 0:
+                continue
+            if max(abs(r - pr), abs(c - pc)) > MIRAGE_RADIUS:
+                continue
+            s.blit(g.ghost, cell_to_rect(r, c).topleft)
+
+
+def _draw_mirage(g, s):
+    """异象灰域：只画「照出来了、该黑、还是白」的格子，越接近 5 秒越淡。"""
+    b = g.board
+    for r in range(GRID_N):
+        for c in range(GRID_N):
+            if not b.revealed(r, c):
+                continue
+            k = b.reveal[r][c] / MIRAGE_FADE
+            g.mirage_tile.set_alpha(int(MIRAGE_ALPHA_MAX * k))
+            s.blit(g.mirage_tile, cell_to_rect(r, c).topleft)
+
+
+def _draw_props(g, s):
+    """圣坛外的两件背景物：一只死掉的红怪、几件用过的道具。"""
+    x, y = cell_center(*PROP_DEAD_CELL)
+    pygame.draw.circle(s, C_PROP_DEAD, (x, y), 9)
+    pygame.draw.circle(s, C_CELL_BLACK, (x, y), 9, 1)
+    x, y = cell_center(*PROP_TOOL_CELL)
+    pygame.draw.rect(s, C_PROP_TOOL, pygame.Rect(x - 12, y - 8, 9, 16), border_radius=2)
+    pygame.draw.rect(s, C_PROP_TOOL, pygame.Rect(x, y - 4, 12, 9), border_radius=2)
+
+
+def _draw_oldman(g, s):
+    om = g.oldman
+    px, py = int(om.pos.x), int(om.pos.y)
+    body = pygame.Rect(px - OLDMAN_BODY_W // 2, py - OLDMAN_BODY_H // 2 + 4,
+                       OLDMAN_BODY_W, OLDMAN_BODY_H)
+    pygame.draw.circle(s, C_OLDMAN, (px, body.top - 4), 7)          # 头
+    pygame.draw.rect(s, C_OLDMAN, body, border_radius=6)            # 身体
+
+    # 眼睛：朝向哪边就贴哪边
+    ex = px + (-4 if om.facing == 2 else 4 if om.facing == 3 else 0)
+    ey = body.top - 4 + (-2 if om.facing == 0 else 2 if om.facing == 1 else 0)
+    s.fill(C_CELL_BLACK, pygame.Rect(ex - 1, ey - 1, 3, 3))
+
+    # 拐杖：一条线。挥的时候在左右摆
+    side = -1 if om.facing == 2 else 1
+    swing = math.sin(om.staff_t * 16.0) * 10.0 if om.staff_t > 0 else 0.0
+    base = (px + side * 12, body.bottom - 2)
+    tip = (px + side * 20 + swing, body.top - 26)
+    pygame.draw.line(s, C_STAFF, base, tip, 3)
+
+
+def _draw_item(g, s, it):
+    x, y = int(it.pos.x), int(it.pos.y)
+    rise = int((1.0 - it.t) * 22)
+    cy = y + rise
+    label = "BAG" if it.kind == "bag" else "MAP"
+    pygame.draw.circle(s, C_ITEM, (x, cy), 7)
+    pygame.draw.circle(s, C_CELL_BLACK, (x, cy), 7, 1)
+    img = g.f_tiny.render(label, True, C_ITEM)
+    s.blit(img, img.get_rect(center=(x, cy - 18)))
+
+
+def _draw_threat(g, s):
+    """红怪的狠话：屏幕中央偏上，全大写、猩红。"""
+    img = g.f_mid.render(story.THREAT, True, C_MONSTER)
+    rect = img.get_rect(center=(PLAY_W // 2, THREAT_Y)).inflate(56, 24)
+    plate = pygame.Surface(rect.size, pygame.SRCALPHA)
+    plate.fill((0, 0, 0, 150))
+    s.blit(plate, rect.topleft)
+    s.blit(img, img.get_rect(center=rect.center))
+
+
+def _draw_spread(g, s):
+    """奖励收尾：圣坛的光扩散到整个世界。"""
+    old = s.get_clip()
+    s.set_clip(pygame.Rect(0, 0, PLAY_W, WINDOW_H))
+    cx, cy = target_rect().center
+    r = int(g.spread_r)
+    g.spread_surf.fill((0, 0, 0, 0))
+    pygame.draw.circle(g.spread_surf, (*C_ACCENT, 54), (cx, cy), r)
+    pygame.draw.circle(g.spread_surf, (*C_ACCENT, 220), (cx, cy), r, 4)
+    s.blit(g.spread_surf, (0, 0))
+    s.set_clip(old)
 
 
 def draw_player(g: "Game", s):
@@ -162,11 +304,10 @@ def draw_dashed_rect(s, rect, dash=12, color=C_CELL_LINE):
         pygame.draw.line(s, color, (rect.left, y), (rect.left, y2))
         pygame.draw.line(s, color, (rect.right, y), (rect.right, y2))
 
-# ---------- HUD 与右侧面板 ----------
+# ==== HUD / 右侧面板 ====
 
 
 def txt(g: "Game", text, pos, font, color, right=False):
-    """right=True 时 pos 是右上角，用来把文字贴住右边距。"""
     img = font.render(text, True, color)
     g.screen.blit(img, img.get_rect(topright=pos) if right else img.get_rect(topleft=pos))
 
@@ -195,97 +336,126 @@ def draw_hud(g: "Game"):
     s = g.screen
     b = g.board
 
-    # ---- 顶部一行 ----
+    # ---- 顶部 ----
     txt(g, "ACT 1", (HUD_X, HUD_Y + 2), g.f_main, C_TEXT)
-    txt(g, "TIME %02d:%02d" % (int(g.elapsed) // 60, int(g.elapsed) % 60),
-        (PLAY_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
+    if g.state in ("BATTLE", "CLEAR", "REWARD", "DEAD"):
+        txt(g, "TIME %02d:%02d" % (int(g.elapsed) // 60, int(g.elapsed) % 60),
+            (PLAY_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
     txt(g, "[ESC] TITLE", (WINDOW_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
 
-    # ---- 右侧状态面板 ----
+    # ---- 右侧面板 ----
     panel = pygame.Rect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
     s.fill(C_PANEL, panel)
     pygame.draw.rect(s, C_PANEL_LINE, panel, 1)
     x = PANEL_X + PANEL_PAD
-    w = PANEL_W - PANEL_PAD * 2
 
-    # 血量
     hp = g.health
     hp_col = C_MONSTER if hp <= HEALTH_LOW else C_ACCENT
     txt(g, "HEALTH", (x, 96), g.f_small, C_DIM)
-    txt(g, "%d%%" % hp, (x + w, 92), g.f_panel, hp_col, right=True)
-    draw_bar(g, pygame.Rect(x, 126, w, 24), hp / float(HEALTH_MAX), hp_col)
+    txt(g, "%d%%" % hp, (x + PANEL_INNER, 92), g.f_panel, hp_col, right=True)
+    draw_bar(g, pygame.Rect(x, 126, PANEL_INNER, 24), hp / float(HEALTH_MAX), hp_col)
 
-    # 圣坛复原进度
     done = b.progress()
     total = len(b.must) or 1
     txt(g, "DARK", (x, 196), g.f_small, C_DIM)
-    txt(g, "%d / %d" % (done, total), (x + w, 192), g.f_panel, C_TEXT, right=True)
-    draw_bar(g, pygame.Rect(x, 226, w, 18), done / float(total), C_TEXT)
+    txt(g, "%d / %d" % (done, total), (x + PANEL_INNER, 192), g.f_panel, C_TEXT, right=True)
+    draw_bar(g, pygame.Rect(x, 226, PANEL_INNER, 18), done / float(total), C_TEXT)
 
-    # 脏格：显示的是**本幕累计**涂错格数，擦掉不减
+    # 脏格：本幕**累计**涂错格数，擦掉不减；超过额度就转红（那时每次扣血）
     stains = b.stains
     st_col = C_MONSTER if stains > STAIN_LIMIT else (C_WARN if stains > STAIN_LIMIT * 0.7 else C_TEXT)
     txt(g, "STAINS", (x, 280), g.f_small, C_DIM)
-    txt(g, "%d / %d" % (stains, STAIN_LIMIT), (x + w, 276), g.f_panel, st_col, right=True)
+    txt(g, "%d / %d" % (stains, STAIN_LIMIT), (x + PANEL_INNER, 276), g.f_panel, st_col, right=True)
 
-    # 场上红怪
     txt(g, "RED ON FIELD", (x, 340), g.f_small, C_DIM)
-    txt(g, str(len(g.monsters)), (x + w, 336), g.f_panel,
+    txt(g, str(len(g.monsters)), (x + PANEL_INNER, 336), g.f_panel,
         C_MONSTER if g.monsters else C_TEXT, right=True)
 
-    pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + w, 396))
-    # 396 以下是给 Phase B 的 8 格物品栏与 21×21 进度图留的位置
+    pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + PANEL_INNER, 396))
 
-    # ---- 底部操作提示 ----
-    txt(g, "[WASD] MOVE    [SHIFT] ANOMALY    [J] DARK    [K] ERASE    [R] RESTART",
-        (HUD_X, HINT_Y), g.f_small, C_ERASING)
+    if g.has_bag:
+        _draw_bag(g, s, x, 412)
+    if g.has_map:
+        _draw_map(g, s, x, 604)
 
-    # ---- 底部系统消息（全大写，一次一句）----
+    # ---- 底部：键位 + 提示 + 系统消息 ----
+    if g.state == "TUTORIAL" and g.prompt_text:
+        # 教程阶段那句提示本身就是键位表，不用再摆一遍
+        center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 8), g.f_main, C_ACCENT)
+    else:
+        # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
+        txt(g, "[WASD] MOVE    [SHIFT] ANOMALY    [J] DARK    [K] ERASE    [R] RESTART",
+            (HUD_X, HINT_Y), g.f_small, C_ERASING)
+        if g.prompt_text:
+            txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 4), g.f_main, C_ACCENT, right=True)
+
+    if g.mono_t > 0 and g.mono_text:
+        _draw_monologue(g, s)
+
     if g.hint_t > 0 and g.hint_text:
-        lines = g.hint_text.split("\n")
-        imgs = [g.f_main.render(ln, True, C_WARN) for ln in lines]
-        bw = max(im.get_width() for im in imgs) + 48
-        bh = 16 + 30 * len(imgs)
-        plate = pygame.Rect(0, 0, bw, bh)
-        plate.center = (PLAY_W // 2, HINT_Y + 52)
-        s.fill(C_BG, plate)
-        pygame.draw.rect(s, C_WARN, plate, 1)
-        for i, im in enumerate(imgs):
-            s.blit(im, im.get_rect(center=(plate.centerx, plate.top + 15 + 30 * i)))
+        _draw_hint(g, s)
 
     if g.debug:
-        txt(g, "FPS %d  CELL %d,%d  QR %s  WAVE %.0f" % (
+        txt(g, "FPS %d  CELL %d,%d  QR %s  STATE %s  WAVE %.0f" % (
             int(round(1.0 / max(g._last_dt, 1e-4))), g.player.cell[0], g.player.cell[1],
-            g.qr_content, g.wave_r),
+            g.qr_content, g.state, g.wave_r),
             (HUD_X, HUD_Y + 30), g.f_small, C_DIM)
 
-# ---------- 覆盖层 ----------
+
+def _draw_bag(g, s, x, y):
+    txt(g, "BAG", (x, y), g.f_small, C_DIM)
+    cols, rows = 4, 2
+    gap = 12
+    w = (PANEL_INNER - gap * (cols - 1)) // cols
+    h = 62
+    for i in range(min(BAG_SLOTS, cols * rows)):
+        r, c = divmod(i, cols)
+        rect = pygame.Rect(x + c * (w + gap), y + 26 + r * (h + 10), w, h)
+        s.fill((14, 18, 25), rect)
+        pygame.draw.rect(s, C_PANEL_LINE, rect, 1, border_radius=4)
 
 
-def draw_end(g: "Game"):
-    """第一幕收尾：整屏压暗 + ACT 1 — END。"""
-    s = g.screen
-    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-    veil.fill((0, 0, 0, 216))
-    s.blit(veil, (0, 0))
-    center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
-    if int(g.menu_t * 2.0) % 2 == 0:
-        center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
+def _draw_map(g, s, x, y):
+    """21×21 进度图：只记得你用异象照过的地方。"""
+    txt(g, "MAP", (x, y), g.f_small, C_DIM)
+    size = TARGET_N * MAP_CELL
+    mx = x + (PANEL_INNER - size) // 2
+    my = y + 26
+    b = g.board
+    for tr in range(TARGET_N):
+        for tc in range(TARGET_N):
+            rect = pygame.Rect(mx + tc * MAP_CELL, my + tr * MAP_CELL, MAP_CELL, MAP_CELL)
+            if not b.seen[tr][tc]:
+                s.fill((26, 32, 42), rect)
+            elif g.target[tr][tc]:
+                s.fill(C_CELL_BLACK, rect)
+            else:
+                s.fill((214, 216, 222), rect)
+    pygame.draw.rect(s, C_PANEL_LINE, pygame.Rect(mx, my, size, size), 1)
 
 
-def draw_dead(g: "Game"):
-    s = g.screen
-    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-    veil.fill((0, 0, 0, 200))
-    s.blit(veil, (0, 0))
-    center_txt(g, "SEQUENCER DOWN", (WINDOW_W // 2, 430), g.f_mid, C_MONSTER)
-    center_txt(g, "THE ALTAR WILL TAKE YOU BACK", (WINDOW_W // 2, 500), g.f_main, C_TEXT)
-    if int(g.menu_t * 2.0) % 2 == 0:
-        center_txt(g, "CLICK OR PRESS ENTER", (WINDOW_W // 2, 580), g.f_main, C_ERASING)
+def _draw_monologue(g, s):
+    """内心独白：屏幕下方，斜着来两句，不打断操作。"""
+    lines = g.mono_text.split("\n")
+    for i, ln in enumerate(lines):
+        img = g.f_main.render(ln, True, C_ERASING)
+        img.set_alpha(235)
+        s.blit(img, img.get_rect(center=(PLAY_W // 2, 842 + i * 28)))
 
 
-# ---------- 旧五关版界面（新版不进入这些状态，留着备查）----------
+def _draw_hint(g, s):
+    lines = g.hint_text.split("\n")
+    imgs = [g.f_main.render(ln, True, C_WARN) for ln in lines]
+    bw = max(im.get_width() for im in imgs) + 48
+    bh = 16 + 30 * len(imgs)
+    plate = pygame.Rect(0, 0, bw, bh)
+    plate.center = (PLAY_W // 2, HINT_Y + 56)
+    s.fill(C_BG, plate)
+    pygame.draw.rect(s, C_WARN, plate, 1)
+    for i, im in enumerate(imgs):
+        s.blit(im, im.get_rect(center=(plate.centerx, plate.top + 15 + 30 * i)))
 
+# ==== 对话框 ====
 
 def wrap_text(font, text, max_w):
     """按空格断行。单词本身超宽也不硬切，宁可溢出一点。"""
@@ -302,11 +472,74 @@ def wrap_text(font, text, max_w):
     return lines
 
 
+def dialog_lines(g: "Game"):
+    """当前这句台词折行之后的结果（测试也用它，保证「放得下」是算出来的）。"""
+    if not g.dlg_lines:
+        return [], ""
+    speaker, text = g.dlg_lines[g.dlg_i]
+    x, y, w, h = DLG_BOX
+    out = []
+    for para in text.split("\n"):
+        out.extend(wrap_text(g.f_dlg, para, w - 48))
+    return out, speaker
+
+
+def draw_dialog(g: "Game"):
+    if not g.dlg_lines or g.dlg_phase == "run":
+        return
+    s = g.screen
+    lines, speaker = dialog_lines(g)
+    x, y, w, h = DLG_BOX
+    box = pygame.Rect(x, y, w, h)
+    s.fill((9, 12, 17), box)
+    pygame.draw.rect(s, C_PANEL_LINE, box, 1)
+    name_col = C_OLDMAN if speaker == story.OLD_MAN else C_ACCENT
+    s.blit(g.f_name.render(speaker, True, name_col), (x + 24, y + 16))
+    pygame.draw.line(s, C_PANEL_LINE, (x + 24, y + 44), (x + w - 24, y + 44))
+    for i, ln in enumerate(lines):
+        s.blit(g.f_dlg.render(ln, True, C_TEXT), (x + 24, y + 56 + i * DLG_LINE_H))
+    s.blit(g.f_small.render("ENTER", True, C_DIM),
+           g.f_small.render("ENTER", True, C_DIM).get_rect(bottomright=(x + w - 20, y + h - 12)))
+
+# ==== 覆盖层 ====
+
+def draw_dead(g: "Game"):
+    s = g.screen
+    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+    veil.fill((0, 0, 0, 200))
+    s.blit(veil, (0, 0))
+    center_txt(g, "SEQUENCER DOWN", (WINDOW_W // 2, 430), g.f_mid, C_MONSTER)
+    center_txt(g, "THE ALTAR WILL TAKE YOU BACK", (WINDOW_W // 2, 500), g.f_main, C_TEXT)
+    if int(g.menu_t * 2.0) % 2 == 0:
+        center_txt(g, "CLICK OR PRESS ENTER", (WINDOW_W // 2, 580), g.f_main, C_ERASING)
+
+
+def draw_end(g: "Game"):
+    s = g.screen
+    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+    veil.fill((0, 0, 0, 216))
+    s.blit(veil, (0, 0))
+    center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
+    if int(g.menu_t * 2.0) % 2 == 0:
+        center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
+
+
+def make_stain_tile():
+    """脏黑的样子：黑底 + 白色斜条。必须和「纯黑的有效黑域」一眼可分。"""
+    surf = pygame.Surface((CELL, CELL))
+    surf.fill((17, 17, 24))
+    for i in range(-CELL, CELL * 2, 10):
+        pygame.draw.line(surf, (226, 226, 232), (i, 0), (i + CELL, CELL), 4)
+    return surf
+
+
+# ==== 旧五关版界面（新版不进入这些状态，留着备查）====
+
 def draw_thumb(g: "Game", x, y, is_target):
     s = g.screen
     orr, occ = TARGET_OFFSET
-    for tr in range(21):
-        for tc in range(21):
+    for tr in range(TARGET_N):
+        for tc in range(TARGET_N):
             want = g.target[tr][tc]
             if is_target:
                 col = C_CELL_BLACK if want else C_CELL_WHITE
