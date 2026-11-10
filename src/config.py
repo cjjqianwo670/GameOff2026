@@ -87,12 +87,11 @@ RED_HIT_DIST = 11.0               # 到这个距离就算追上玩家
 RED_SPAWN_PER_MIN = 12.0          # 开局生成速率（每分钟）
 RED_SPAWN_ACCEL_PERIOD = 30.0     # 每 30 秒提速一次
 RED_SPAWN_ACCEL = 1.05            # 提速幅度 5%（用户之后自己调）
-RED_SPAWN_MARGIN = 6.0            # 第一只怪在检查点之后多久出现（先给个空档）
 
 # ==== 清屏（Phase A 简化版）====
-CLEAR_GLOW_TIME = 1.2             # 圣坛边缘发光的憋气时长
+CLEAR_GLOW_TIME = 1.2             # 圣坛边缘至少亮这么久，才认「玩家已站进来」
 CLEAR_WAVE_SPEED = 460.0          # 圆形波扩散速度 px/s
-CLEAR_WAVE_HOLD = 0.6             # 波扫完之后停一下再出收尾字幕
+CLEAR_WAVE_HOLD = 0.6             # 波扫完、脏格抹掉之后停一下，再浮出道具
 CLEAR_WAVE_WIDTH = 5              # 波环描边粗细
 
 # ==== 提示 / 横幅 ====

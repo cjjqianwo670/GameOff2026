@@ -28,7 +28,7 @@ from src.config import (
     BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_MIRAGE, C_MONSTER,
     C_PLAYER, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
-    INTRO_TOTAL, ITEM_PICK_RANGE, ITEM_RISE_TIME, MONOLOGUE_TIME, OLDMAN_CELL,
+    CLEAR_GLOW_TIME, INTRO_TOTAL, ITEM_PICK_RANGE, ITEM_RISE_TIME, MONOLOGUE_TIME, OLDMAN_CELL,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
     PROP_TOOL_CELL, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN, RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
@@ -753,7 +753,9 @@ class Game:
 
         if self.clear_phase == "glow":
             self.clear_t += dt
-            if self.board.in_altar(*self.player.cell):
+            # 圣坛先亮够 CLEAR_GLOW_TIME，再认玩家「站进来了」。
+            # （玩家涂完最后一格时通常本来就站在坛内，不设这个下限的话发光一帧都不会出现）
+            if self.clear_t >= CLEAR_GLOW_TIME and self.board.in_altar(*self.player.cell):
                 self.clear_phase = "wave"
                 self.clear_t = 0.0
                 self.wave_r = 0.0
@@ -762,7 +764,12 @@ class Game:
             self.clear_monsters_in_wave()
             far = max(math.hypot(x - cx, y - cy) for x in (0, WINDOW_W) for y in (0, WINDOW_H))
             if self.wave_r >= far:
-                self.board.wipe_stains()
+                self.board.wipe_stains()                 # 顺手把全部脏格抹掉
+                self.clear_phase = "hold"
+                self.clear_t = 0.0
+        elif self.clear_phase == "hold":
+            self.clear_t += dt
+            if self.clear_t >= CLEAR_WAVE_HOLD:          # 光散完停一下，再让道具浮出来
                 self.enter_reward()
 
     def clear_monsters_in_wave(self):
