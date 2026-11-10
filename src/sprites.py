@@ -17,7 +17,8 @@ import pygame
 
 from src.config import (
     C_CELL_BLACK, C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK, C_MONSTER_RING, C_OLDMAN,
-    C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OUTLINE, C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP,
+    C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OLDMAN_SKIN, C_OUTLINE, C_PLAYER, C_PLAYER_DARK,
+    C_PLAYER_DEEP,
     C_PLAYER_LIGHT, C_PROP_DEAD, C_SASH, C_STAFF
 )
 
@@ -170,13 +171,16 @@ def draw_oldman(s, om, t=0.0):
         pygame.draw.line(s, C_OLDMAN, (hx - 6, hy - 5), (hx - 7, hy + 2), 1)
     else:
         # 正面/侧面：脸 + 头发 + 胡子 + 眼
-        pygame.draw.circle(s, C_OLDMAN, (hx, hy + 1), 6)
+        pygame.draw.circle(s, C_OLDMAN_SKIN, (hx, hy + 1), 6)
         pygame.draw.circle(s, C_OLDMAN_DARK, (hx, hy - 5), 6)
         pygame.draw.polygon(s, C_OLDMAN_LIGHT,
                             [(hx - 5, hy + 2), (hx + 5, hy + 2), (hx, hy + 9)])
-        ex = hx + (-3 if om.facing == 2 else 2 if om.facing == 3 else 0)
-        ey = hy + (0 if om.facing in (2, 3) else 1)
-        s.fill(C_CELL_BLACK, pygame.Rect(ex, ey, 2, 2))
+        if om.facing == 1:                       # 正面：两只眼
+            s.fill(C_CELL_BLACK, pygame.Rect(hx - 4, hy + 1, 2, 2))
+            s.fill(C_CELL_BLACK, pygame.Rect(hx + 2, hy + 1, 2, 2))
+        else:                                     # 侧面：一只，贴着朝向那边
+            ex = hx + (-3 if om.facing == 2 else 2)
+            s.fill(C_CELL_BLACK, pygame.Rect(ex, hy, 2, 2))
 
     # 手臂：从肩到拐杖上一只手
     pygame.draw.line(s, C_OUTLINE, (px + 5, py - 5), (px + 10, py + 1), 5)
