@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """坐标换算：格子 <-> 像素。
 
-全局只允许用这四个函数换算坐标，别处不许手写 r * CELL 之类的算式。
+全局只允许用这三个函数换算坐标，别处不许手写 r * CELL 之类的算式。
 """
 
 import pygame
@@ -14,17 +14,6 @@ from src.config import CELL, GRID_N, GRID_ORIGIN, TARGET_N, TARGET_OFFSET
 def cell_to_rect(r, c):
     return pygame.Rect(GRID_ORIGIN[0] + c * CELL,
                        GRID_ORIGIN[1] + r * CELL, CELL, CELL)
-
-
-def pos_to_cell(x, y):
-    """屏幕坐标 → (row, col)；不在主网格内返回 None。"""
-    gx, gy = x - GRID_ORIGIN[0], y - GRID_ORIGIN[1]
-    if gx < 0 or gy < 0:
-        return None
-    c, r = gx // CELL, gy // CELL
-    if r >= GRID_N or c >= GRID_N:
-        return None
-    return int(r), int(c)
 
 
 def cell_center(r, c):

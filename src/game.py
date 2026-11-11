@@ -25,7 +25,7 @@ import pygame
 from src import sfx, story
 from src.board import Board
 from src.config import (
-    BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_MIRAGE, C_MONSTER,
+    BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_BG, C_MIRAGE, C_MONSTER,
     C_PLAYER, C_PURPLE, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
     CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
@@ -133,13 +133,6 @@ class Game:
         # --- 状态 ---
         self.state = "TITLE"
         self.menu_t = 0.0
-        self.hover = None
-        # 旧五关版残留字段（新版不进 SELECT / RESULT）
-        self.level = 1
-        self.unlocked = 1
-        self.sel = 1
-        self.result = None
-
         self.rng = random.Random()
         self.target = []
         self.qr_content = ""
@@ -510,9 +503,6 @@ class Game:
     def mouse_xy(self):
         mx, my = pygame.mouse.get_pos()
         return int(mx / self.scale), int(my / self.scale)
-
-    def update_hover(self):
-        self.hover = None
 
     def shift_held(self):
         return any(self.input.down(sc) for sc in SC_SHIFT)
@@ -1153,6 +1143,7 @@ class Game:
             draw_dead(self)
         elif self.state == "END":
             draw_end(self)
+        self.apply_shake()                 # 开场碎码那一下的屏幕抖动（0,0 时是空操作）
         self.present()
 
     def apply_shake(self):
@@ -1160,15 +1151,6 @@ class Game:
         if dx == 0 and dy == 0:
             return
         self.shake_buf.blit(self.canvas, (0, 0))
-        self.canvas.fill((11, 15, 20))
+        self.canvas.fill(C_BG)                 # 补边用世界底色（旧版是冷蓝，早就不对了）
         self.canvas.blit(self.shake_buf, (dx, dy))
 
-    # ---------- 旧五关版残留 ----------
-    def start_btn(self):
-        return pygame.Rect((WINDOW_W - 300) // 2, 470, 300, 92)
-
-    def level_btns(self):
-        return []
-
-    def goto_select(self):
-        self.state = "TITLE"

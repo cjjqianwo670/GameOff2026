@@ -122,21 +122,3 @@ A2_WIPE_COL = "COLUMN %d WIPED."       # %d 用玩家视角的 1~25
 def act_title(act):
     """第 N 幕的结束字幕。"""
     return ACT2_TITLE if act >= 2 else ACT_TITLE
-
-
-# ==== 旧五关街机版残留：新版不读，留着让旧界面函数不报错（见开工单 §5）====
-
-TITLE = "YOU WAKE UP MID-SENTENCE."
-FAIL = "NOT YET READABLE."
-UNREADABLE = "FRAGMENT ?? / UNREADABLE"
-LEVELS = ({ "key": "01", "name": "SHAPE", "open": "PAINT WHAT LOOKS RIGHT.",
-            "trigger": None, "end": "IT LOOKS RIGHT. THAT IS ENOUGH." },)
-
-
-def level(i):
-    return LEVELS[max(0, min(len(LEVELS) - 1, i - 1))]
-
-
-def label(i):
-    it = level(i)
-    return "FRAGMENT %s / %s" % (it["key"], it["name"])

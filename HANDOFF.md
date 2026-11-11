@@ -1,7 +1,9 @@
 # HANDOFF —— 技术交接与工作日志
 
 > 给「下一个接手的 AI」和「未来的自己」看。
-> 最后更新：2026-11-12 00:05 · **第一幕 + 第二幕（紫怪 / 定时图案 / 流程）已跑通，`src/` 共 3749 行，19 个验证脚本 520 项全绿**
+> 最后更新：2026-11-12 01:35 · **第一幕 + 第二幕（紫怪 / 定时图案 / 流程）已跑通，`src/` 共 3783 行，19 个验证脚本 591 项全绿**
+> 本轮（11-12 凌晨）改的四件事：地图改成「每幕收尾的定格照」、按 M 捧图时 J/K/Shift 全封、心声改用对话框那套框、
+> 以及**涂格必须先照出灰域**（没照/褪色/被清掉后重涂 = 脏格）。细节见 §4.4 / §4.17 / §4.18 与文末工作日志。
 
 ---
 
@@ -24,7 +26,7 @@ D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_游戏指导�
 | 第一幕 | ✅ 玩法层 + 剧情层 + 角色贴图 + 音效都已完成（Phase A 119 → 剧情层 237 → 字幕 255 → 常驻角色 259 → 贴图 288 → 音效 363 项） |
 | 第二 ~ 五幕 | ⬜ 尚未开始，**设计也还没写**（等用户定） |
 | 依赖 | `segno` 1.6.6（生成真二维码）。不再是「只用 pygame」 |
-| 旧五关版 | 还留在代码里（`LEVELS` / 紫怪 / 结算页），**故意不删**，当回退路径与引擎参考 |
+| 旧五关版 | **已全部删除**（2026-11-12 作者要求清理，共 −152 行）：五关表 / 旧紫怪分支 / 结算页 / 旧文案常量 / 零调用方法。要回退看 git 历史 |
 
 ### 哪些能沿用、哪些作废
 
@@ -32,11 +34,11 @@ D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_游戏指导�
 |---|---|
 | 网格几何（25×25 / 21×21 居中 / 28px）、坐标换算、scancode 表 | ✅ 全部沿用，几何没动过 |
 | 绘制分层、窗口自适应、无窗口验证法、§5 那 13 条坑 | ✅ 全部沿用 |
-| 状态机 | 🔁 **已被 11 个相位取代**（见 §3）；旧的 `SELECT / PLAY / RESULT` 只剩死代码 |
-| `config.LEVELS` 五关表、评级 S/A/B/F、30 秒锁外围、紫怪 `best_row`、噪声上限 | ❌ 作废（代码还留着，见 §2 末尾的「死代码」说明） |
+| 状态机 | 🔁 **已被 11 个相位取代**（见 §3）；旧 `SELECT / PLAY / RESULT` 的残留（`draw_result` / `start_btn` 等）2026-11-12 已删 |
+| `config.LEVELS` 五关表、评级 S/A/B/F、30 秒锁外围、噪声上限等 22 个常量 | ❌ 作废，且**已从 `config.py` 删除**（2026-11-12） |
 | `qr.py` | ✅ 已换成 segno 真码，`required_cells()` 直接按 QR 规范算必涂格 |
-| `story.py` | ✅ 已换成第一幕全部英文文案（旧 22 行短句仍在文件里，**0 引用**） |
-| `board.seen` 记忆位图 | 🔁 位图留下来给「地图道具」记录照过的区域；「永久点亮」的语义被异象取代 |
+| `story.py` | ✅ 已换成第一幕全部英文文案；旧的 `TITLE / FAIL / UNREADABLE / LEVELS / level() / label()` 已于 2026-11-12 删除 |
+| `board.seen` 记忆位图 | ❌ **已删除**（2026-11-11）：地图改成「每一幕收尾拍一张定格照」(`game.map_cells`)，不再记「照过哪里」 |
 
 ### 三条最快的上手信息
 
@@ -50,14 +52,14 @@ D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_游戏指导�
 
 | 项 | 状态 |
 |---|---|
-| 画布改宽到 1360×1000（右侧留给血条 / 物品栏 / 进度图） | ✅ Phase A 已做（网格 `(70,130)`，面板 `840~1360`，底部提示 `y=918`） |
+| 画布改宽到 1360×1000（右侧留给血条 / 物品栏 / 地图） | ✅ Phase A 已做（网格 `(70,130)`，面板 `840~1360`，底部提示 `y=918`；地图 11-11 起改成右下角卷轴） |
 | `qr.py` 换成 segno 真码（v1 / 纠错 L / 21×21） | ✅ 已换，`version=1 / error="l"` 写死；必涂格由 `qr.required_cells()` 算 |
 | `board` 加：灰域（5 秒褪色）、脏格（累计不返还）、必涂格集合 | ✅ 四态 `WHITE/VALID/DIRTY/ERASING`；`reveal` 计时表；`stains` 累计 |
 | Shift 异象（只在圣坛内生效、涂时不能照） | ✅ 只照「该黑且还白」的格；绿框只给必涂格 |
 | 血量系统 + 红怪「无黑域则攻击玩家」 | ✅ 100 / -5% / 不回复；红怪只吃 VALID，脏格不算食物 |
 | 第一幕流程（出场 / 走路 5 秒 / 异象 / 探索 / 呼喊 / 双支线对话 / 10 秒空档 / 战斗 / 清屏 / 道具） | ✅ 全流程通：`TITLE→INTRO→TUTORIAL→FREE_ROAM→DIALOG→GAP→BATTLE→CLEAR→REWARD→END` |
 | 对话系统（回车逐句推进） | ✅ 通用对话框；坛内 13 句 / 坛外 8+9 句在指定句汇合；Esc 不卡死 |
-| 道具：背包（8 格物品栏）+ 地图（记录照过的区域） | ✅ 拾取后面板出现 4×2 八格与 21×21 进度图（只记照过的格） |
+| 道具：背包（8 格物品栏）+ 地图 | ✅ 物品栏 4×2 八格；地图是右下角的卷轴（按 `M` 铺开），内容是**每一幕收尾那一刻**圣坛的定格照 |
 | 检查点（阵亡回到「老者离开」） | ✅ 快照板面/血量/刷怪节奏/累计脏格；检查点 = `start_gap()`（**老者离开那一刻**，不是开局） |
 | 第二 ~ 五幕 | ⬜ 未写 |
 
@@ -65,7 +67,7 @@ D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_游戏指导�
 > （`D:/Al_WorkPlace/WorrkBuddy_WorkPlace/game尝试/_verify_act1_*.py`），单帧 update+draw 约 3ms。
 > 脏格规则按用户 2026-11-10 口头指令改过：**超额度不判负，改成每次 -5% 血量**（见 §4.4）。
 
-### 旧五关版（代码现状，作为引擎参考）
+### 旧五关版（历史里程碑，代码已删除）
 
 M1 网格与涂改 · M2 二维码与提示层 · M3 怪物 · M4 阶段锁定与结算 · M5 菜单与遮罩 · M6 关卡与选关：全部完成，
 M7（打包）未做。**这些里程碑不再推进，只当引擎参考。**
@@ -86,20 +88,20 @@ config ──> grid ──> board ──┐
 | 文件 | 行数 | 职责 | 允许 import |
 |---|---|---|---|
 | `src/__init__.py` | 5 | 空包标记，让 `from src.xxx import ...` 成立 | 无 |
-| `src/config.py` | 256 | 常量 / 颜色 / 相位与数值 / 异象与脏格 / 血量 / 开场动画 / 角色配色 | 无（连 pygame 都不用） |
-| `src/grid.py` | 54 | 坐标换算 4 个函数 | pygame, src.config |
+| `src/config.py` | 221 | 常量 / 颜色 / 相位与数值 / 异象与脏格 / 血量 / 开场动画 / 角色配色 | 无（连 pygame 都不用） |
+| `src/grid.py` | 43 | 坐标换算 4 个函数 | pygame, src.config |
 | `src/qr.py` | 85 | **segno 真码**（`version=1 / error="l"`）+ `required_cells()` 算必涂格 | src.config, **segno** |
-| `src/board.py` | 211 | 四态棋盘、`progress()`、`is_complete()`、`reveal` 计时、`stains` 累计、`snapshot/restore` | src.config, src.grid |
+| `src/board.py` | 200 | 四态棋盘、`progress()`、`is_complete()`、`reveal` 计时、`stains` 累计、`snapshot/restore` | src.config, src.grid |
 | `src/input_state.py` | 67 | 键盘状态（只认 scancode） | pygame, src.config |
-| `src/entities.py` | 323 | `Player`（格子步进）+ `Monster`（红怪 `eat`/`hunt` 两模式，带 `phase`）+ `OldMan`（站位 / 面向 / 挥杖计时）+ `SceneRed` + `Item`。**只存状态，画法在 `sprites.py`** | pygame, src.config, src.grid |
-| `src/ui.py` | 815 | 所有 `draw_*`（首参 `Game`，只读）；角色只调 `sprites` | pygame, src.sprites, src.config, src.grid |
+| `src/entities.py` | 298 | `Player`（格子步进）+ `Monster`（红怪 `eat`/`hunt` 两模式，带 `phase`）+ `OldMan`（站位 / 面向 / 挥杖计时）+ `SceneRed` + `Item`。**只存状态，画法在 `sprites.py`** | pygame, src.config, src.grid |
+| `src/ui.py` | 781 | 所有 `draw_*`（首参 `Game`，只读）；角色只调 `sprites` | pygame, src.sprites, src.config, src.grid |
 | `src/sprites.py` | 494 | 三个角色 + 两件道具的像素级画法（影子/剪影/体积/高光/描边） | pygame, src.config |
-| `src/sfx.py` | 232 | **程序合成音效**（`array`+`math`+`wave`，标准库），`SOUNDS` 名单 + `build(name)` → WAV bytes。不落盘、零版权、零新依赖 | 无 |
-| `src/game.py` | 1174 | `Game`：11 个相位 / 对话推进 / 检查点 / 每帧更新 / 贴图时基 `anim_t` / `_Audio` 音效分发 | 全部业务模块 + ui + sfx |
-| `src/story.py` | 142 | **第一幕全部英文文案**：5 条独白（`M1~M5`）/ 8 条系统提示 / 2 条道具说明 / 对话 22 条（坛内 13、坛外 8+共享 9、末尾 `LEAVE_LINE`）/ `branch(on_altar)` 双支线。**文件末尾还留着旧版 4 个常量，是死代码** | 无 |
+| `src/sfx.py` | 240 | **程序合成音效**（`array`+`math`+`wave`，标准库），`SOUNDS` 名单 + `build(name)` → WAV bytes。不落盘、零版权、零新依赖 | 无 |
+| `src/game.py` | 1156 | `Game`：11 个相位 / 对话推进 / 检查点 / 每帧更新 / 贴图时基 `anim_t` / `_Audio` 音效分发 | 全部业务模块 + ui + sfx |
+| `src/story.py` | 124 | **第一幕全部英文文案**：5 条独白（`M1~M5`）/ 8 条系统提示 / 2 条道具说明 / 对话 22 条（坛内 13、坛外 8+共享 9、末尾 `LEAVE_LINE`）/ `branch(on_altar)` 双支线。**文件末尾还留着旧版 4 个常量，是死代码** | 无 |
 | `src/main.py` | 69 | 开窗口（等比缩放）+ 主循环（顶部有直接运行脚本的路径引导） | pygame, src.config, src.game |
 
-**共 3935 行**（旧五关版是 1617 行；第一幕 +1420，第二幕 +431，道具建模 +118，对白停留 +12，背包上身 +73，地图卷轴 +78，地图定格照 +54，捧图姿态 +82）。
+**共 3783 行**（旧五关版是 1617 行；第一幕 +1420，第二幕 +431，道具建模 +118，对白停留 +12，背包上身 +73，地图卷轴 +78，地图定格照 +54，捧图姿态 +82，之后的心声套框 / 涂格规则 / 闷响 +50，清理旧代码 −152）。
 
 第一幕要新增的东西基本都落在现有模块里；**新开的是 `sprites.py`**（2026-11-10 角色贴图）和 **`sfx.py`**（2026-11-11 音效），都只碰呈现层、不碰规则：
 
@@ -107,14 +109,18 @@ config ──> grid ──> board ──┐
 |---|---|
 | 对话系统（回车逐句、说话人、双支线） | `game.dlg_lines` + `story.branch(on_altar)`；`ui.dialog_lines()` 折行、`ui.draw_dialog()` 画 |
 | 道具与物品栏（8 格） | `entities.Item` + `game.items` / `has_bag` / `has_map`；`ui._draw_bag()` |
-| 地图（记录照过的区域） | 复用 `board.seen` 位图，`ui._draw_map()` + `ui.draw_thumb()` |
+| 地图（每幕收尾的定格照） | `game.map_cells` / `map_act` + `game.capture_map()`；`ui._draw_map()` 只读它 |
 | 检查点 | `board.snapshot()/restore()` + `game` 里存血量/刷怪/计时 |
 | 右侧状态面板 | `ui.draw_hud()`（`PANEL_X=840, PANEL_W=520`） |
 
-> ⚠️ **死代码警告（故意留着，别当成有效配置）**：`config.LEVELS` 五关表、`PHASE1_DURATION` / `PHASE_SHIFT_TIME`、
-> 紫怪相关常量（`PURPLE_*`、`PURPLE_MODE="best_row"`）、`ui.draw_result()` 与旧 `RESULT` 分支、
-> `story.py` 里旧的 `TITLE / FAIL / UNREADABLE / LEVELS` —— 这些**全部 0 引用或只服务旧流程**。
-> 留着是为了能回退到五关版；**新代码不要读它们**。要删的话单独一次提交，别和新功能混在一起。
+> ✅ **旧五关版的死代码已于 2026-11-12 清空**（作者：用不到的就删）。删掉的是：
+> `config.LEVELS` + 22 个旧常量（`PHASE1_DURATION` / `PHASE_SHIFT_TIME` / `GRADE_*` / `MONSTER_*` /
+> `SEEN_*` / `C_GHOST` / `C_LOCK` / `BTN_*` / `LV_BTN_*` / `BAR_*` / `HUD_PAD` / `THUMB_CELL` /
+> `SC_LEFT` / `SC_RIGHT` / `SC_KP_ENTER_ALIAS` / `MUST_TOTAL` 等）、`ui.draw_thumb()` + `ui.draw_result()`、
+> `story.TITLE / FAIL / UNREADABLE / LEVELS / level() / label()`、`game.start_btn / level_btns / goto_select /
+> update_hover` + 四个旧字段（`level / unlocked / sel / result`）、旧紫怪分支（`Monster(kind="purple")` +
+> `_update_purple`）、`grid.pos_to_cell`、`Board.is_dark / stains_over / dark_cells`。
+> **要回退到五关版只能看 git 历史**（`de88a25` 之前的 commit 还在）。
 
 三条不许破的边界：
 
@@ -150,14 +156,14 @@ TITLE
 - `BATTLE` 没有总时限。压力来自「每 30 秒刷怪加速」和「血量只减不增」
 - **两条教程逃逸阀**（否则会把玩家锁死）：走进老者 `CALL_RANGE_PX` 内直接进 `FREE_ROAM`；
   在坛外连按 `Shift` `ANOMALY_MISS_LIMIT=3` 次都没照出东西，同样放行
-- 旧版的 `PLAY` / `RESULT` 已被上面这套取代，只剩死代码
+- 旧版的 `PLAY` / `RESULT` 已被上面这套取代，残留代码 2026-11-12 已清干净
 
 ### 键位（✅ 已实现，全部实测过）
 
 | 键 | scancode | 作用 |
 |---|---|---|
 | `W A S D` | 26 / 4 / 22 / 7 | 逐格移动 |
-| `J` | 13 | 制造黑域 |
+| `J` | 13 | 制造黑域。**灰域还亮着才写得对**，否则算脏格（见 §4.4） |
 | `K` | 14 | 消除黑域 |
 | `Shift` | **225 / 229**（左 / 右，已用 SDL2 实测） | 异象：照出脚下 5×5 灰域，5 秒褪色 |
 | `T` | **23** | 呼喊 / 交互 |
@@ -187,8 +193,8 @@ TITLE ──> SELECT ──> PLAY ──(时间到)──> RESULT
 
 ## 4. 数值
 
-> ⚠️ 旧五关版的 `LEVELS` 表（cover / time / spawn / noise / purple / seen）**整张作废**，
-> 代码里还留着但**没有任何新代码读它**。需要回溯去看 git 历史（commit `f96611a`）。
+> ⚠️ 旧五关版的 `LEVELS` 表（cover / time / spawn / noise / purple / seen）**整张作废，且已从代码里删除**（2026-11-12）。
+> 需要回溯去看 git 历史（commit `f96611a`）。
 > 下面全部是**第一幕的已实现值**，每一项都能在 `config.py` 里找到同名常量。
 
 ### 4.1 几何（✅ 已实现）
@@ -263,7 +269,7 @@ TITLE ──> SELECT ──> PLAY ──(时间到)──> RESULT
 
 | 项 | 值 |
 |---|---|
-| 必涂格 | 三个定位图案（各 33 格）+ 暗模块 1 格 = **100 格**（`MUST_TOTAL`，由 `qr.required_cells()` 算） |
+| 必涂格 | 三个定位图案（各 33 格）+ 暗模块 1 格 = **100 格**（由 `qr.required_cells()` 算；进度比的是 `len(board.must)`，不再有 `MUST_TOTAL` 常量） |
 | 完成条件 | **100 格全为有效黑域**。脏格**不卡通关**——超额度改扣血（见 §4.4） |
 | 时限 | **没有**。涂完即触发清屏 |
 | 血量 | `HEALTH_MAX=100`，被红怪命中 `HIT_DAMAGE=5`，**不自然回复**（纯挨打 20 次死） |
@@ -548,7 +554,8 @@ TITLE ──> SELECT ──> PLAY ──(时间到)──> RESULT
 2. **任何重试循环都必须有次数上限**（⚠️ 举例已作废，教训保留）。
    旧 `generate_target()` 的重摇没有上限，信息区填充率 0.5 够不到 0.70 的阈值 → 无限递归 → `RecursionError`。
    换成 segno 之后不再需要重摇，但只要写 `while` 重试，**一律带上限**。
-3. **`draw_result()` 必须先 `s.fill(C_BG)`**，否则结算页会叠在上一帧棋盘上。这个 bug 只有「先画一帧游戏再切结算」才暴露。
+3. **切到「另一个整屏」时，第一件事是铺底**：旧 `draw_result()` 少了 `s.fill(C_BG)`，结算页会叠在上一帧棋盘上。
+   这个 bug 只有「先画一帧游戏再切结算」才暴露。（那个函数 2026-11-12 已删，**教训留用**：新加整屏界面照做。）
 4. **白底不要逐格 `fill` 576 次**：一次铺满整块网格，再补锁定格（实测 draw 9.2ms → 5.2ms）。
 5. **`claims` 占用表必须在四条路径回收**：吃掉 / 改道 / 超时自毁 / 结算。漏一条会越积越大，后续的怪误以为“全被占了”。
 6. **鼠标坐标要 `/ self.scale`**（窗口被等比缩放过），否则点击位置整体偏移。
@@ -603,29 +610,29 @@ sys.path.insert(0, "D:/GameOff/GameOff2026")   # 让 from src.xxx 能导入
 
 ### 验证脚本在哪
 
-不在仓库里，在 `D:/Al_WorkPlace/WorrkBuddy_WorkPlace/game尝试/`。**现役的是这 19 个（第一幕 16 + 第二幕 3），共 520 项**：
+不在仓库里，在 `D:/Al_WorkPlace/WorrkBuddy_WorkPlace/game尝试/`。**现役的是这 19 个（第一幕 16 + 第二幕 3），共 591 项**：
 
 | 脚本 | 项 | 覆盖 |
 |---|---|---|
 | `_verify_act1_layout.py` | 13 | 画布 1360×1000、网格/面板/底部提示的坐标与不重叠 |
 | `_verify_act1_qr.py` | 8 | segno 真码、21×21、纠错 L、必涂格 = 100 且落在真码黑格上 |
-| `_verify_act1_board.py` | 16 | 四态切换、平地涂算诱饵不计分、脏黑黑白相间（含像素断言） |
+| `_verify_act1_board.py` | 24 | 四态切换、**必须先照出灰域才写得对**（没照/褪色/被清掉→脏格）、平地涂算诱饵不计分、脏黑黑白相间 |
 | `_verify_act1_mirage.py` | 19 | 异象只照「该黑还白」、5 秒褪回白（含像素断言）、坛外无效 |
 | `_verify_act1_health.py` | 12 | 扣血、不回复、血量归零 |
 | `_verify_act1_stain_rule.py` | 13 | 脏格累计不返还、超额度改扣血、不判负 |
 | `_verify_act1_clear.py` | 21 | 完成判定、冲波清怪、抹脏格、发光至少 1.2s |
-| `_verify_act1_reward.py` | 33 | 道具只触发一次、落在已复原黑格、拾取后面板出现 |
+| `_verify_act1_reward.py` | 47 | 道具只触发一次、落在已复原黑格、拾取后面板出现；**地图是每幕收尾的定格照**（本幕涂改不动它） |
 | `_verify_act1_checkpoint.py` | 19 | 快照/恢复（格子/血量/刷怪/脏格）、`claims` 回收 |
-| `_verify_act1_keys.py` | 22 | 按 `A=4…Z=29` 规律校验字母键 + 「按 Q 不开口 / 按 T 才开口」+ **回车不涂格 / 失焦清空** |
+| `_verify_act1_keys.py` | 39 | 按 `A=4…Z=29` 校验字母键 + 回车不涂格 / 失焦清空 + **捧图时 J/K/Shift 全封** + 没照就涂的专属提示 |
 | `_verify_act1_story.py` | 69 | 开场/教程/赶怪/双支线/对话框放得下/三样道具常驻/**最后一句等回车 + 连按不跳过** |
 | `_verify_act1_text.py` | 9 | 直接读英文文案 md，断言每句都能原样找到 |
 | `_verify_act1_run.py` | 14 | 端到端跑通一整幕 |
-| `_verify_act1_typography.py` | 18 | 字号、打字机、Enter 补完、名牌配色、心声底衬 |
-| `_verify_act1_sprites.py` | 44 | 三个角色的贴图 + **两个道具**：分层上色、朝向、光标闪、挥杖、瞳孔、瞄准弧、呼吸、不越界、性能、皮革/纸/墨/红点/金环 |
+| `_verify_act1_typography.py` | 23 | 字号、打字机、Enter 补完、名牌配色、**心声用对话框那套框（空心名牌、无 ENTER）** |
+| `_verify_act1_sprites.py` | 52 | 三个角色的贴图 + 两个道具 + **捧图姿态**：分层上色、朝向、光标闪、挥杖、瞳孔、瞄准弧、呼吸、不越界、性能、皮革/纸/墨/红点/金环 |
 | `_verify_act2_qr.py` | 10 | 第二幕必涂 106 = 100 + 定时图案 6（逐格对上 QR timing pattern，20 个随机内容恒为 106） |
 | `_verify_act2_purple.py` | 29 | 紫怪：只锁坛内 / 清黑格多的那条 / 清整条 25 格 / 脏格不算也不清 / 平局选远 / 一生一次 |
-| `_verify_act2_flow.py` | 51 | 两幕衔接：棋盘不清空、must 100→106、开场 2.6s、首只 8s、清行提示、通关/阵亡回检查点、**道具跨幕保留 + 第二幕不再发** |
-| `_verify_act1_sfx.py` | 100 | 音效：波形非空/非静音/两两不同 + 用假 mixer 断言每个动作触发对应音效 |
+| `_verify_act2_flow.py` | 56 | 两幕衔接：棋盘不清空、must 100→106、开场 2.6s、首只 8s、清行提示、通关/阵亡回检查点、**道具跨幕保留 + 第二幕不再发** + **紫怪清行后必须重照** |
+| `_verify_act1_sfx.py` | 114 | 音效（13 个）：波形非空/非静音/两两不同 + 用假 mixer 断言每个动作触发对应音效 |
 
 怎么跑（在项目根）：
 
@@ -687,6 +694,26 @@ done
 ---
 
 ## 9. 工作日志（技术向，最近在上）
+
+### 2026-11-12 凌晨（六）· 清掉旧五关版的全部死代码（−152 行）
+
+- 作者：「凡是我们用不到的旧代码就去除吧。」—— 之前 HANDOFF 里那条「故意留着当回退路径」作废。
+- 先扫后删（AST 扫模块级定义 + 类方法 + 逐名 grep），删掉的东西：
+  - `config.py`：`LEVELS` 五关表 + 22 个旧常量（`PHASE1_DURATION` / `PHASE_SHIFT_TIME` / `STORY_BANNER_TIME` /
+    `MENU_BLINK_HZ` / `ALPHA_*` / `SEEN_*` / `C_GHOST` / `C_LOCK` / `BTN_*` / `LV_BTN_*` / `THUMB_CELL` /
+    `GRADE_*` / `MONSTER_*` / `BAR_*` / `HUD_PAD` / `SC_LEFT` / `SC_RIGHT` / `SC_KP_ENTER_ALIAS`），
+    `MUST_TOTAL`（0 引用，进度比的是 `len(must)`）。活着的 `C_PURPLE` / `SC_R` / `SC_M` 挪回了配色区 / 键位区。
+  - `ui.py`：`draw_thumb()` + `draw_result()`（旧结算页，连带 `story.level()` 那条唯一引用）。
+  - `story.py`：`TITLE / FAIL / UNREADABLE / LEVELS / level() / label()`。
+  - `game.py`：`start_btn / level_btns / goto_select / update_hover` + 字段 `level / unlocked / sel / result / hover`。
+  - `entities.py`：旧紫怪分支（`Monster(kind="purple")` + `_update_purple`）→ `Monster` 现在只有一种。
+  - `grid.pos_to_cell()`、`Board.is_dark / stains_over / dark_cells`。
+- **顺手抓到一个真 bug**：`apply_shake()` 全项目 **0 调用** —— 开场碎码那一下「屏幕抖动」算了偏移量却从来没画出来。
+  已在 `draw()` 末尾接回（`present()` 之前），并把补边色从历史的冷蓝 `(11,15,20)` 改成 `C_BG`。
+- 测试改了两处（都是「测了不存在的东西」）：`SC_LEFT/SC_RIGHT` 的键位断言、`stains_over()` 的额度断言。
+- 扫完复查：`src/` 里**只剩 `story.A2_M2` 一条 0 引用的文本**（第二幕的独白，写了但没接线）。
+  那是**台词不是代码**，没敢删 —— 要接进流程还是删掉，等作者定。
+- 合计 **19 个脚本 591 项全绿**；`src/` 3935 → **3783 行**。
 
 ### 2026-11-12 凌晨（五）· 修「不用 Shift 也能涂对」：涂格必须先照出来
 

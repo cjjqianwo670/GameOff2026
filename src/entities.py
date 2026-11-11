@@ -11,7 +11,7 @@ import random
 import pygame
 
 from src.config import (
-    C_MONSTER, C_PURPLE, GRID_N, MONSTER_EAT_DIST, MOVE_REPEAT, PLAYER_START_CELL,
+    C_MONSTER, C_PURPLE, GRID_N, MOVE_REPEAT, PLAYER_START_CELL,
     PURPLE_EAT_DIST, PURPLE_RADIUS, PURPLE_SPEED, RED_EAT_DIST, RED_HIT_DIST, RED_RADIUS, VALID
 )
 from src.grid import altar_center, cell_center
@@ -59,19 +59,14 @@ class Monster:
     半径/颜色挂在实例上，画的时候不用判断类型。
     """
 
-    def __init__(self, pos, speed, kind="red"):
-        self.kind = kind
+    def __init__(self, pos, speed):
         self.phase = random.random() * 6.283    # 贴图抖动的相位：一群怪别一起呼吸
         self.pos = pygame.Vector2(pos)
         self.speed = speed
         self.target = None                  # (r, c) 或 None（None = 场上没黑域，追人）
         self.mode = "dark"                  # "dark" 吃黑域 / "hunt" 追玩家
-        if kind == "purple":                # 旧紫怪：新版不刷，留着备查（见开工单 §5）
-            self.radius = PURPLE_RADIUS
-            self.color = C_PURPLE
-        else:
-            self.radius = RED_RADIUS
-            self.color = C_MONSTER
+        self.radius = RED_RADIUS
+        self.color = C_MONSTER
 
     def claim(self, claims):
         """松开手上锁的那一格，让别的怪可以抢。"""
@@ -113,9 +108,6 @@ class Monster:
 
     def update(self, dt, board, claims, player):
         """返回 "alive" / "eat" / "hit"。"""
-        if self.kind == "purple":               # 旧紫怪保留原行为：撞到就清掉整行
-            return self._update_purple(dt, board, claims)
-
         # 目标黑域被别人吃了/被玩家抹了 → 立刻重选
         if self.target is not None and board.state[self.target[0]][self.target[1]] != VALID:
             self.retarget(board, claims)
@@ -143,23 +135,6 @@ class Monster:
             return "hit"                        # 追上玩家：扣血，然后自毁
         if d.length_squared() > 1.0:
             self.pos += d.normalize() * self.speed * dt
-        return "alive"
-
-    def _update_purple(self, dt, board, claims):
-        """旧紫怪：吃掉整行。新版不刷它，留着备查。"""
-        if self.mode != "dark" or self.target is None:
-            if not self.retarget(board, claims):
-                to_c = pygame.Vector2(cell_center(GRID_N // 2, GRID_N // 2)) - self.pos
-                if to_c.length_squared() > 1.0:
-                    self.pos += to_c.normalize() * self.speed * 0.5 * dt
-                return "alive"
-        cx, cy = cell_center(*self.target)
-        d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
-        if d.length() <= MONSTER_EAT_DIST:
-            board.clear_row(self.target[0])
-            self.claim(claims)
-            return "eat"
-        self.pos += d.normalize() * self.speed * dt
         return "alive"
 
 # ==== 第二幕的紫怪（the purple one）====

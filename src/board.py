@@ -9,7 +9,7 @@
 """
 
 from src.config import (
-    DIRTY, ERASE_CAST, ERASING, GRID_N, MIRAGE_FADE, MIRAGE_RADIUS, STAIN_LIMIT, TARGET_N, VALID, WHITE
+    DIRTY, ERASE_CAST, ERASING, GRID_N, MIRAGE_FADE, MIRAGE_RADIUS, VALID, WHITE
 )
 from src.grid import to_target
 
@@ -32,9 +32,6 @@ class Board:
         """圣坛 = 中间 21×21；外面叫平地（the plain）。"""
         return to_target(r, c) is not None
 
-    def is_dark(self, r, c):
-        return self.state[r][c] == VALID
-
     def progress(self):
         """已复原本轮必涂格数。"""
         n = 0
@@ -50,14 +47,6 @@ class Board:
         所以手滑的代价是命，不是「这局废了」。
         """
         return self.progress() >= len(self.must)
-
-    def stains_over(self):
-        """超出额度的脏格数（0 表示还在额度内）。"""
-        return max(0, self.stains - STAIN_LIMIT)
-
-    def dark_cells(self):
-        """场上还有哪些有效黑域（红怪找吃的用）。"""
-        return [(r, c) for r in range(GRID_N) for c in range(GRID_N) if self.state[r][c] == VALID]
 
     def revealed(self, r, c):
         """这一格此刻该不该画灰域。"""

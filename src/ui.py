@@ -779,37 +779,3 @@ def make_stain_tile():
     for i in range(-CELL, CELL * 2, 10):
         pygame.draw.line(surf, (226, 226, 232), (i, 0), (i + CELL, CELL), 4)
     return surf
-
-
-# ==== 旧五关版界面（新版不进入这些状态，留着备查）====
-
-def draw_thumb(g: "Game", x, y, is_target):
-    s = g.screen
-    orr, occ = TARGET_OFFSET
-    for tr in range(TARGET_N):
-        for tc in range(TARGET_N):
-            want = g.target[tr][tc]
-            if is_target:
-                col = C_CELL_BLACK if want else C_CELL_WHITE
-            else:
-                got = g.board.state[orr + tr][occ + tc] == VALID
-                if want:
-                    col = C_ACCENT if got else C_MISSING
-                else:
-                    col = C_MONSTER if got else C_CELL_WHITE
-            s.fill(col, (x + tc * 10, y + tr * 10, 10, 10))
-    pygame.draw.rect(s, C_CELL_LINE, pygame.Rect(x, y, 210, 210), 1)
-
-
-def draw_result(g: "Game"):
-    """旧五关版的结算页。新版不再进入 RESULT，留着备查。"""
-    s = g.screen
-    s.fill(C_BG)
-    r = g.result or {}
-    mid_x = WINDOW_W // 2
-    line = story.level(g.level)["end"] if r.get("won") else story.FAIL
-    for i, ln in enumerate(wrap_text(g.f_mid, line, 860)):
-        center_txt(g, ln, (mid_x, 128 + i * 58), g.f_mid, C_ACCENT if r.get("won") else C_MONSTER)
-    draw_thumb(g, 120, 250, True)
-    draw_thumb(g, WINDOW_W - 330, 250, False)
-    center_txt(g, "ESC: TITLE", (mid_x, 760), g.f_main, C_TEXT)

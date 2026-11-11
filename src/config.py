@@ -76,6 +76,7 @@ C_SASH = (146, 106, 66)           # 腰带 / 拐杖缠布
 C_MONSTER_DARK = (130, 16, 46)    # 红怪：外圈肉
 C_MONSTER_CORE = (255, 232, 238)  # 红怪：眼珠高光
 C_MONSTER_RING = (255, 138, 168)  # 红怪：追人时的红环
+C_PURPLE = (176, 112, 255)        # 紫怪（第二幕）：整条清完就走，不追人
 C_PROP_TOOL = (96, 104, 116)      # 用过的道具（灰）
 C_PANEL = (31, 23, 17)            # 右侧面板底
 C_PANEL_LINE = (62, 47, 36)       # 面板分隔线
@@ -83,7 +84,6 @@ C_DIM = (110, 94, 80)             # 弱化文字 / 描边
 C_TEXT = (238, 233, 226)          # 主文字：偏暖的白
 
 # ==== 第一幕 · 规则 ====
-MUST_TOTAL = 100                  # 三个定位图案（各 33）+ 暗模块 1
 STAIN_LIMIT = 10                  # 第一幕脏格额度（累计值）；**超过不判负**，改成扣血
 STAIN_DAMAGE = 5                  # 额度之外的每一格脏格 = 一次外伤：血量 -5%
 ERASE_CAST = 0.25                 # K 抹除的塌陷时长
@@ -190,6 +190,8 @@ SC_J, SC_K, SC_SPACE = 13, 14, 44
 # T = 4+19 = 23（20 是 Q）；B = 4+1 = 5（48 是 ]）。写错过一次，按键全无反应。
 SC_T, SC_B = 23, 5
 SC_ESC, SC_ENTER, SC_KP_ENTER, SC_F1 = 41, 40, 88, 58
+SC_R = 21                         # 重开一局
+SC_M = 16                         # 铺开 / 卷起地图（只在拿到地图后有效）
 # Shift：SDL2 scancode 左 225 / 右 229（已用 SDL_GetScancodeFromKey 实测，见 HANDOFF §3）。
 # ⚠️ 别写成 42 / 54 —— 那是 PS/2 扫描码，SDL2 里 42 是退格键。
 SC_SHIFT = (225, 229)
@@ -217,40 +219,3 @@ DEBRIS_JITTER = 60.0
 QR_VERSION = 1                    # 锁死 v1 = 21×21
 QR_ERROR = "l"                    # 纠错 L，容量 17 个 ASCII
 QR_CONTENT_LEN = 8                # 现在随机 8 位；以后换短网址（上限 17）
-
-# ==== 以下为旧五关街机版残留：新版不读，但先留着别删（见开工单 §5）====
-LEVELS = (
-    {"cover": 0.62, "time": 180.0, "spawn": 15, "noise": 0.25, "delay": 2.0, "purple": 0, "seen": True},
-    {"cover": 0.64, "time": 175.0, "spawn": 20, "noise": 0.22, "delay": 2.0, "purple": 3, "seen": True},
-    {"cover": 0.66, "time": 170.0, "spawn": 25, "noise": 0.20, "delay": 1.5, "purple": 0, "seen": True},
-    {"cover": 0.68, "time": 170.0, "spawn": 30, "noise": 0.18, "delay": 1.5, "purple": 0, "seen": True},
-    {"cover": 0.72, "time": 165.0, "spawn": 35, "noise": 0.15, "delay": 1.0, "purple": 0, "seen": True},
-)
-PHASE1_DURATION = 30.0
-PHASE_SHIFT_TIME = 1.0
-STORY_BANNER_TIME = 2.2
-MENU_BLINK_HZ = 2.0
-ALPHA_MIN = 0.48
-ALPHA_TRY = 40
-SEEN_RADIUS = 2
-SEEN_FLASH_TIME = 0.22
-C_LOCK = (30, 36, 45)
-C_PURPLE = (176, 112, 255)
-SC_R, SC_LEFT, SC_RIGHT = 21, 80, 79
-SC_M = 16                         # M：铺开 / 卷起地图（只在拿到地图后有效）
-SC_KP_ENTER_ALIAS = 88
-BTN_W, BTN_H = 300, 92
-LV_BTN_W, LV_BTN_H, LV_BTN_GAP = 150, 154, 20
-THUMB_CELL = 10
-GRADE_S_COVERAGE = 0.95
-GRADE_S_NOISE = 3
-GRADE_A_NOISE_PCT = 0.4
-MONSTER_SPEED = 62.0
-MONSTER_RADIUS = 9
-MONSTER_IDLE_LIMIT = 12.0
-MONSTER_EAT_DIST = 6.0
-MONSTER_RETRY = 0.5
-MONSTER_SPD_JITTER = (0.88, 1.12)
-C_GHOST = (60, 60, 70, 110)
-BAR_W, BAR_H = 320, 10
-HUD_PAD = 80
