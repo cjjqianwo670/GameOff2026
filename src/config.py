@@ -55,7 +55,14 @@ C_WARN = (255, 176, 32)           # 警示黄
 C_MISSING = (62, 50, 40)          # 该黑却没涂 / 开场碎片
 C_OLDMAN = (214, 198, 160)        # 老者（暖米色，和玩家的青绿分开）
 C_STAFF = (150, 132, 96)          # 拐杖
-C_ITEM = (255, 214, 102)          # 道具（BAG / MAP）
+C_ITEM = (255, 214, 102)          # 道具的高光 / 金属件
+C_ITEM_LEATHER = (186, 128, 68)   # 背包：皮革亮面
+C_ITEM_LEATHER_DARK = (124, 80, 42)   # 背包：皮革暗面 / 缝线
+C_ITEM_PAPER = (232, 220, 188)    # 地图：纸
+C_ITEM_PAPER_DARK = (188, 172, 136)   # 地图：卷边的背光面
+C_ITEM_INK = (86, 62, 38)         # 地图：墨线
+C_ITEM_MARK = (206, 72, 56)       # 地图：红色标记（唯一一点暖红，视线落点）
+C_BAG_SLOT = (26, 19, 14)         # 物品栏的槽底（暖色，别在褐面板里发蓝）
 C_PROP_DEAD = (120, 44, 58)       # 地上死掉的红怪（暗红）
 # ---- 角色分层配色（sprites.py 用：剪影 / 体积 / 高光 / 描边各一层）----
 C_OUTLINE = (14, 11, 10)          # 角色统一描边：近黑，压在褐底或白格上都分得开
@@ -101,6 +108,20 @@ RED_SPAWN_PER_MIN = 12.0          # 开局生成速率（每分钟）
 RED_SPAWN_ACCEL_PERIOD = 30.0     # 每 30 秒提速一次
 RED_SPAWN_ACCEL = 1.05            # 提速幅度 5%（用户之后自己调）
 
+# ==== 第二幕 · 紫怪（the purple one）====
+# 行为见 entities.PurpleOne：锁圣坛内的黑格 → 比「行/列」哪条黑格多 → 撞到清整条 25 格。
+PURPLE_FIRST_DELAY = 8.0          # 首只到场（作者 2026-11-11 定：8 秒）
+PURPLE_SPAWN_PER_MIN = 6.0        # 之后每分钟 6 只（= 10 秒一只）。作者 2026-11-11 要求「加快一些」，
+                                  # 原来是 3（20 秒一只）。仍比红怪 12 只/分慢，守住 P1「比红怪长」
+PURPLE_SPEED = 45.0               # 比红怪慢（RED_SPEED=62）：看得见、躲得开
+PURPLE_RADIUS = 11                # 比红怪大（RED_RADIUS=9）：体型就是威胁预告
+PURPLE_EAT_DIST = 7.0             # 撞到判定的距离（红怪 6）
+
+# ==== 第二幕 · 开场 ====
+# 格子不清空，所以不能重播碎码动画；用「一行独白 + 圣坛低鸣」过渡一下。
+A2_OPEN_SECONDS = 2.6             # 开场独白读得完就走（玩家可以边走边看）
+
+
 # ==== 清屏（Phase A 简化版）====
 CLEAR_GLOW_TIME = 1.2             # 圣坛边缘至少亮这么久，才认「玩家已站进来」
 CLEAR_WAVE_SPEED = 460.0          # 圆形波扩散速度 px/s
@@ -134,15 +155,15 @@ DLG_FONT = 32                     # 正文字号（原来 25；32 是「4 行能
 DLG_LINE_H = 48
 DLG_NAME_FONT = 26                # 名牌字号
 DLG_CPS = 58                      # 打字速度：字符/秒
-# 心声：不开框，直接浮在世界下方的字幕带，字比对话更大、更淡
+DLG_LAST_MIN_SHOW = 0.8           # 最后一句至少显示这么久：防手快连按把它一帧跳过去
+# 心声：和对话框共用同一套框（同宽同底边），字比对话更大，进出淡入淡出
+# ⚠️ 原来的「浮在世界下方的字幕带」已经废弃：`MONO_TOP` / `MONO_WIDTH` / `MONO_PLATE_ALPHA`
+#    三个常量随之删掉 —— 别再加回来，框的尺寸由 `ui.mono_box()` 按行数算。
 MONO_FONT = 40
 MONO_LINE_H = 54
-MONO_TOP = 690                    # 字幕带顶边（往下长，打字时不会跳）
-MONO_WIDTH = 700                  # 折行宽度
-MONO_CPS = 46
+MONO_CPS = 46                     # 比对话（58）略慢：心声是「想」出来的，快不得
 MONO_FADE_IN = 0.22
 MONO_FADE_OUT = 0.55
-MONO_PLATE_ALPHA = 200            # 字幕带底衬的不透明度（白格上也要读得清）
 PROP_DEAD_CELL = (4, 1)           # 死亡的红怪（可选独白 M4）
 PROP_TOOL_CELL = (19, 1)          # 用过的道具（可选独白 M5）
 PROP_RANGE_PX = 54.0
@@ -152,7 +173,10 @@ REWARD_DELAY = 1.6                # 波扫完到道具浮出的延迟
 REWARD_WAIT = 5.0                 # 两个都捡起来之后，等光扩散
 SPREAD_TIME = 2.0                 # 圣坛的光扩散到整个世界
 BAG_SLOTS = 8                     # 背包格数
-MAP_CELL = 11                     # 21×21 进度图每格像素（231px）
+MAP_CELL = 13                     # 21×21 进度图每格像素（273px）
+MAP_Y = 604                       # 地图这一块在右侧面板里的顶边
+MAP_OPEN_TIME = 0.22              # 卷轴铺开 / 收起的时长
+MAP_SCROLL_W, MAP_SCROLL_H = 138, 42   # 收起时那个卷轴的尺寸
 
 # ==== 玩家（格子对齐移动）====
 PLAYER_START_CELL = (12, 12)      # ⬜ B1 未拍板：设计建议挪到 (13,10)，先按原方案
@@ -212,13 +236,8 @@ SEEN_RADIUS = 2
 SEEN_FLASH_TIME = 0.22
 C_LOCK = (30, 36, 45)
 C_PURPLE = (176, 112, 255)
-PURPLE_SPEED = 56.0
-PURPLE_RADIUS = 10
-PURPLE_IDLE_LIMIT = 60.0
-PURPLE_SPAWN_WINDOW = 150.0
-PURPLE_SPAWN_MARGIN = 6.0
-PURPLE_MODE = "best_row"
 SC_R, SC_LEFT, SC_RIGHT = 21, 80, 79
+SC_M = 16                         # M：铺开 / 卷起地图（只在拿到地图后有效）
 SC_KP_ENTER_ALIAS = 88
 BTN_W, BTN_H = 300, 92
 LV_BTN_W, LV_BTN_H, LV_BTN_GAP = 150, 154, 20

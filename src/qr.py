@@ -39,10 +39,27 @@ def generate_target(rng, content=None):
     return make_qr(content), content
 
 
-def required_cells(target=None):
-    """本轮必涂格（主网格坐标）：三个定位图案各 33 格 + 暗模块 1 格 = 100 格。
+def timing_cells():
+    """定时图案（timing pattern）：QR 第 6 行 / 第 6 列上黑白交替的黑格。
 
-    定位图案 = 7×7 外框（24 格）+ 中心 3×3（9 格）；中间那圈白不算。
+    v1（21×21）里只有 6 格，正好夹在定位图案之间：
+        (6,8) (6,10) (6,12)   +   (8,6) (10,6) (12,6)
+    坐标是 **QR 矩阵坐标**（0~20），用的时候要加 TARGET_OFFSET。
+    """
+    cells = set()
+    for i in range(8, 13):
+        if i % 2 == 0:
+            cells.add((6, i))
+            cells.add((i, 6))
+    return cells
+
+
+def required_cells(target=None, act=1):
+    """本轮必涂格（主网格坐标）。
+
+    第一幕：三个定位图案各 33 格 + 暗模块 1 格 = **100**
+    第二幕：再加定时图案 6 格 = **106**（定时图案是 QR 的固有结构，位置和数量写死不浮动）
+
     target 只用来校验（这些格子在真码里必须是黑的），不传就跳过校验。
     """
     orr, occ = TARGET_OFFSET
@@ -56,6 +73,10 @@ def required_cells(target=None):
                     cells.add((orr + r0 + dr, occ + c0 + dc))
     dr, dc = DARK_MODULE
     cells.add((orr + dr, occ + dc))
+
+    if act >= 2:
+        for r, c in timing_cells():
+            cells.add((orr + r, occ + c))
 
     if target is not None:
         for r, c in cells:

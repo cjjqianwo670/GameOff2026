@@ -11,10 +11,10 @@ import random
 import pygame
 
 from src.config import (
-    C_MONSTER, C_PURPLE, GRID_N, MONSTER_EAT_DIST, MOVE_REPEAT, PLAYER_START_CELL, PURPLE_RADIUS,
-    RED_EAT_DIST, RED_HIT_DIST, RED_RADIUS, VALID
+    C_MONSTER, C_PURPLE, GRID_N, MONSTER_EAT_DIST, MOVE_REPEAT, PLAYER_START_CELL,
+    PURPLE_EAT_DIST, PURPLE_RADIUS, PURPLE_SPEED, RED_EAT_DIST, RED_HIT_DIST, RED_RADIUS, VALID
 )
-from src.grid import cell_center
+from src.grid import altar_center, cell_center
 
 # ==== 玩家 ====
 
@@ -161,6 +161,91 @@ class Monster:
             return "eat"
         self.pos += d.normalize() * self.speed * dt
         return "alive"
+
+# ==== 第二幕的紫怪（the purple one）====
+
+
+class PurpleOne:
+    """锁圣坛内的一个黑格，撞到后清掉它所在「黑格更多」的那一整条线。
+
+    规则（作者 2026-11-11 拍板）：
+      P3  只锁**圣坛内**的有效黑域
+      P2  比较锁定格所在的行与列，清**黑格更多**的那条
+      P4  清**整条 25 格**（含圣坛外的平地诱饵）
+      P9  脏格不算黑格 —— 既不计入「哪条多」，也不被清掉
+      默认  平局选离玩家远的那条；一生只生效一次，撞完由 game 移除
+
+    update() 返回 "alive" 或 ("wipe", axis, index, cleared)。
+    """
+
+    def __init__(self, pos, speed=None, radius=None):
+        self.pos = pygame.Vector2(pos)
+        self.speed = PURPLE_SPEED if speed is None else speed
+        self.radius = PURPLE_RADIUS if radius is None else radius
+        self.color = C_PURPLE
+        self.phase = random.random() * 6.283
+        self.target = None
+        self.last_wipe = None
+        self.done = False                      # 撞过一次就置 True，防止同一只连清两条
+
+    def retarget(self, board):
+        """最近的有效黑域，**且必须在圣坛内**。找不到返回 False。"""
+        best, best_d = None, None
+        for r in range(GRID_N):
+            row = board.state[r]
+            for c in range(GRID_N):
+                if row[c] != VALID or not board.in_altar(r, c):
+                    continue
+                cx, cy = cell_center(r, c)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if best_d is None or d < best_d:
+                    best, best_d = (r, c), d
+        self.target = best
+        return best is not None
+
+    def pick_line(self, board, cell, player_pos=None):
+        """行 vs 列，谁的黑格多清谁；平局清离玩家远的那条。返回 ("row"|"col", index)。"""
+        r, c = cell
+        n_row = board.line_dark("row", r)
+        n_col = board.line_dark("col", c)
+        if n_row != n_col:
+            return ("row", r) if n_row > n_col else ("col", c)
+        if player_pos is None:
+            return ("row", r)
+        cx, cy = cell_center(r, c)
+        # 玩家离线越远越安全：比较「玩家到这条行/列中线的距离」
+        return ("row", r) if abs(player_pos.y - cy) >= abs(player_pos.x - cx) else ("col", c)
+
+    def update(self, dt, board, player=None):
+        if self.done:                          # 已经清过一条：等 game 把自己移除
+            return "alive"
+        if self.target is not None:
+            r, c = self.target
+            if board.state[r][c] != VALID:      # 被玩家抹了 / 被别的怪吃了 → 重选
+                self.target = None
+        if self.target is None and not self.retarget(board):
+            # 场上没有可吃的黑域：朝圣坛中心漂，等玩家涂出来
+            to_altar = pygame.Vector2(*altar_center()) - self.pos
+            if to_altar.length_squared() > 1.0:
+                self.pos += to_altar.normalize() * self.speed * 0.5 * dt
+            return "alive"
+
+        cx, cy = cell_center(*self.target)
+        d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
+        if d.length() <= PURPLE_EAT_DIST:
+            axis, idx = self.pick_line(board, self.target, player.pos if player else None)
+            cleared = board.clear_line(axis, idx)
+            self.last_wipe = (axis, idx, cleared)
+            self.target = None
+            self.done = True                     # 一生一次，由 game 移除
+            return ("wipe", axis, idx, cleared)
+        self.pos += d.normalize() * self.speed * dt
+        return "alive"
+
+    def claim(self, claims):
+        """接口对齐 Monster：紫怪不占 claims（它锁的是整条线，不是单格）。"""
+        return None
+
 
 # ==== 老者（the old man）====
 

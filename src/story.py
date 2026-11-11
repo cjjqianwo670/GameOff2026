@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """DATA SHIFT —— 第一幕全部文本。
 
-**唯一来源**：`D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏机制/DATA_SHIFT_第一幕英文文案.md`。
+**唯一来源**：`D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_第一幕英文文案.md`。
 这里是从那份文件**逐字抄下来**的：不要改写、不要翻译、不要新增台词、不要给角色起名字。
 要改文案，先改那份文件，再同步这里。
 
@@ -12,6 +12,7 @@ the plain / the old man / the red ones / erosion。
 # ==== 0. 幕 ====
 
 ACT_TITLE = "ACT 1 \u2014 END"
+ACT2_TITLE = "ACT 2 \u2014 END"
 
 # ==== 1. 系统提示（全大写）====
 
@@ -21,6 +22,8 @@ PROMPT_CALL = "PRESS [T] TO CALL OUT"
 PROMPT_PICK = "PRESS [B] TO PICK UP"
 STAIN_WARNING = "THAT IS NOT DARK. IT IS A STAIN.  [K] TO CLEAR IT."
 STEP_INTO_ALTAR = "STEP INTO THE ALTAR"
+MAP_IN_HANDS = "FOLD THE MAP FIRST   [M]"      # 地图摊开时想涂：双手捧着纸（2026-11-12 作者要求）
+PAINT_BLIND = "YOU HAVEN'T LOOKED.  [SHIFT] TO LOOK."   # 没照出灰域就落笔（2026-11-12）
 INCOMING = "THEY ARE COMING."
 
 # ==== 2. 内心独白（不打断操作）====
@@ -100,6 +103,25 @@ def branch(on_altar):
     if on_altar:
         return list(DIALOG_ONE)
     return list(DIALOG_TWO) + list(DIALOG_ONE[MERGE_INDEX:])
+
+
+# ==== 第二幕（2026-11-11 新增，草稿见 DATA_SHIFT_第二幕英文文案.md）====
+# 第二幕没有对话：老者没回来，场上没有第二个人。紫怪也不说话。
+
+A2_M1 = ("The old man hasn't come back.\nThe three corners are still here.\n"
+         "Something between them is missing.")
+A2_M2 = "Two lines.\nThey run between the corners.\nI never looked there."
+A2_M3 = "That's not one of the red ones.\nIt's slower. It's looking at the lines."
+A2_M4 = "It didn't take one cell.\nIt took the whole line."
+
+A2_PURPLE_IN = "SOMETHING ELSE IS MOVING."
+A2_WIPE_ROW = "ROW %d WIPED."          # %d 用玩家视角的 1~25
+A2_WIPE_COL = "COLUMN %d WIPED."       # %d 用玩家视角的 1~25
+
+
+def act_title(act):
+    """第 N 幕的结束字幕。"""
+    return ACT2_TITLE if act >= 2 else ACT_TITLE
 
 
 # ==== 旧五关街机版残留：新版不读，留着让旧界面函数不报错（见开工单 §5）====

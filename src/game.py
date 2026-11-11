@@ -22,23 +22,26 @@ import random
 
 import pygame
 
-from src import story
+from src import sfx, story
 from src.board import Board
 from src.config import (
     BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_MIRAGE, C_MONSTER,
-    C_PLAYER, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
+    C_PLAYER, C_PURPLE, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
-    CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_NAME_FONT, INTRO_TOTAL, ITEM_PICK_RANGE,
+    CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
+    ITEM_PICK_RANGE,
     ITEM_RISE_TIME, MONO_CPS, MONO_FONT, MONOLOGUE_TIME, OLDMAN_CELL, PROMPT_FONT,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
     PROP_TOOL_CELL, RED_RADIUS, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
     RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
-    SC_R, SC_SHIFT, SC_SPACE, SC_T, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN, SPAWN_PX,
-    SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT, TARGET_N, TARGET_OFFSET, THREAT_TIME,
-    ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W
+    SC_M, SC_R, SC_SHIFT, SC_SPACE, SC_T, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
+    SPAWN_PX,
+    SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT, TARGET_N, TARGET_OFFSET, THREAT_TIME, VALID,
+    ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W,
+    A2_OPEN_SECONDS, PURPLE_EAT_DIST, PURPLE_FIRST_DELAY, PURPLE_SPAWN_PER_MIN
 )
-from src.entities import Item, Monster, OldMan, Player, SceneRed
+from src.entities import Item, Monster, OldMan, Player, PurpleOne, SceneRed
 from src.grid import altar_center, cell_center
 from src.input_state import InputState
 from src.qr import generate_target, required_cells
@@ -46,8 +49,38 @@ from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_title, draw
                     make_stain_tile)
 
 # 可移动 / 可涂的相位
-MOVE_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "CLEAR", "REWARD")
-PAINT_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE")
+MOVE_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "CLEAR", "REWARD", "A2_OPEN")
+PAINT_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "A2_OPEN")
+
+# ==== 音效（可选：设备开不出来就静音，绝不拖垮游戏）====
+
+
+class _Audio:
+    """把 sfx.py 合成的 WAV 包成 pygame.mixer.Sound，按名播放。
+
+    mixer 初始化失败（无声卡 / 权限）时静默降级为 no-op，游戏照常跑。
+    """
+
+    def __init__(self):
+        self.enabled = False
+        self._sounds = {}
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            for name in sfx.SOUNDS:
+                self._sounds[name] = pygame.mixer.Sound(buffer=sfx.build(name))
+            self.enabled = True
+        except Exception:
+            self.enabled = False
+            self._sounds = {}
+
+    def play(self, name):
+        if not self.enabled:
+            return
+        s = self._sounds.get(name)
+        if s is not None:
+            s.play()
+
 
 # ==== 游戏主类 ====
 
@@ -64,6 +97,7 @@ class Game:
         self.debug = False
         self.last_sc = -1
         self._last_dt = 1.0 / FPS
+        self.audio = _Audio()
 
         # 字体只建一次
         self.f_small = pygame.font.Font(None, 21)
@@ -90,6 +124,8 @@ class Game:
                            (RED_RADIUS + 10, RED_RADIUS + 10), RED_RADIUS + 5)
         self.flash_surf = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.flash_surf.fill((*C_MONSTER, 120))
+        self.flash_surf_purple = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.flash_surf_purple.fill((*C_PURPLE, 130))
         self.stain_tile = make_stain_tile()
         self.shake_buf = pygame.Surface((WINDOW_W, WINDOW_H))
         self.spread_surf = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
@@ -117,6 +153,13 @@ class Game:
         self.claims = {}
         self.scene_reds = []
 
+        self.map_open = False                        # 地图是不是铺开着
+        self.map_t = 0.0                             # 铺开进度 0（卷着）→ 1（全展开）
+        self.act = 1                                 # 第几幕（第二幕复用同一个棋盘）
+        self.purples = []                            # 第二幕的紫怪（the purple one）
+        self.purple_t = 0.0                          # 距离上一只紫怪的计时
+        self.purple_spawned = 0                      # 本幕已经来过几只（首只要 8 秒）
+        self.open_t = 0.0                            # 第二幕开场的计时
         self.anim_t = 0.0                            # 只给贴图动画用（呼吸 / 触须 / 光标闪）
         self.elapsed = 0.0
         self.spawn_rate = RED_SPAWN_PER_MIN
@@ -151,6 +194,7 @@ class Game:
         self.reveal_used = False
         self.anomaly_miss = 0
         self.stain_warned = False
+        self.wipe_warned = False                     # 第二幕：第一次被清行的独白只放一次
 
         # 过场
         self.cs_t = 0.0
@@ -179,6 +223,10 @@ class Game:
         self.items = []
         self.has_bag = False
         self.has_map = False
+        # 地图上记的东西：**每一幕收尾那一瞬**圣坛的样子（21×21 的 (tr,tc) 集合）。
+        # 本幕中途的涂改 / 怪物清掉的格子都不实时上图 —— 见 capture_map()。
+        self.map_cells = set()
+        self.map_act = 0                             # 这份记录是第几幕收尾拍的
         self.reward_phase = None
         self.reward_t = 0.0
         self.spread_r = 0.0
@@ -186,14 +234,19 @@ class Game:
 
     # ---------- 开局 ----------
     def start_act(self):
+        self.act = 1
         self.target, self.qr_content = generate_target(self.rng)
-        self.must = required_cells(self.target)
+        self.must = required_cells(self.target, act=self.act)
         self.board = Board(self.target, self.must)
         self.player = Player()
         self.oldman = OldMan(OLDMAN_CELL, facing=0)      # 背对玩家：朝世界外（上方）
         self.oldman_turned = False
         self.health = HEALTH_MAX
         self.monsters = []
+        self.purples = []
+        self.purple_t = 0.0
+        self.purple_spawned = 0
+        self.open_t = 0.0
         self.claims = {}
         self.scene_reds = []
         self.elapsed = 0.0
@@ -212,16 +265,24 @@ class Game:
         self.reveal_used = False
         self.anomaly_miss = 0
         self.stain_warned = False
+        self.wipe_warned = False
 
         self.cs_t, self.cs_red_in, self.cs_flee, self.cs_m3 = 0.0, False, False, False
         self.oldman_faced_altar = False
         self.dlg_lines, self.dlg_i, self.dlg_hold = None, 0, 0.0
+        self.dlg_show_t = 0.0
         self.dlg_phase = "talk"
         self.prop_done = {"dead": False, "tool": False}
 
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
         self.items = []
         self.has_bag = self.has_map = False
+        self.map_cells = set()                        # 重开一局：地图上还没有任何一幕的记录
+        self.map_act = 0
+        # 地图必须收起来：重开后没有地图（`has_map=False`），但 `map_open` 若留着 True，
+        # 涂改就会被「捧着纸」永久封住，而且按 M 也解不开（M 要求 has_map）—— 死锁
+        self.map_open = False
+        self.map_t = 0.0
         self.reward_phase, self.reward_t, self.spread_r = None, 0.0, 0.0
         self.gap_t = 0.0
 
@@ -236,6 +297,63 @@ class Game:
 
         self.state = "INTRO"
         self.input.held.clear()
+
+    def next_act(self):
+        """幕结束画面按下回车：第一幕 → 第二幕；第二幕 → 回标题（后面几幕还没做）。"""
+        if self.act < 2:
+            self.start_act2()
+        else:
+            self.state = "TITLE"
+            self.menu_t = 0.0
+            self.input.held.clear()
+
+    def start_act2(self):
+        """第一幕结束 → 第二幕。
+
+        **不清空棋盘**（作者定）：第一幕涂好的 100 格原地保留，本幕只多 6 格定时图案。
+        所以这里不能重播碎码动画，只换必涂格集合 + 复位血量/怪物/计时。
+        """
+        self.act = 2
+        # 同一个 target、同一个 board：只把必涂格从 100 扩到 106
+        self.must = required_cells(self.target, act=self.act)
+        self.board.set_must(self.must)
+
+        self.health = HEALTH_MAX
+        self.monsters = []
+        self.purples = []
+        self.claims.clear()
+        self.scene_reds = []
+        self.elapsed = 0.0
+        self.spawn_acc = 0.0
+        self.spawn_rate = RED_SPAWN_PER_MIN
+        self.accel_step = 0
+        self.purple_t = 0.0
+        self.purple_spawned = 0
+        self.wipe_warned = False
+
+        self.hint_text, self.hint_t = "", 0.0
+        self.prompt_text = ""
+        self.threat_t = 0.0
+        self.banner_text, self.banner_t = "", 0.0
+        self.items = []
+        # ⚠️ 不要重置 has_bag / has_map：这两个是第一幕拿到的，之后一直带着
+        self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
+        self.reward_phase, self.reward_t, self.spread_r = None, 0.0, 0.0
+        self.dlg_lines = None
+        if self.oldman is not None:
+            self.oldman.gone = True
+
+        # 开场：一行独白，不打断操作；读完自动进战斗
+        self.state = "A2_OPEN"
+        self.open_t = 0.0
+        self.say(story.A2_M1)
+        self.audio.play("clear")                     # 复用圣坛低鸣：仪式又开始了
+        self.checkpoint = self.make_checkpoint()
+
+    def update_a2_open(self, dt):
+        self.open_t += dt
+        if self.open_t >= A2_OPEN_SECONDS:
+            self.start_battle()
 
     def start_gap(self):
         """老者离开那一刻 = 检查点。"""
@@ -255,11 +373,22 @@ class Game:
             "elapsed": self.elapsed,
             "spawn_rate": self.spawn_rate,
             "accel_step": self.accel_step,
+            "act": self.act,
+            "state": self.state,          # 第一幕回 GAP、第二幕回 A2_OPEN
+            "must": set(self.must),
+            "bag": self.has_bag,          # 第一幕之后一直带着，回检查点不能丢
+            "map": self.has_map,
+            # ⚠️ 故意不存 map_cells / map_act：那是「每幕收尾拍下的定妆照」，
+            # 只增不减的历史账。存进快照反而会让「回到本幕开头」把上一幕的记录抹掉。
         }
 
     def restore_checkpoint(self):
         cp = self.checkpoint
         self.board.restore(cp["board"])
+        self.act = cp.get("act", 1)
+        if "must" in cp:
+            self.must = set(cp["must"])
+            self.board.set_must(self.must)
         self.health = cp["health"]
         self.elapsed = cp["elapsed"]
         self.spawn_rate = cp["spawn_rate"]
@@ -267,10 +396,15 @@ class Game:
         for m in self.monsters:
             m.claim(self.claims)
         self.monsters.clear()
+        self.purples.clear()
+        self.purple_t = 0.0
+        self.purple_spawned = 0
         self.claims.clear()
         self.scene_reds.clear()
         self.items.clear()
-        self.has_bag = self.has_map = False
+        # 按检查点恢复：第一幕的检查点在拿道具之前（False），第二幕在拿之后（True）
+        self.has_bag = cp.get("bag", False)
+        self.has_map = cp.get("map", False)
         self.spawn_acc = 0.0
         self.player.reset()
         self.hint_text, self.hint_t = "", 0.0
@@ -282,8 +416,9 @@ class Game:
         if self.oldman is not None:
             self.oldman.gone = True                      # 他早就走了
             self.oldman.leaving = False
-        self.state = "GAP"
+        self.state = cp.get("state", "GAP")
         self.gap_t = 0.0
+        self.open_t = 0.0
         self.input.held.clear()
 
     # ---------- 文本通道 ----------
@@ -338,7 +473,7 @@ class Game:
             return
         if st == "END":
             if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE, SC_R):
-                self.start_act()
+                self.next_act()
             return
         if st == "DIALOG":
             if sc in (SC_ENTER, SC_KP_ENTER):
@@ -350,8 +485,15 @@ class Game:
         # ---- 以下都是可动相位 ----
         if sc == SC_R:
             self.start_act()
+        # 地图摊开 = 双手捧着纸，涂改 / 擦除 / 照异象全都做不了（作者 2026-11-12 定的代价）。
+        # 挡在这里是为了给一句话的反馈；真正拦住动作的是 update() 里那个 `not self.map_open`。
+        elif self.map_open and st in PAINT_STATES and (sc in (SC_J, SC_K) or sc in SC_SHIFT):
+            self.map_busy()
         elif sc in SC_SHIFT:
             self.cast_anomaly()
+        elif sc == SC_M and self.has_map and st in MOVE_STATES:
+            self.map_open = not self.map_open
+            self.audio.play("ui")
         elif sc == SC_T and st == "FREE_ROAM":
             self.try_call()
         elif sc == SC_B and st == "REWARD":
@@ -363,7 +505,7 @@ class Game:
         elif self.state == "DEAD":
             self.restore_checkpoint()
         elif self.state == "END":
-            self.start_act()
+            self.next_act()
 
     def mouse_xy(self):
         mx, my = pygame.mouse.get_pos()
@@ -379,6 +521,12 @@ class Game:
     def update(self, dt):
         self._last_dt = dt
         self.anim_t += dt                            # 贴图动画的时基：所有相位都在走
+        # 卷轴铺开 / 收起（和相位无关，看地图时世界照常跑）
+        want = 1.0 if self.map_open else 0.0
+        if self.map_t != want:
+            step = dt / MAP_OPEN_TIME
+            self.map_t = (min(1.0, self.map_t + step) if want > self.map_t
+                          else max(0.0, self.map_t - step))
         st = self.state
         if st in ("TITLE", "DEAD", "END"):
             self.menu_t += dt
@@ -401,12 +549,14 @@ class Game:
             self.player.update(dt, self.input.dir4())
             self.note_move(dt)
 
-        # 脚下涂改：按着 Shift 时涂不上去（异象和涂不能同时）
-        if st in PAINT_STATES:
+        # 脚下涂改：按着 Shift 时涂不上去（异象和涂不能同时）；
+        # 地图摊开时也不行 —— 两只手捧着纸，写字改字都没手（作者 2026-11-12）
+        if st in PAINT_STATES and not self.map_open:
             if self.input.down(SC_J) and not self.shift_held():
                 self.paint_here()
             elif self.input.down(SC_K):
-                self.board.start_erase(*self.player.cell)
+                if self.board.start_erase(*self.player.cell):
+                    self.audio.play("erase")            # 抹除：收回的一声上滑
 
         self.board.update(dt)
 
@@ -416,6 +566,8 @@ class Game:
             self.update_roam(dt)
         elif st == "GAP":
             self.update_gap(dt)
+        elif st == "A2_OPEN":
+            self.update_a2_open(dt)
         elif st == "BATTLE":
             self.update_battle(dt)
         elif st == "CLEAR":
@@ -518,10 +670,13 @@ class Game:
     def cast_anomaly(self):
         if self.state not in PAINT_STATES:
             return
+        if self.map_open:                                # 手占着（手柄以外的入口也挡一下）
+            return
         if self.input.down(SC_J):
             return                                      # 正在涂：按不动异象
         n = self.board.reveal_around(*self.player.cell)
         if n > 0:
+            self.audio.play("anomaly")
             if not self.reveal_used:
                 self.reveal_used = True
                 self.say(story.M2)                      # 第一次真的照出灰域 → M2
@@ -566,6 +721,7 @@ class Game:
         if not self.cs_flee and t >= 1.6:
             self.cs_flee = True
             self.oldman.wave(0.9)
+            self.audio.play("staff")                    # 老者挥杖：一下呼啸
             self.threat_t = THREAT_TIME
             for r in self.scene_reds:
                 r.vel.update(0, -300.0)
@@ -639,6 +795,7 @@ class Game:
         self.dlg_run_t = 0.0
         self.dlg_hold = 0.0
         self.dlg_t = 0.0
+        self.dlg_show_t = 0.0          # 这一句已经显示了多久（dlg_t 会被「补完」改成 99，不能兼用）
         self.prompt_text = ""
         self.mono_text, self.mono_t = "", 0.0      # 开口说话时，心里那句立刻收掉
 
@@ -651,6 +808,7 @@ class Game:
                 self.dlg_phase = "talk"
             return
         self.dlg_t += dt
+        self.dlg_show_t += dt
         if self.dlg_hold > 0:
             self.dlg_hold = max(0.0, self.dlg_hold - dt)
             if self.dlg_hold <= 0:
@@ -668,11 +826,21 @@ class Game:
         if self.dlg_typing():
             self.dlg_t = 99.0                            # 先补完这一句，视觉小说的手感
             return
+        # 最后一句：**等玩家再按一次回车**才让老者离开。
+        # （原来是 `dlg_hold = 1.0` 自动走 —— 玩家还没看完 `If I can.` 人就没了）
+        #
+        # 必须在重置 dlg_t 之前判断：否则计时又被清零，条件永远成立，就再也走不了了。
+        # 这一句刚显示出来的瞬间也不认按键 —— 玩家从上一句连按两下时，第二下会把
+        # 最后一句一帧跳过去，看起来就像「最后一句被删掉了」。
+        if self.dlg_i >= len(self.dlg_lines) - 1:
+            if self.dlg_show_t >= DLG_LAST_MIN_SHOW:
+                self.end_dialog()
+            return
+
         self.dlg_t = 0.0
-        if self.dlg_i < len(self.dlg_lines) - 1:
-            self.dlg_i += 1
-        else:
-            self.dlg_hold = 1.0                          # `If I can.` 停 1 秒
+        self.dlg_show_t = 0.0
+        self.dlg_i += 1
+        self.audio.play("ui")                            # 翻页：极轻一声
 
     def end_dialog(self):
         self.dlg_lines = None
@@ -692,7 +860,10 @@ class Game:
         self.state = "BATTLE"
         self.elapsed = 0.0
         self.spawn_acc = 0.0
-        self.show_hint(story.INCOMING, 2.8)
+        self.purple_t = 0.0
+        self.purple_spawned = 0
+        # 第一幕的「它们要来了」，第二幕换成紫怪那句（它才是这一幕的新东西）
+        self.show_hint(story.INCOMING if self.act < 2 else story.A2_PURPLE_IN, 2.8)
 
     def update_gap(self, dt):
         self.gap_t += dt
@@ -706,8 +877,28 @@ class Game:
             if res != "alive":
                 if res == "hit":
                     self.health = max(0, self.health - HIT_DAMAGE)
+                    self.audio.play("hurt")             # 被咬：下坠的一声
                     self.show_hint("HIT  -%d%%" % HIT_DAMAGE, 1.4)
+                elif res == "eat":
+                    self.audio.play("red_die")          # 吃掉了黑域，然后自毁
                 self.monsters.remove(m)
+
+        # ---- 第二幕：紫怪（the purple one）----
+        if self.act >= 2:
+            self.purple_t += dt
+            # 首只按 PURPLE_FIRST_DELAY（作者定 8 秒），之后按 PURPLE_SPAWN_PER_MIN
+            due = PURPLE_FIRST_DELAY if self.purple_spawned == 0 else 60.0 / max(PURPLE_SPAWN_PER_MIN, 1e-6)
+            if self.purple_t >= due:
+                self.purple_t = 0.0
+                self.purple_spawned += 1
+                self.spawn_purple()
+            for pu in self.purples[:]:
+                res2 = pu.update(dt, self.board, self.player)
+                if res2 != "alive":
+                    if isinstance(res2, tuple) and res2[0] == "wipe":
+                        self.on_line_wiped(res2[1], res2[2], res2[3])
+                    self.purples.remove(pu)
+                    self.claims.clear()          # 紫怪不占 claims，但清一下更稳
 
         self.elapsed += dt
         step = int(self.elapsed // RED_SPAWN_ACCEL_PERIOD)
@@ -728,31 +919,67 @@ class Game:
             self.enter_clear()
 
     def paint_here(self):
-        res = self.board.paint(*self.player.cell)
-        if res != "dirty":
+        r, c = self.player.cell
+        res = self.board.paint(r, c)
+        if res == "valid":
+            self.audio.play("paint")                    # 落子：写对了
             return
-        if not self.stain_warned:
-            self.stain_warned = True
-            self.show_hint(story.STAIN_WARNING, 4.0)
-        if self.board.stains > STAIN_LIMIT:
-            # 额度用完之后的每一格脏格：一次外伤，不是判负
-            self.health = max(0, self.health - STAIN_DAMAGE)
-            self.show_hint("STAIN  -%d%%" % STAIN_DAMAGE, 1.4)
+        if res == "dirty":
+            self.audio.play("stain")                    # 落错：失谐的一声
+            # 两种脏格，提示要分开：「看都没看清」和「涂错地方」不是一回事
+            blind = (r, c) in self.board.must and self.board.reveal[r][c] <= 0
+            if blind:
+                self.show_hint(story.PAINT_BLIND, 1.8)
+            elif not self.stain_warned:
+                self.stain_warned = True
+                self.show_hint(story.STAIN_WARNING, 4.0)
+            if self.board.stains > STAIN_LIMIT:
+                # 额度用完之后的每一格脏格：一次外伤，不是判负
+                self.health = max(0, self.health - STAIN_DAMAGE)
+                self.audio.play("hurt")
+                self.show_hint("STAIN  -%d%%" % STAIN_DAMAGE, 1.4)
+        elif res == "plain":
+            self.audio.play("paint")                    # 平地诱饵也算「写下一格」
 
-    def spawn_monster(self):
+    def map_busy(self):
+        """地图摊开时想干活：先卷起来。给一行提示 + 一声闷响，别让玩家以为按键坏了。"""
+        self.show_hint(story.MAP_IN_HANDS, 1.6)
+        self.audio.play("dull")
+
+    def spawn_purple(self):
+        """紫怪从生成环上进场。"""
+        self.purples.append(PurpleOne(self.ring_spawn_pos()))
+        if self.purple_spawned == 1:                 # 第一次来：给一句独白 + 一记低音
+            self.say(story.A2_M3)
+            self.audio.play("purple")
+        else:
+            self.audio.play("purple")
+
+    def on_line_wiped(self, axis, idx, cleared):
+        """紫怪清掉一整条：报给玩家 + 出声。idx 是主网格 0~24，显示成 1~25。"""
+        label = (story.A2_WIPE_ROW if axis == "row" else story.A2_WIPE_COL) % (idx + 1)
+        self.show_hint(label, 1.5)
+        self.audio.play("wipe")
+        if not self.wipe_warned:                     # 第一次被清：一句独白
+            self.wipe_warned = True
+            self.say(story.A2_M4)
+
+    def ring_spawn_pos(self):
+        """在 30×30 生成环上随机取一点（红怪和紫怪共用）。"""
         side = self.rng.randrange(4)
         t = self.rng.random() * SPAWN_PX
         x0, y0 = SPAWN_ORIGIN
         if side == 0:
-            pos = (x0 + t, y0)
-        elif side == 1:
-            pos = (x0 + SPAWN_PX, y0 + t)
-        elif side == 2:
-            pos = (x0 + t, y0 + SPAWN_PX)
-        else:
-            pos = (x0, y0 + t)
+            return (x0 + t, y0)
+        if side == 1:
+            return (x0 + SPAWN_PX, y0 + t)
+        if side == 2:
+            return (x0 + t, y0 + SPAWN_PX)
+        return (x0, y0 + t)
+
+    def spawn_monster(self):
         speed = RED_SPEED * self.rng.uniform(*RED_SPD_JITTER)
-        self.monsters.append(Monster(pos, speed))
+        self.monsters.append(Monster(self.ring_spawn_pos(), speed))
 
     # ---------- 清屏 ----------
     def enter_clear(self):
@@ -767,6 +994,7 @@ class Game:
             m.claim(self.claims)
             m.mode = "hunt"
             m.target = None
+        self.purples.clear()                        # 仪式的光把它们一起收掉
         self.claims.clear()
 
     def update_clear(self, dt):
@@ -785,12 +1013,14 @@ class Game:
                 self.clear_phase = "wave"
                 self.clear_t = 0.0
                 self.wave_r = 0.0
+                self.audio.play("clear")                # 圣坛发动：渐强的咻 + 一记低鸣
         elif self.clear_phase == "wave":
             self.wave_r += CLEAR_WAVE_SPEED * dt
             self.clear_monsters_in_wave()
             far = max(math.hypot(x - cx, y - cy) for x in (0, WINDOW_W) for y in (0, WINDOW_H))
             if self.wave_r >= far:
                 self.board.wipe_stains()                 # 顺手把全部脏格抹掉
+                self.capture_map()                       # 这一幕的圣坛定妆了 → 记进地图
                 self.clear_phase = "hold"
                 self.clear_t = 0.0
         elif self.clear_phase == "hold":
@@ -807,6 +1037,23 @@ class Game:
             else:
                 keep.append(m)
         self.monsters = keep
+
+    def capture_map(self):
+        """把此刻圣坛的样子拍进地图 —— 地图**只记每一幕收尾那一瞬**（作者定的规则）。
+
+        所以它是一本「幕账」：进下一幕时打开地图，看到的是上一幕结束时圣坛的样子，
+        这一幕的涂改、被紫怪清掉的整行，都不会实时改地图上的墨。
+        唯一的调用点是 `update_clear()` 里清屏波扫完、脏格抹掉之后 ——
+        那一刻本幕的圣坛才真正定妆（必涂格全黑、脏格全无）。
+        """
+        orr, occ = TARGET_OFFSET
+        cells = set()
+        for tr in range(TARGET_N):
+            for tc in range(TARGET_N):
+                if self.board.state[orr + tr][occ + tc] == VALID:
+                    cells.add((tr, tc))
+        self.map_cells = cells
+        self.map_act = self.act
 
     # ---------- 奖励 ----------
     def enter_reward(self):
@@ -834,9 +1081,15 @@ class Game:
         if self.reward_phase == "wait":
             self.reward_t += dt
             if self.reward_t >= REWARD_DELAY:
-                self.spawn_items()
-                self.reward_phase = "items"
-                self.reward_t = 0.0
+                if self.act >= 2:
+                    # 背包和地图第一幕就拿到了，第二幕不再浮出来一次：直接收尾
+                    self.reward_phase = "spread"
+                    self.reward_t = 0.0
+                    self.spread_r = 0.0
+                else:
+                    self.spawn_items()
+                    self.reward_phase = "items"
+                    self.reward_t = 0.0
         elif self.reward_phase == "items":
             near = self.nearest_item()
             self.prompt_text = story.PROMPT_PICK if near is not None else ""
@@ -855,7 +1108,7 @@ class Game:
             if self.spread_r >= math.hypot(WINDOW_W, WINDOW_H):
                 self.state = "END"
                 self.menu_t = 0.0
-                self.show_banner(story.ACT_TITLE, 999.0)
+                self.show_banner(story.act_title(self.act), 999.0)
 
     def nearest_item(self):
         best, best_d = None, None
@@ -871,6 +1124,7 @@ class Game:
             return
         it.picked = True
         self.items.remove(it)
+        self.audio.play("pickup")
         if it.kind == "bag":
             self.has_bag = True
             self.show_hint(story.ITEM_BAG, 5.0)
