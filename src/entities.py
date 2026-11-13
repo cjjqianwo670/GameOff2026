@@ -11,8 +11,10 @@ import random
 import pygame
 
 from src.config import (
-    C_MONSTER, C_PURPLE, GRID_N, MOVE_REPEAT, PLAYER_START_CELL,
-    PURPLE_EAT_DIST, PURPLE_RADIUS, PURPLE_SPEED, RED_EAT_DIST, RED_HIT_DIST, RED_RADIUS, VALID
+    C_MONSTER, C_PURPLE, C_YELLOW, GRID_N, MOVE_REPEAT, OLDMAN_HP, OLDMAN_STAGGER, PLAYER_START_CELL,
+    PURPLE_EAT_DIST, PURPLE_HIT_DIST, PURPLE_RADIUS, PURPLE_SPEED, RED_EAT_DIST, RED_HIT_DIST,
+    RED_RADIUS, VALID, YELLOW_AGGRO_TIME, YELLOW_BITE_CD, YELLOW_BITE_DIST, YELLOW_HP,
+    YELLOW_RADIUS, YELLOW_SPEED
 )
 from src.grid import altar_center, cell_center
 
@@ -148,9 +150,10 @@ class PurpleOne:
       P2  比较锁定格所在的行与列，清**黑格更多**的那条
       P4  清**整条 25 格**（含圣坛外的平地诱饵）
       P9  脏格不算黑格 —— 既不计入「哪条多」，也不被清掉
+      P10 圣坛内**一格黑域都没有**时，转而扑向码序使，撞到扣 10% 血（作者 2026-11-12）
       默认  平局选离玩家远的那条；一生只生效一次，撞完由 game 移除
 
-    update() 返回 "alive" 或 ("wipe", axis, index, cleared)。
+    update() 返回 "alive" / ("wipe", axis, index, cleared) / ("hit",)。
     """
 
     def __init__(self, pos, speed=None, radius=None):
@@ -199,11 +202,8 @@ class PurpleOne:
             if board.state[r][c] != VALID:      # 被玩家抹了 / 被别的怪吃了 → 重选
                 self.target = None
         if self.target is None and not self.retarget(board):
-            # 场上没有可吃的黑域：朝圣坛中心漂，等玩家涂出来
-            to_altar = pygame.Vector2(*altar_center()) - self.pos
-            if to_altar.length_squared() > 1.0:
-                self.pos += to_altar.normalize() * self.speed * 0.5 * dt
-            return "alive"
+            # 圣坛内一格黑域都没有：不再干等，转去扑码序使（P10，作者 2026-11-12）
+            return self._chase_player(dt, player)
 
         cx, cy = cell_center(*self.target)
         d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
@@ -215,6 +215,24 @@ class PurpleOne:
             self.done = True                     # 一生一次，由 game 移除
             return ("wipe", axis, idx, cleared)
         self.pos += d.normalize() * self.speed * dt
+        return "alive"
+
+    def _chase_player(self, dt, player):
+        """坛内没黑域时扑人：撞到返回 ("hit",)，由 game 扣血并把自己移除。
+
+        没有 player（理论上不会）就退回原来的「朝圣坛中心漂」，不会崩。
+        """
+        if player is None:
+            to_altar = pygame.Vector2(*altar_center()) - self.pos
+            if to_altar.length_squared() > 1.0:
+                self.pos += to_altar.normalize() * self.speed * 0.5 * dt
+            return "alive"
+        d = player.pos - self.pos
+        if d.length() <= PURPLE_HIT_DIST:
+            self.done = True                     # 一生一次，由 game 移除
+            return ("hit",)
+        if d.length_squared() > 1.0:
+            self.pos += d.normalize() * self.speed * dt
         return "alive"
 
     def claim(self, claims):
@@ -240,6 +258,11 @@ class OldMan:
         self.walk_t = 0.0               # 走路摆动的相位（只在移动时累加）
         self.leaving = False
         self.gone = False
+        # 第三幕：他也会被打。hp 归零不是死，是**倒下**（作者 2026-11-12：倒下会呼救，玩家按 H 救）
+        self.hp = OLDMAN_HP
+        self.down = False
+        self.hurt_t = 0.0               # 被咬那一下的红闪
+        self.stagger_t = 0.0            # 被咬之后笔停住多久（`OLDMAN_STAGGER`）
 
     def wave(self, secs):
         self.staff_t = secs
@@ -251,6 +274,29 @@ class OldMan:
     def update(self, dt):
         if self.staff_t > 0:
             self.staff_t = max(0.0, self.staff_t - dt)
+        if self.hurt_t > 0:
+            self.hurt_t = max(0.0, self.hurt_t - dt)
+        if self.stagger_t > 0:
+            self.stagger_t = max(0.0, self.stagger_t - dt)
+
+    def bitten(self, damage):
+        """被咬一口。返回 True = 这一下把他打倒了。"""
+        if self.down:
+            return False
+        self.hp = max(0, self.hp - damage)
+        self.hurt_t = 0.22
+        self.stagger_t = OLDMAN_STAGGER  # 咬一口就打断他 —— 「守」靠这个才成立
+        if self.hp <= 0:
+            self.down = True
+            return True
+        return False
+
+    def revive(self, hp):
+        """被救起来：站起来，带着一点血。硬直也清掉。"""
+        self.hp = hp
+        self.down = False
+        self.hurt_t = 0.0
+        self.stagger_t = 0.0
 
     def move_toward(self, target, speed, dt):
         """朝目标走一步，返回是否已经到位。"""
@@ -284,7 +330,72 @@ class SceneRed:
             self.vel.update(0, 0)
 
 
-# ==== 道具（BAG / MAP）====
+# ==== 第三幕的黄怪（the yellow ones）====
+
+
+class YellowOne:
+    """黄怪：一路冲老者 —— 它认为格式信息是被偷的。
+
+    行为（作者 2026-11-12 定）：
+      · **默认目标 = 老者**；老者倒下 / 不在场，就转火玩家
+      · **被砍一次就愤怒**：转火玩家 `YELLOW_AGGRO_TIME` 秒，然后回去找老者
+      · 咬人只报事件（`bite_oldman` / `bite_player`），扣血由 game 做 —— 和红怪、紫怪一致
+
+    `update()` 返回 `"alive"` / `"bite_oldman"` / `"bite_player"`。
+    """
+
+    def __init__(self, pos, speed=None):
+        self.pos = pygame.Vector2(pos)
+        self.speed = speed if speed else YELLOW_SPEED
+        self.phase = random.random() * 6.283
+        self.hp = YELLOW_HP
+        self.radius = YELLOW_RADIUS
+        self.color = C_YELLOW
+        self.aggro_t = 0.0              # >0 = 正在盯玩家（被打之后）
+        self.bite_cd = 0.0
+        self.flash = 0.0                # 被打中那一下的白闪
+
+    @property
+    def hunting(self):
+        """贴图用：像红怪的「追人」状态那样套一圈环。"""
+        return self.aggro_t > 0
+
+    def hurt(self, damage=1):
+        """挨一剑。返回 True = 死了。**挨打必然转火玩家**（作者的规则）。"""
+        self.hp -= damage
+        self.flash = 0.12
+        self.aggro_t = YELLOW_AGGRO_TIME
+        return self.hp <= 0
+
+    def update(self, dt, oldman, player):
+        self.bite_cd = max(0.0, self.bite_cd - dt)
+        self.flash = max(0.0, self.flash - dt)
+        if self.aggro_t > 0:
+            self.aggro_t = max(0.0, self.aggro_t - dt)
+
+        if self.aggro_t <= 0 and oldman is not None and not oldman.gone and oldman.down:
+            # 他倒了：它们要的是格式信息，不是命 —— **停手**，给玩家时间去扶他起来。
+            # 不加这条会滚成死循环：他倒 → 黄怪转火玩家 → 玩家救不了 → 更救不了（2026-11-12）
+            return "alive"
+
+        go_oldman = (self.aggro_t <= 0 and oldman is not None
+                     and not oldman.gone and not oldman.down)
+        target = oldman.pos if go_oldman else (player.pos if player is not None else None)
+        if target is None:
+            return "alive"
+        d = target - self.pos
+        reach = YELLOW_BITE_DIST if go_oldman else RED_HIT_DIST + 3
+        if d.length() <= reach:
+            if self.bite_cd > 0:
+                return "alive"
+            self.bite_cd = YELLOW_BITE_CD
+            return "bite_oldman" if go_oldman else "bite_player"
+        if d.length_squared() > 1.0:
+            self.pos += d.normalize() * self.speed * dt
+        return "alive"
+
+
+# ==== 道具（BAG / MAP / SWORD）====
 
 
 class Item:

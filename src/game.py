@@ -25,26 +25,33 @@ import pygame
 from src import sfx, story
 from src.board import Board
 from src.config import (
-    BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_BG, C_MIRAGE, C_MONSTER,
+    BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_BG, C_MIRAGE, C_MONSTER, C_OLDMAN,
     C_PLAYER, C_PURPLE, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
     CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
     ITEM_PICK_RANGE,
-    ITEM_RISE_TIME, MONO_CPS, MONO_FONT, MONOLOGUE_TIME, OLDMAN_CELL, PROMPT_FONT,
+    ITEM_RISE_TIME, MONO_CPS, MONO_FADE_OUT, MONO_FONT, MONO_REPEAT_GAP, MONOLOGUE_TIME, OLDMAN_CELL,
+    OLDMAN_BLAST_RADIUS, OLDMAN_HP, OLDMAN_REVIVE_HP,
+    OLDMAN_REVIVE_RANGE, OLDMAN_REVIVE_TIME, PROMPT_FONT,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
     PROP_TOOL_CELL, RED_RADIUS, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
     RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
-    SC_M, SC_R, SC_SHIFT, SC_SPACE, SC_T, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
+    SC_H, SC_M, SC_R, SC_SHIFT, SC_SPACE, SC_T, SC_U, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
     SPAWN_PX,
-    SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT, TARGET_N, TARGET_OFFSET, THREAT_TIME, VALID,
+    SCRIBE_FLASH, SCRIBE_PAUSE, SCRIBE_WALK_SPEED, FORMAT_HOLD_TIME, SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT,
+    SWORD_CD, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N,
+    TARGET_OFFSET,
+    THREAT_TIME, VALID, WHITE, YELLOW_BITE_DAMAGE, YELLOW_FIRST_DELAY, YELLOW_PLAYER_DAMAGE,
+    YELLOW_MAX, YELLOW_SPAWN_PER_MIN,
     ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W,
-    A2_OPEN_SECONDS, PURPLE_EAT_DIST, PURPLE_FIRST_DELAY, PURPLE_SPAWN_PER_MIN
+    A2_OPEN_SECONDS, PURPLE_EAT_DIST, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE, PURPLE_SPAWN_PER_MIN,
+    PURPLE_SPAWN_PER_MIN_ACT3
 )
-from src.entities import Item, Monster, OldMan, Player, PurpleOne, SceneRed
+from src.entities import Item, Monster, OldMan, Player, PurpleOne, SceneRed, YellowOne
 from src.grid import altar_center, cell_center
 from src.input_state import InputState
-from src.qr import generate_target, required_cells
+from src.qr import format_dark_cells, generate_target, required_cells
 from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_title, draw_world,
                     make_stain_tile)
 
@@ -126,6 +133,9 @@ class Game:
         self.flash_surf.fill((*C_MONSTER, 120))
         self.flash_surf_purple = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
         self.flash_surf_purple.fill((*C_PURPLE, 130))
+        # 第三幕：老者落笔的暖色闪光（和「被咬红」「被清紫」区分开 —— 这是好事发生）
+        self.flash_surf_scribe = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        self.flash_surf_scribe.fill((*C_OLDMAN, 110))
         self.stain_tile = make_stain_tile()
         self.shake_buf = pygame.Surface((WINDOW_W, WINDOW_H))
         self.spread_surf = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
@@ -141,6 +151,31 @@ class Game:
         self.player = None
         self.oldman = None
         self.oldman_turned = False
+        self.has_sword = False                        # 第二幕收尾拿到（M2 才能用）
+        self.dlg_after = None                         # 对话结束之后去哪（第三幕说完就开打）
+        # 第三幕：老者替你写格式信息
+        self.format_cells = set()                     # 本幕该黑的格式格（主网格坐标）
+        self.format_seen = set()                      # 已经写黑过的 → 用来发现「又被吃掉了」
+        self.format_warned = False
+        self.scribe_cells = []                        # 格式信息的 20 个位置（清单，测试用）
+        self.scribe_target = None                     # 当前锁定的那一格（写完就清空，下一帧重挑）
+        self.scribe_i = 0                             # **累计写过几格**（只增，给测试看「他在干活」）
+        self.scribe_done_said = False                 # 「读通了，剩下归你」说过没有
+        self.stagger_said = False                     # 「被咬断」那句说过没有
+        self.scribe_t = 0.0
+        self.scribe_writing = False                   # False=在走 / True=站定了准备落笔
+        self.scribe_said = False
+        self.fill_t = 0.0                             # 按住 J 写格式格的进度（0 → FORMAT_HOLD_TIME）
+        self.fill_cell = None                         # 这个进度属于哪一格（换格就从 0 数）
+        self.hold_said = False                        # 「格式格要按住」教过一次没有
+        # 第三幕 M2：黄怪 / 老者倒下与救援 / 挥剑
+        self.yellows = []
+        self.yellow_t = 0.0
+        self.yellow_spawned = 0
+        self.revive_t = 0.0                           # 按住 H 的累计时间（0 → OLDMAN_REVIVE_TIME）
+        self.down_said = False
+        self.swing_t = 0.0                            # 挥砍的视觉残留
+        self.sword_cd = 0.0
         self.health = HEALTH_MAX
         self.monsters = []
         self.claims = {}
@@ -173,6 +208,17 @@ class Game:
         self.mono_text = ""
         self.mono_t = 0.0
         self.mono_total = 0.0
+        # 心声会**冻住整个世界**等回车（作者 2026-11-12）：
+        #   mono_hold    True = 暂停中（update 直接 return，只走打字机）
+        #   mono_elapsed 出现多久了（打字机 + 淡入）
+        #   mono_type_time 这一句打完要多久
+        #   mono_gap / mono_last 同句冷却：连续涂错只冻一次
+        self.mono_hold = False
+        self.mono_elapsed = 0.0
+        self.mono_type_time = 0.0
+        self.mono_gap = 0.0
+        self.mono_who = ""
+        self.mono_last = ""
         self.hint_text = ""
         self.hint_t = 0.0
         self.prompt_text = ""
@@ -247,7 +293,7 @@ class Game:
         self.spawn_rate = RED_SPAWN_PER_MIN
         self.accel_step = 0
 
-        self.mono_text, self.mono_t = "", 0.0
+        self.reset_mono()
         self.hint_text, self.hint_t = "", 0.0
         self.prompt_text = ""
         self.threat_t = 0.0
@@ -269,7 +315,29 @@ class Game:
 
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
         self.items = []
-        self.has_bag = self.has_map = False
+        self.has_bag = self.has_map = self.has_sword = False
+        self.format_cells = set()
+        self.format_seen = set()
+        self.format_warned = False
+        self.scribe_cells = []
+        self.scribe_target = None
+        self.scribe_i = 0
+        self.scribe_t = 0.0
+        self.scribe_writing = False
+        self.scribe_said = False
+        self.scribe_done_said = False
+        self.fill_t = 0.0
+        self.fill_cell = None
+        self.hold_said = False
+        self.stagger_said = False
+        self.dlg_after = None
+        self.yellows = []
+        self.yellow_t = 0.0
+        self.yellow_spawned = 0
+        self.revive_t = 0.0
+        self.down_said = False
+        self.swing_t = 0.0
+        self.sword_cd = 0.0
         self.map_cells = set()                        # 重开一局：地图上还没有任何一幕的记录
         self.map_act = 0
         # 地图必须收起来：重开后没有地图（`has_map=False`），但 `map_open` 若留着 True，
@@ -292,25 +360,23 @@ class Game:
         self.input.held.clear()
 
     def next_act(self):
-        """幕结束画面按下回车：第一幕 → 第二幕；第二幕 → 回标题（后面几幕还没做）。"""
+        """幕结束画面按下回车：1 → 2 → 3；第三幕之后回标题（第四幕还没做）。"""
         if self.act < 2:
             self.start_act2()
+        elif self.act < 3:
+            self.start_act3()
         else:
             self.state = "TITLE"
             self.menu_t = 0.0
             self.input.held.clear()
 
-    def start_act2(self):
-        """第一幕结束 → 第二幕。
+    def _begin_act(self, act):
+        """开一幕时的**公共复位**（第二、三幕共用）。
 
-        **不清空棋盘**（作者定）：第一幕涂好的 100 格原地保留，本幕只多 6 格定时图案。
-        所以这里不能重播碎码动画，只换必涂格集合 + 复位血量/怪物/计时。
+        ⚠️ 这里不动 `must` / `state` / 老者 —— 每一幕的开场方式不一样，交给各自的 start_actN。
+        ⚠️ 也**不要**重置 `has_bag` / `has_map` / `has_sword`：拿到的道具跨幕一直带着。
         """
-        self.act = 2
-        # 同一个 target、同一个 board：只把必涂格从 100 扩到 106
-        self.must = required_cells(self.target, act=self.act)
-        self.board.set_must(self.must)
-
+        self.act = act
         self.health = HEALTH_MAX
         self.monsters = []
         self.purples = []
@@ -323,18 +389,50 @@ class Game:
         self.purple_t = 0.0
         self.purple_spawned = 0
         self.wipe_warned = False
-
         self.hint_text, self.hint_t = "", 0.0
         self.prompt_text = ""
         self.threat_t = 0.0
         self.banner_text, self.banner_t = "", 0.0
         self.items = []
-        # ⚠️ 不要重置 has_bag / has_map：这两个是第一幕拿到的，之后一直带着
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
         self.reward_phase, self.reward_t, self.spread_r = None, 0.0, 0.0
-        self.dlg_lines = None
-        if self.oldman is not None:
+        self.dlg_lines, self.dlg_after = None, None
+        self.reset_mono()
+        self.format_cells = set()
+        self.format_seen = set()
+        self.format_warned = False
+        self.scribe_cells = []
+        self.scribe_target = None
+        self.scribe_i = 0
+        self.scribe_t = 0.0
+        self.scribe_writing = False
+        self.scribe_said = False
+        self.scribe_done_said = False
+        self.fill_t = 0.0
+        self.fill_cell = None
+        self.hold_said = False
+        self.stagger_said = False
+        self.yellows = []
+        self.yellow_t = 0.0
+        self.yellow_spawned = 0
+        self.revive_t = 0.0
+        self.down_said = False
+        self.swing_t = 0.0
+        self.sword_cd = 0.0
+        if self.oldman is not None:                   # 默认他不在场，谁需要谁把他放回来
             self.oldman.gone = True
+            self.oldman.leaving = False
+
+    def start_act2(self):
+        """第一幕结束 → 第二幕。
+
+        **不清空棋盘**（作者定）：第一幕涂好的 100 格原地保留，本幕只多 6 格定时图案。
+        所以这里不能重播碎码动画，只换必涂格集合 + 复位血量/怪物/计时。
+        """
+        self._begin_act(2)
+        # 同一个 target、同一个 board：只把必涂格从 100 扩到 106
+        self.must = required_cells(self.target, act=2)
+        self.board.set_must(self.must)
 
         # 开场：一行独白，不打断操作；读完自动进战斗
         self.state = "A2_OPEN"
@@ -342,6 +440,133 @@ class Game:
         self.say(story.A2_M1)
         self.audio.play("clear")                     # 复用圣坛低鸣：仪式又开始了
         self.checkpoint = self.make_checkpoint()
+
+    def start_act3(self):
+        """第二幕结束 → 第三幕：**老者回来了**，带回「怎么读这张码」。
+
+        这一幕玩家**不写格式信息** —— 老者走过去一格一格写（`SCRIBE_WALK_SPEED` / `SCRIBE_PAUSE`）。
+        玩家要做的是守住他写下的东西：被怪吃掉的格式格，他**不回头补**，得玩家自己补。
+        """
+        self._begin_act(3)
+        self.must = required_cells(self.target, act=3)   # 106 + 格式信息里该黑的 10~20 格
+        self.board.set_must(self.must)
+
+        # 他按顺序写：先把「贴着左上的那一份」写完，再写「右上 + 左下」那一份
+        self.format_cells = format_dark_cells(self.target)
+        self.scribe_cells = sorted(self.format_cells)
+
+        # 老者回来，站在坛外老位置，这回面朝坛内
+        self.oldman = OldMan(OLDMAN_CELL, facing=1)
+        self.oldman_turned = True
+
+        # 先说话，说完直接开打（`after="BATTLE"`，他这次不走了，所以 tail=False）
+        self.start_dialog(story.DIALOG_THREE, tail=False, after="BATTLE")
+        self.audio.play("clear")
+        self.checkpoint = self.make_checkpoint()
+
+    def pick_format_target(self):
+        """挑下一个要写的格式格：**离他最近的那一格白的**。
+
+        2026-11-12 起他会**回头补**（作者：紫怪把格式信息清了，让他再涂一遍就行），
+        所以这里不是「按清单走一遍」，而是**每写完一格就重新找一次**。
+        全都黑了就返回 None —— 那一刻格式信息写完了。
+        """
+        need = [(r, c) for (r, c) in self.format_cells if self.board.state[r][c] == WHITE]
+        if not need:
+            return None
+        om = self.oldman
+        if om is None:
+            return need[0]
+        px, py = om.pos.x, om.pos.y
+        return min(need, key=lambda rc: (cell_center(*rc)[0] - px) ** 2 + (cell_center(*rc)[1] - py) ** 2)
+
+    def update_scribe(self, dt):
+        """第三幕：老者走过去，一格一格写格式信息。
+
+        作者 2026-11-12 定的两条，缺任何一条这一幕都不成立：
+          1. **他必须站到那一格上才落笔** —— 所以节奏由「路程」决定，不是由格数决定；
+          2. **被咬一口就停手** `OLDMAN_STAGGER` 秒 —— 不加这条，实测玩家全程不动他也能 21.6 秒写完，
+             「守老者」就是个摆设。
+
+        他会**回头补**被怪吃掉的格式格（作者定的），所以没有「干完收工」这回事：
+        只有「暂时没有白的格要写」，那一刻走 `on_scribe_idle()`。
+        """
+        self.check_format_broken()
+        om = self.oldman
+        if om is None or om.down:                     # 倒下了就写不动了 —— 去救他
+            return
+
+        if self.scribe_target is None:
+            self.scribe_target = self.pick_format_target()
+            self.scribe_writing = False
+            if self.scribe_target is None:
+                self.on_scribe_idle()
+                return
+
+        r, c = self.scribe_target
+        if self.board.state[r][c] != WHITE:           # 玩家抢先涂了 / 已经被补上
+            self.scribe_target = None
+            self.scribe_writing = False
+            return
+
+        if not self.scribe_writing:
+            if om.move_toward(cell_center(r, c), SCRIBE_WALK_SPEED, dt):
+                self.scribe_writing = True            # 站定了
+                self.scribe_t = 0.0
+                om.face_to(pygame.Vector2(*cell_center(r, c)))
+            return
+
+        if om.stagger_t > 0:
+            # 刚被咬：**这一笔写不下去**（进度归零，硬直过了重数），但他还能走 ——
+            # 直接 return 会把他钉在原地，黄怪一多就是永久硬直（2026-11-12 踩过）
+            self.scribe_t = 0.0
+            return
+        self.scribe_t += dt
+        if self.scribe_t < SCRIBE_PAUSE:
+            return
+
+        self.board.state[r][c] = VALID
+        self.board.flash[(r, c)] = SCRIBE_FLASH        # 暖色一闪：让玩家看见「是他写的」
+        self.board.flash_kind[(r, c)] = "scribe"
+        self.audio.play("paint")
+        if not self.scribe_said:
+            self.scribe_said = True
+            self.say(story.A3_M1)
+        self.scribe_i += 1                            # 累计写过几格（只增）
+        self.scribe_target = None
+        self.scribe_writing = False
+        if self.board.is_complete():
+            self.enter_clear()
+
+    def on_scribe_idle(self):
+        """格式信息暂时写完了（没有白的格式格要写）。
+
+        如果整张码还没完成，**差的就是玩家自己该补的格** —— 说一句、并在底部点名还差几格。
+        只喊一次：不喊玩家会以为游戏卡了；每帧喊又太吵。
+        """
+        if not self.scribe_done_said:
+            self.scribe_done_said = True
+            self.say(story.A3_READ, 3.0, who=story.OLD_MAN)
+            left = max(0, len(self.must) - self.board.progress())
+            if left:
+                self.show_hint(story.HINT_FILL_REST % left, 5.0)
+        if self.board.is_complete():
+            self.enter_clear()
+
+    def check_format_broken(self):
+        """格式信息被你之外的东西弄掉了？第一次给一句提示 + 一句心声。
+
+        玩家必须自己补 —— 老者不会回头（他正忙着往前写）。
+        """
+        for cell in self.format_cells:
+            if self.board.state[cell[0]][cell[1]] == VALID:
+                self.format_seen.add(cell)
+            elif cell in self.format_seen:
+                self.format_seen.discard(cell)
+                if not self.format_warned:
+                    self.format_warned = True
+                    self.show_hint(story.HINT_FORMAT_BROKEN, 3.0)
+                    self.say(story.A3_M2, 2.2)
 
     def update_a2_open(self, dt):
         self.open_t += dt
@@ -371,6 +596,7 @@ class Game:
             "must": set(self.must),
             "bag": self.has_bag,          # 第一幕之后一直带着，回检查点不能丢
             "map": self.has_map,
+            "sword": self.has_sword,      # 第二幕之后一直带着
             # ⚠️ 故意不存 map_cells / map_act：那是「每幕收尾拍下的定妆照」，
             # 只增不减的历史账。存进快照反而会让「回到本幕开头」把上一幕的记录抹掉。
         }
@@ -398,28 +624,95 @@ class Game:
         # 按检查点恢复：第一幕的检查点在拿道具之前（False），第二幕在拿之后（True）
         self.has_bag = cp.get("bag", False)
         self.has_map = cp.get("map", False)
+        self.has_sword = cp.get("sword", False)
         self.spawn_acc = 0.0
         self.player.reset()
         self.hint_text, self.hint_t = "", 0.0
-        self.mono_text, self.mono_t = "", 0.0
+        self.reset_mono()
         self.threat_t = 0.0
         self.clear_phase, self.clear_t, self.wave_r = None, 0.0, 0.0
         self.reward_phase, self.reward_t, self.spread_r = None, 0.0, 0.0
         self.dlg_lines = None
         if self.oldman is not None:
-            self.oldman.gone = True                      # 他早就走了
+            # 第一、二幕回到检查点时他早就走了；第三幕他就在坛边，不能让他「消失」
+            self.oldman.gone = self.act < 3
             self.oldman.leaving = False
+        self.yellows.clear()
+        self.yellow_t = 0.0
+        self.revive_t = 0.0
+        self.down_said = False
+        if self.oldman is not None and self.act >= 3:
+            self.oldman.hp = OLDMAN_HP                   # 回到本幕开头：他也满血站起来
+            self.oldman.down = False
+        self.scribe_cells = []                           # 检查点里没存写格进度，回来重排
+        if self.act >= 3:
+            self.scribe_cells = sorted(self.format_cells)
+            self.scribe_target = None
+            self.scribe_i = 0
+            self.scribe_t = 0.0
+            self.scribe_writing = False
+            self.scribe_done_said = False
+            self.stagger_said = False
+            self.format_seen = set()
+            self.format_warned = False
         self.state = cp.get("state", "GAP")
         self.gap_t = 0.0
         self.open_t = 0.0
         self.input.held.clear()
 
     # ---------- 文本通道 ----------
-    def say(self, text, secs=MONOLOGUE_TIME):
-        """内心独白：屏幕下方，不打断操作。"""
+    def reset_mono(self):
+        """把心声相关状态全部归零（重开 / 换幕 / 回检查点都要走它）。"""
+        self.mono_text = ""
+        self.mono_t = 0.0
+        self.mono_total = 0.0
+        self.mono_hold = False
+        self.mono_elapsed = 0.0
+        self.mono_type_time = 0.0
+        self.mono_gap = 0.0
+
+    def say(self, text, secs=MONOLOGUE_TIME, who=None):
+        """内心独白 / NPC 说话：**整个世界静止**，直到玩家按回车（作者 2026-11-12 定）。
+
+        `who` 不传就是码序使（青名牌）；传 `story.OLD_MAN` 就是老者（暖米色名牌）。
+        2026-11-12 起老者也会在这套框里说话（被打断 / 被救起 / 写完），不用另开一套界面。
+
+        改这个是因为原来它会自己淡走、而世界照常跑 —— 玩家涂错一格，心声挡住半屏、
+        怪还在打他，看不清也躲不掉。现在停下来，玩家读完再走。
+
+        改这个是因为原来它会自己淡走、而世界照常跑 —— 玩家涂错一格，心声挡住半屏、
+        怪还在打他，看不清也躲不掉。现在停下来，玩家读完再走。
+
+        - 同一句在 `MONO_REPEAT_GAP` 秒内不重复弹：连续涂错只冻一次。
+        - `secs` 现在只用来算「打完这一句要多久」（字数 / MONO_CPS），
+          寿命不再由它决定 —— 由玩家按几次回车决定。
+        """
+        if text == self.mono_last and self.mono_gap > 0 and not self.mono_hold:
+            return                                   # 冷却期内，同一句不重复冻屏
         self.mono_text = text
-        self.mono_t = secs
         self.mono_total = secs
+        self.mono_elapsed = 0.0
+        self.mono_hold = True
+        self.mono_t = 0.0
+        self.mono_last = text
+        self.mono_who = who or story.SEQUENCER
+        chars = len(text.replace("\n", ""))
+        self.mono_type_time = max(0.30, chars / float(MONO_CPS))
+
+    def advance_monologue(self):
+        """回车：**第一下把字补完，第二下关闭继续**（和老者对话同一套手感）。
+
+        返回 True = 这次按键被心声吃掉了。
+        """
+        if not self.mono_hold:
+            return False
+        if self.mono_elapsed < self.mono_type_time:
+            self.mono_elapsed = self.mono_type_time  # 字还没打完 → 一次补完
+        else:
+            self.mono_hold = False
+            self.mono_t = MONO_FADE_OUT               # 开始淡出
+            self.mono_gap = MONO_REPEAT_GAP           # 同句冷却从「关闭」那一刻算
+        return True
 
     def show_hint(self, text, secs=HINT_TIME):
         """系统提示：底部一条，全大写。"""
@@ -472,12 +765,22 @@ class Game:
             if sc in (SC_ENTER, SC_KP_ENTER):
                 self.advance_dialog()
             return
+
+        # 心声暂停中：世界停着，只认回车（继续）和 R（重开一局）
+        if self.mono_hold:
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+                self.advance_monologue()
+            elif sc == SC_R:
+                self.start_act()
+            return
         if st == "INTRO":
             return
 
         # ---- 以下都是可动相位 ----
         if sc == SC_R:
             self.start_act()
+        elif sc == SC_U and self.has_sword and self.act >= 3 and st in PAINT_STATES:
+            self.swing_sword()
         # 地图摊开 = 双手捧着纸，涂改 / 擦除 / 照异象全都做不了（作者 2026-11-12 定的代价）。
         # 挡在这里是为了给一句话的反馈；真正拦住动作的是 update() 里那个 `not self.map_open`。
         elif self.map_open and st in PAINT_STATES and (sc in (SC_J, SC_K) or sc in SC_SHIFT):
@@ -486,6 +789,8 @@ class Game:
             self.cast_anomaly()
         elif sc == SC_M and self.has_map and st in MOVE_STATES:
             self.map_open = not self.map_open
+            self.fill_t = 0.0                            # 收纸 / 铺纸都算「手离笔」
+            self.fill_cell = None
             self.audio.play("ui")
         elif sc == SC_T and st == "FREE_ROAM":
             self.try_call()
@@ -510,6 +815,11 @@ class Game:
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt
+        # 心声暂停：整个世界静止（连贴图动画、怪物、碎屑都停），只走打字机。
+        # 必须放在最前面 —— 放后面的话怪还在这一帧里打过你（作者 2026-11-12）。
+        if self.mono_hold:
+            self.mono_elapsed += dt
+            return
         self.anim_t += dt                            # 贴图动画的时基：所有相位都在走
         # 卷轴铺开 / 收起（和相位无关，看地图时世界照常跑）
         want = 1.0 if self.map_open else 0.0
@@ -543,10 +853,15 @@ class Game:
         # 地图摊开时也不行 —— 两只手捧着纸，写字改字都没手（作者 2026-11-12）
         if st in PAINT_STATES and not self.map_open:
             if self.input.down(SC_J) and not self.shift_held():
-                self.paint_here()
+                self.hold_paint(dt)
             elif self.input.down(SC_K):
+                self.fill_t = 0.0
+                self.fill_cell = None
                 if self.board.start_erase(*self.player.cell):
                     self.audio.play("erase")            # 抹除：收回的一声上滑
+            else:
+                self.fill_t = 0.0
+                self.fill_cell = None
 
         self.board.update(dt)
 
@@ -566,10 +881,14 @@ class Game:
             self.update_reward(dt)
 
     def tick_timers(self, dt):
+        if self.mono_gap > 0:
+            self.mono_gap = max(0.0, self.mono_gap - dt)
         if self.hint_t > 0:
             self.hint_t = max(0.0, self.hint_t - dt)
         if self.mono_t > 0:
             self.mono_t = max(0.0, self.mono_t - dt)
+            if self.mono_t == 0.0 and not self.mono_hold:
+                self.mono_text = ""               # 淡出结束：连文字一起收掉
         if self.threat_t > 0:
             self.threat_t = max(0.0, self.threat_t - dt)
         if self.banner_t > 0:
@@ -777,9 +1096,16 @@ class Game:
             self.start_dialog(story.branch(False))
 
     # ---------- 对话 ----------
-    def start_dialog(self, lines, run_over=False):
+    def start_dialog(self, lines, run_over=False, tail=True, after=None):
+        """开一段对话。
+
+        `tail=True`  → 末尾自动接第一幕那句 `LEAVE_LINE`（他说完就走）
+        `tail=False` → 不接（第三幕他不走）
+        `after`      → 说完去哪：None = 第一幕那套（老者离开 + 自由探索）；"BATTLE" = 直接开打
+        """
         self.state = "DIALOG"
-        self.dlg_lines = list(lines) + [story.LEAVE_LINE]
+        self.dlg_lines = list(lines) + ([story.LEAVE_LINE] if tail else [])
+        self.dlg_after = after
         self.dlg_i = 0
         self.dlg_phase = "run" if run_over else "talk"
         self.dlg_run_t = 0.0
@@ -787,7 +1113,7 @@ class Game:
         self.dlg_t = 0.0
         self.dlg_show_t = 0.0          # 这一句已经显示了多久（dlg_t 会被「补完」改成 99，不能兼用）
         self.prompt_text = ""
-        self.mono_text, self.mono_t = "", 0.0      # 开口说话时，心里那句立刻收掉
+        self.reset_mono()                          # 开口说话时，心里那句立刻收掉（连暂停一起解）
 
     def update_dialog(self, dt):
         if self.dlg_phase == "run":
@@ -834,9 +1160,13 @@ class Game:
 
     def end_dialog(self):
         self.dlg_lines = None
+        self.prompt_text = ""
+        after, self.dlg_after = self.dlg_after, None
+        if after == "BATTLE":                        # 第三幕：话说完了，它们也到了
+            self.start_battle()
+            return
         self.state = "FREE_ROAM"
         self.oldman.leaving = True
-        self.prompt_text = ""
 
     def close_dialog(self):
         """Esc：收起对话框，回到自由探索（老者还在原地，可以再喊）。"""
@@ -852,8 +1182,11 @@ class Game:
         self.spawn_acc = 0.0
         self.purple_t = 0.0
         self.purple_spawned = 0
-        # 第一幕的「它们要来了」，第二幕换成紫怪那句（它才是这一幕的新东西）
-        self.show_hint(story.INCOMING if self.act < 2 else story.A2_PURPLE_IN, 2.8)
+        # 第一幕「它们要来了」/ 第二幕紫怪那句。第三幕不喊 —— 情绪已经由开场对话给足了。
+        if self.act < 2:
+            self.say(story.MONO_INCOMING, 2.8)
+        elif self.act < 3:
+            self.say(story.MONO_PURPLE_IN, 2.8)
 
     def update_gap(self, dt):
         self.gap_t += dt
@@ -862,13 +1195,18 @@ class Game:
 
     # ---------- 战斗 ----------
     def update_battle(self, dt):
+        if self.act >= 3:
+            self.update_scribe(dt)                   # 他一直在写（写完这一格就清屏了）
+            if self.state != "BATTLE":               # 刚写完最后一格 → 已经进 CLEAR
+                return
         for m in self.monsters[:]:
             res = m.update(dt, self.board, self.claims, self.player)
             if res != "alive":
                 if res == "hit":
                     self.health = max(0, self.health - HIT_DAMAGE)
+                    self.break_pen()                    # 被咬 → 手里的这一笔断了
                     self.audio.play("hurt")             # 被咬：下坠的一声
-                    self.show_hint("HIT  -%d%%" % HIT_DAMAGE, 1.4)
+                    self.say(story.MONO_HIT, 1.6)       # 掉血改用心声嘀咕（血量条 HUD 已经反映）
                 elif res == "eat":
                     self.audio.play("red_die")          # 吃掉了黑域，然后自毁
                 self.monsters.remove(m)
@@ -877,7 +1215,9 @@ class Game:
         if self.act >= 2:
             self.purple_t += dt
             # 首只按 PURPLE_FIRST_DELAY（作者定 8 秒），之后按 PURPLE_SPAWN_PER_MIN
-            due = PURPLE_FIRST_DELAY if self.purple_spawned == 0 else 60.0 / max(PURPLE_SPAWN_PER_MIN, 1e-6)
+            # 第三幕慢下来（作者 2026-11-12）：格式信息躺在第 10 行/列上，一次清行能抹掉 16 格
+            rate = PURPLE_SPAWN_PER_MIN_ACT3 if self.act >= 3 else PURPLE_SPAWN_PER_MIN
+            due = PURPLE_FIRST_DELAY if self.purple_spawned == 0 else 60.0 / max(rate, 1e-6)
             if self.purple_t >= due:
                 self.purple_t = 0.0
                 self.purple_spawned += 1
@@ -885,10 +1225,23 @@ class Game:
             for pu in self.purples[:]:
                 res2 = pu.update(dt, self.board, self.player)
                 if res2 != "alive":
-                    if isinstance(res2, tuple) and res2[0] == "wipe":
-                        self.on_line_wiped(res2[1], res2[2], res2[3])
+                    if isinstance(res2, tuple):
+                        if res2[0] == "wipe":
+                            self.on_line_wiped(res2[1], res2[2], res2[3])
+                        elif res2[0] == "hit":          # 坛内没黑域 → 它扑人（P10）
+                            self.health = max(0, self.health - PURPLE_HIT_DAMAGE)
+                            self.break_pen()            # 被撞 → 这一笔也断
+                            self.audio.play("hurt")
+                            self.say(story.MONO_PURPLE_HIT, 1.8)
                     self.purples.remove(pu)
                     self.claims.clear()          # 紫怪不占 claims，但清一下更稳
+
+        # ---- 第三幕：黄怪（它们冲着老者来）+ 救他 ----
+        if self.act >= 3:
+            self.sword_cd = max(0.0, self.sword_cd - dt)
+            self.swing_t = max(0.0, self.swing_t - dt)
+            self.update_yellows(dt)
+            self.update_revive(dt)
 
         self.elapsed += dt
         step = int(self.elapsed // RED_SPAWN_ACCEL_PERIOD)
@@ -908,6 +1261,48 @@ class Game:
         if self.board.is_complete():
             self.enter_clear()
 
+    def needs_hold(self, r, c):
+        """这一格要不要「按住」才写得动？—— 只有第三幕的**格式信息格**要。
+
+        作者 2026-11-13：格式信息是这张码的读法本身，写起来比普通格慢得多；
+        所以玩家补它也得压住 J 满 `FORMAT_HOLD_TIME`，不能像普通格那样一点就成。
+        """
+        return (self.act >= 3 and (r, c) in self.format_cells
+                and self.board.state[r][c] == WHITE)
+
+    def break_pen(self):
+        """被怪咬一口 → 这一笔断了：正在**制造黑域**的那格进度作废，得重新按住 J。
+
+        和老者被咬停笔（`OLDMAN_STAGGER`）是同一个道理 —— 挨打不该只掉血，
+        否则「守」这件事就只对老头成立，对玩家自己没成本。
+        """
+        self.fill_t = 0.0
+        self.fill_cell = None
+
+    def hold_paint(self, dt):
+        """按住 J 写字：普通格立即落笔，格式格要压满 `FORMAT_HOLD_TIME` 秒。
+
+        进度**绑在这一格上**（`fill_cell`）：松手 / 走开 / 换格都从 0 重数。
+        不绑的话会串味 —— 在 A 上按半秒、挪到 B 再按 0.3 秒就能把 B 写掉（实测踩过）。
+        """
+        r, c = self.player.cell
+        if not self.needs_hold(r, c):
+            self.fill_t = 0.0
+            self.fill_cell = None
+            self.paint_here()                           # 普通格：和以前一样，一按就成
+            return
+        if self.fill_cell != (r, c):                    # 换了一格：这一笔从头数
+            self.fill_cell = (r, c)
+            self.fill_t = 0.0
+        if not self.hold_said:                          # 第一次碰到格式格：教一下「按住」
+            self.hold_said = True
+            self.show_hint(story.HINT_FORMAT_HOLD, 3.0)
+        self.fill_t = min(FORMAT_HOLD_TIME, self.fill_t + dt)
+        if self.fill_t >= FORMAT_HOLD_TIME:
+            self.fill_t = 0.0
+            self.fill_cell = None
+            self.paint_here()
+
     def paint_here(self):
         r, c = self.player.cell
         res = self.board.paint(r, c)
@@ -918,16 +1313,18 @@ class Game:
             self.audio.play("stain")                    # 落错：失谐的一声
             # 两种脏格，提示要分开：「看都没看清」和「涂错地方」不是一回事
             blind = (r, c) in self.board.must and self.board.reveal[r][c] <= 0
-            if blind:
-                self.show_hint(story.PAINT_BLIND, 1.8)
-            elif not self.stain_warned:
+            if not self.stain_warned:                  # 第一次：教一下 K（按键教学，保留系统提示）
                 self.stain_warned = True
-                self.show_hint(story.STAIN_WARNING, 4.0)
+                self.show_hint(story.HINT_CLEAR, 3.0)
+            if blind:
+                self.say(story.MONO_BLIND, 1.8)        # 「还没看」→ 嘀咕
+            else:
+                self.say(story.MONO_STAIN, 1.8)        # 涂错成脏格 → 嘀咕「好像失败了」
             if self.board.stains > STAIN_LIMIT:
                 # 额度用完之后的每一格脏格：一次外伤，不是判负
                 self.health = max(0, self.health - STAIN_DAMAGE)
                 self.audio.play("hurt")
-                self.show_hint("STAIN  -%d%%" % STAIN_DAMAGE, 1.4)
+                self.say(story.MONO_STAIN_HURT, 2.0)   # 超标扣血 → 嘀咕
         elif res == "plain":
             self.audio.play("paint")                    # 平地诱饵也算「写下一格」
 
@@ -935,6 +1332,135 @@ class Game:
         """地图摊开时想干活：先卷起来。给一行提示 + 一声闷响，别让玩家以为按键坏了。"""
         self.show_hint(story.MAP_IN_HANDS, 1.6)
         self.audio.play("dull")
+
+    # ---------- 第三幕：黄怪 / 倒下 / 救援 / 挥剑 ----------
+    def update_yellows(self, dt):
+        """黄怪从生成环进场，一路冲老者；被打一次就转火玩家（`YellowOne.update` 里判）。"""
+        self.yellow_t += dt
+        due = YELLOW_FIRST_DELAY if self.yellow_spawned == 0 else 60.0 / max(YELLOW_SPAWN_PER_MIN, 1e-6)
+        if self.yellow_t >= due and len(self.yellows) < YELLOW_MAX:
+            self.yellow_t = 0.0
+            self.yellow_spawned += 1
+            self.yellows.append(YellowOne(self.ring_spawn_pos()))
+            self.audio.play("purple")                # 低音：和紫怪同一种「东西进场了」
+            if self.yellow_spawned == 1:
+                self.say(story.A3_Y1, 2.8)
+
+        for y in self.yellows[:]:
+            res = y.update(dt, self.oldman, self.player)
+            if res == "bite_oldman":
+                self.audio.play("hurt")
+                if self.oldman is not None and self.oldman.bitten(YELLOW_BITE_DAMAGE):
+                    self.on_oldman_down()
+                elif not self.stagger_said:          # 第一次被咬断：他自己嘟囔一句（只一次，不然太吵）
+                    self.stagger_said = True
+                    self.say(story.A3_STAGGER, 2.4, who=story.OLD_MAN)
+            elif res == "bite_player":
+                self.health = max(0, self.health - YELLOW_PLAYER_DAMAGE)
+                self.break_pen()                     # 被黄怪咬：正在制造的黑域作废（作者 2026-11-13）
+                self.audio.play("hurt")
+                self.say(story.MONO_HIT, 1.4)
+
+    def on_oldman_down(self):
+        """老者倒下：停笔、呼救、等玩家来救（作者定：站到他旁边按住 H 四秒）。"""
+        self.revive_t = 0.0
+        self.scribe_writing = False                  # 笔停在半空
+        self.audio.play("wipe")
+        self.show_hint(story.HINT_HELP_OLDMAN, 999.0)
+        if not self.down_said:
+            self.down_said = True
+            self.say(story.A3_DOWN, 3.0)
+
+    def update_revive(self, dt):
+        """按住 H 救人。松手会退一点（不是一键归零），但要满 4 秒他才起得来。"""
+        om = self.oldman
+        if om is None or not om.down:
+            self.revive_t = 0.0
+            return
+        near = math.hypot(self.player.pos.x - om.pos.x, self.player.pos.y - om.pos.y) <= OLDMAN_REVIVE_RANGE
+        if not (near and self.input.down(SC_H)):
+            self.revive_t = max(0.0, self.revive_t - dt * 2.0)
+            return
+        # ⚠️ 这里**不能说台词**：心声会冻住世界，一说话 `revive_t` 就不涨了，
+        # 玩家按着 H 反而救不起来（2026-11-12 踩过）。救起来之后老者的回应在下面。
+        self.revive_t += dt
+        if self.revive_t >= OLDMAN_REVIVE_TIME:
+            self.revive_t = 0.0
+            om.revive(OLDMAN_REVIVE_HP)
+            self.audio.play("clear")
+            self.hint_text, self.hint_t = "", 0.0
+            self.say(story.A3_UP_MAN, 2.4, who=story.OLD_MAN)   # 他自己回一句
+            self.blast_yellows(om)
+
+    def blast_yellows(self, om, radius=OLDMAN_BLAST_RADIUS):
+        """他站起来的那一刻，把身边的黄怪震开。
+
+        为什么要这一下（2026-11-12 实测）：没有它就是个死循环 ——
+        他倒 → 玩家救起（50 血）→ 贴着他的黄怪立刻又咬 → 5 口又倒。2 分钟里倒下 40 次，
+        格式信息一个字都写不出来。这一下把「救他」变成「换来一段清净」，
+        而不是「白救」。也接得上第一幕：他当年是用光把红怪赶走的。
+        """
+        if om is None:
+            return
+        gone = 0
+        keep = []
+        for y in self.yellows:
+            if math.hypot(y.pos.x - om.pos.x, y.pos.y - om.pos.y) <= radius:
+                gone += 1
+            else:
+                keep.append(y)
+        if gone:
+            self.yellows = keep
+            self.audio.play("red_die")
+
+    def swing_sword(self):
+        """挥剑：砍最近的**一只怪**（黄怪 / 红怪 / 紫怪都算）。
+
+        伤害（作者 2026-11-12 定）：
+          · **黄怪要两剑**（`YELLOW_HP=2`），挨了剑必然转火玩家
+          · **红怪 / 紫怪一剑就死** —— 它们没有 hp，是「抢格子」的单位，不是「打人」的单位
+        挥空也有动作 + 声音，CD 照旧。
+        """
+        if self.sword_cd > 0:
+            return
+        self.sword_cd = SWORD_CD
+        self.swing_t = SWORD_SWING_TIME
+        self.audio.play("sword")
+
+        px, py = self.player.pos.x, self.player.pos.y
+
+        def near(pos, cur):
+            d = math.hypot(pos.x - px, pos.y - py)
+            return d if d <= SWORD_RANGE and (cur is None or d < cur) else None
+
+        best_kind, best_obj, best_d = None, None, None
+        for y in self.yellows:
+            d = near(y.pos, best_d)
+            if d is not None:
+                best_kind, best_obj, best_d = "yellow", y, d
+        for m in self.monsters:
+            d = near(m.pos, best_d)
+            if d is not None:
+                best_kind, best_obj, best_d = "red", m, d
+        for pu in self.purples:
+            d = near(pu.pos, best_d)
+            if d is not None:
+                best_kind, best_obj, best_d = "purple", pu, d
+
+        if best_obj is None:
+            return                                       # 挥空
+
+        if best_kind == "yellow":
+            if best_obj.hurt(1):
+                self.yellows.remove(best_obj)
+                self.audio.play("red_die")
+            return
+        # 红怪 / 紫怪：一剑一个
+        if best_kind == "red":
+            self.monsters.remove(best_obj)
+        else:
+            self.purples.remove(best_obj)
+        self.audio.play("red_die")
 
     def spawn_purple(self):
         """紫怪从生成环上进场。"""
@@ -946,11 +1472,13 @@ class Game:
             self.audio.play("purple")
 
     def on_line_wiped(self, axis, idx, cleared):
-        """紫怪清掉一整条：报给玩家 + 出声。idx 是主网格 0~24，显示成 1~25。"""
-        label = (story.A2_WIPE_ROW if axis == "row" else story.A2_WIPE_COL) % (idx + 1)
-        self.show_hint(label, 1.5)
+        """紫怪清掉一整条：只出声，不再弹提示。
+
+        心声**只在第一次**被清时说（`A2_M4`，作者 2026-11-12：每次都说会影响体验）。
+        之后靠画面（整条变白）+ "wipe" 音效就够了，玩家自己看得见。
+        """
         self.audio.play("wipe")
-        if not self.wipe_warned:                     # 第一次被清：一句独白
+        if not self.wipe_warned:                     # 一生只一次：正式独白
             self.wipe_warned = True
             self.say(story.A2_M4)
 
@@ -973,6 +1501,8 @@ class Game:
 
     # ---------- 清屏 ----------
     def enter_clear(self):
+        self.scribe_cells = []                       # 写完了，他停手（剩下的交给清屏波）
+        self.scribe_target = None
         self.state = "CLEAR"
         self.clear_phase = "glow"
         self.clear_t = 0.0
@@ -985,6 +1515,7 @@ class Game:
             m.mode = "hunt"
             m.target = None
         self.purples.clear()                        # 仪式的光把它们一起收掉
+        self.yellows.clear()
         self.claims.clear()
 
     def update_clear(self, dt):
@@ -1056,13 +1587,11 @@ class Game:
         self.prompt_text = ""
 
     def spawn_items(self):
-        """两个随机「已复原的黑格」上浮出 BAG 和 MAP。"""
+        """道具浮出来：第一幕 BAG + MAP，第二幕 SWORD（第三幕之后还没定）。"""
+        kinds = {1: ("bag", "map"), 2: ("sword",)}.get(self.act, ())
         cells = sorted(c for c in self.must if self.board.state[c[0]][c[1]] == 1)
         self.rng.shuffle(cells)
-        picks = cells[:2]
-        self.items = []
-        for kind, cell in zip(("bag", "map"), picks):
-            self.items.append(Item(kind, cell))
+        self.items = [Item(kind, cell) for kind, cell in zip(kinds, cells[:len(kinds)])]
 
     def update_reward(self, dt):
         for it in self.items:
@@ -1071,8 +1600,8 @@ class Game:
         if self.reward_phase == "wait":
             self.reward_t += dt
             if self.reward_t >= REWARD_DELAY:
-                if self.act >= 2:
-                    # 背包和地图第一幕就拿到了，第二幕不再浮出来一次：直接收尾
+                if self.act >= 3:
+                    # 第三幕之后暂时不发道具：直接收尾
                     self.reward_phase = "spread"
                     self.reward_t = 0.0
                     self.spread_r = 0.0
@@ -1118,6 +1647,9 @@ class Game:
         if it.kind == "bag":
             self.has_bag = True
             self.show_hint(story.ITEM_BAG, 5.0)
+        elif it.kind == "sword":
+            self.has_sword = True
+            self.show_hint(story.ITEM_SWORD, 5.0)
         else:
             self.has_map = True
             self.show_hint(story.ITEM_MAP, 5.0)

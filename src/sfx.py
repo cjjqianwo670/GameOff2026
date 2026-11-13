@@ -33,7 +33,7 @@ _SAMPLE_WIDTH = 2
 
 # 全部音效名字（`Game._Audio` 按这份名单预生成，`_verify_act1_sfx.py` 也用它）
 SOUNDS = ("paint", "erase", "stain", "anomaly", "hurt", "red_die",
-          "pickup", "clear", "ui", "staff", "purple", "wipe", "dull")
+          "pickup", "clear", "ui", "staff", "purple", "wipe", "dull", "sword")
 
 # 各音效的基准音量（0~1），低于 1 是为了叠起来不炸。
 _GAIN = {
@@ -50,6 +50,7 @@ _GAIN = {
     "purple": 0.34,
     "wipe": 0.46,
     "dull": 0.30,
+    "sword": 0.34,
 }
 
 
@@ -229,6 +230,13 @@ def build(name):
         body = _tone(m, 260, 58, "square", _envelope(m, 0.05, 0.55))
         wash = _tone(m, 700, 220, "noise", _envelope(m, 0.15, 0.5))
         return _to_bytes(_render([body, [v * 0.55 for v in wash]], _GAIN[name]), name)
+
+    if name == "sword":
+        # 挥剑：一道极短的高频"唰" + 一点金属泛音。不能像打击，得像**空挥**（没砍中也有声音）
+        m = n(0.16)
+        air = _tone(m, 1900, 700, "noise", _envelope(m, 0.02, 0.75))
+        ring = _tone(m, 2400, 2100, "tri", _envelope(m, 0.01, 0.6))
+        return _to_bytes(_render([air, [v * 0.45 for v in ring]], _GAIN[name]), name)
 
     if name == "dull":
         # 干活被挡（手占着）：一记闷响，短、低、没有上扬 —— 不是错，是「做不了」

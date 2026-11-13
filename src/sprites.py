@@ -19,7 +19,7 @@ from src.config import (
     C_CELL_BLACK, C_ITEM, C_ITEM_INK, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK, C_ITEM_MARK,
     C_ITEM_PAPER, C_ITEM_PAPER_DARK, C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK,
     C_MONSTER_RING, C_OLDMAN, C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OLDMAN_SKIN, C_OUTLINE,
-    C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP, C_PLAYER_LIGHT, C_PROP_DEAD, C_SASH, C_STAFF
+    C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP, C_PLAYER_LIGHT, C_PROP_DEAD, C_PROP_TOOL, C_SASH, C_STAFF
 )
 
 # 影子按尺寸缓存：每帧新建 Surface 会掉帧
@@ -57,7 +57,7 @@ def _blob(cx, cy, r, n, t, phase, wob):
 # ==== 码序使（玩家）====
 
 def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=False,
-                   holding_map=False):
+                   holding_map=False, has_sword=False, swing=0.0):
     """读码的人：深色斗篷 + 一条发光面罩 + 头上一块闪烁的光标。
 
     他不是「一个方块」，而是「正在被输入的那一行」—— 光标才是身份标识。
@@ -65,6 +65,9 @@ def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=
 
     `holding_map`：按 M 看地图时的姿态 —— 两只手往胸前收，捧着一张摊开的纸。
     这不是纯装饰：手占着了就不能写（`Game` 在地图摊开时封掉 J / K / Shift）。
+
+    `has_sword` / `swing`：第三幕的剑。`swing` 是**挥砍剩余比例**（1 → 0，0 = 没在挥），
+    刃会从一侧扫到另一侧 —— 只看一道弧线是不够的，人要跟着动。
     """
     # 呼吸（站着轻轻浮）/ 走路（上下颠得更快）
     bob = math.sin(t * 9.5) * 0.6 if moving else math.sin(t * 2.1) * 0.8
@@ -112,6 +115,10 @@ def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=
     hood = [(px - 8, py - 9), (px - 5, py - 23), (px + 5, py - 23), (px + 8, py - 9)]
     pygame.draw.polygon(s, C_PLAYER_DEEP, hood)
     pygame.draw.polygon(s, C_OUTLINE, hood, 1)
+
+    # 第三幕的剑：平时斜垂在身侧，挥砍时整条刃扫过去
+    if has_sword and not holding_map:
+        _draw_sword_arm(s, px, py, facing, swing)
 
     # 胸口核心：一块会呼吸的方块（那是他的「码」）
     # 背对时看不见正面 —— 否则它会从背包上透出来；捧着地图时被纸挡住，也不用画
@@ -197,6 +204,34 @@ def _draw_held_map(s, px, py, facing):
     for hx in (r.left - 2, r.right):                 # 双手：袖口压在纸的两个下角
         s.fill(C_OUTLINE, pygame.Rect(hx, r.bottom - 4, 4, 4))
         s.fill(C_PLAYER_LIGHT, pygame.Rect(hx + 1, r.bottom - 3, 2, 2))
+
+
+def _draw_sword_arm(s, px, py, facing, swing=0.0):
+    """手里的剑。`swing` = 挥砍剩余比例（0 = 没在挥）。
+
+    只有 28px 一格，靠**一条亮刃 + 一道金色护手**认；挥砍时刃从 -80° 扫到 +80°，
+    外加一道更亮的高光段，读起来才像"抡过去"，而不是剑突然变长了。
+    """
+    hand = (px + 6, py - 1) if facing != 2 else (px - 6, py - 1)
+    base = {0: -90, 1: 90, 2: 180, 3: 0}[facing]
+    if swing > 0:
+        ang = base - 80 + 160 * (1.0 - swing)        # 从一侧扫到另一侧
+        blade = (252, 253, 255)
+    else:
+        ang = 145 if facing == 2 else 35             # 平时：斜垂在握剑那只手的一侧
+        blade = (198, 205, 214)
+    a = math.radians(ang)
+    dx, dy = math.cos(a), math.sin(a)
+    tip = (hand[0] + dx * 17, hand[1] + dy * 17)
+    mid = (hand[0] + dx * 9, hand[1] + dy * 9)
+    # 护手：垂直于刃的一小段金条
+    gx, gy = -dy * 3.2, dx * 3.2
+    pygame.draw.line(s, C_OUTLINE, (hand[0] - gx, hand[1] - gy), (hand[0] + gx, hand[1] + gy), 3)
+    pygame.draw.line(s, C_ITEM, (hand[0] - gx, hand[1] - gy), (hand[0] + gx, hand[1] + gy), 1)
+    # 刃：先描边再压亮面，暗底上才站得住
+    pygame.draw.line(s, C_OUTLINE, hand, tip, 4)
+    pygame.draw.line(s, blade, mid, tip, 2)
+    pygame.draw.circle(s, C_ITEM, (int(hand[0]), int(hand[1])), 2)
 
 
 def _draw_worn_bag(s, px, py, facing):
@@ -324,7 +359,7 @@ def draw_oldman(s, om, t=0.0):
 # ==== 红怪 ====
 
 def draw_red(s, cx, cy, radius=9, t=0.0, phase=0.0, hunting=False, look=None, glow=None,
-             base=None, dark=None):
+             base=None, dark=None, ring=None):
     """红怪：一块会呼吸的烂肉 + 一只盯着目标的眼 + 三根触须。
 
     hunting（场上没有黑域、它转来追你）时会多一圈红环 —— 不看面板也知道它盯上你了。
@@ -370,7 +405,27 @@ def draw_red(s, cx, cy, radius=9, t=0.0, phase=0.0, hunting=False, look=None, gl
         box = pygame.Rect(px - r, py - r, r * 2, r * 2)
         for i in range(4):
             a0 = math.radians(45 + i * 90 - 22)
-            pygame.draw.arc(s, C_MONSTER_RING, box, a0, a0 + math.radians(44), 2)
+            pygame.draw.arc(s, ring or C_MONSTER_RING, box, a0, a0 + math.radians(44), 2)
+
+
+def draw_oldman_down(s, om, t=0.0):
+    """倒下的老者：侧躺在地上的一团袍子 + 掉在手边的拐杖。
+
+    只有 28px 一格，画不出「倒下的姿势」，只能靠**横向的一坨 + 头在一端** + 掉落的拐杖认出来。
+    """
+    px, py = int(round(om.pos.x)), int(round(om.pos.y))
+    shadow(s, px, py + 9, 38, 9, 88)
+
+    body = pygame.Rect(px - 16, py - 5, 32, 13)
+    pygame.draw.ellipse(s, C_OLDMAN, body)
+    pygame.draw.ellipse(s, C_OLDMAN_DARK, body.inflate(-10, -5))
+    pygame.draw.ellipse(s, C_CELL_BLACK, body, 1)
+    # 头在一端（白胡子那撮）
+    pygame.draw.circle(s, C_OLDMAN_LIGHT, (px - 15, py + 1), 4)
+    pygame.draw.circle(s, C_CELL_BLACK, (px - 15, py + 1), 4, 1)
+    # 拐杖脱手，倒在旁边
+    pygame.draw.line(s, C_OUTLINE, (px + 9, py + 9), (px + 24, py + 3), 3)
+    pygame.draw.line(s, C_PROP_TOOL, (px + 9, py + 9), (px + 24, py + 3), 1)
 
 
 def draw_dead_red(s, cx, cy):
@@ -420,8 +475,39 @@ def draw_item(s, kind, cx, cy, t=0.0, rise=0, glow=True):
         _item_glow(s, px, py + 9)
     if kind == "map":
         _draw_map_item(s, px, py, t, glow)
+    elif kind == "sword":
+        _draw_sword_item(s, px, py, t, glow)
     else:
         _draw_bag_item(s, px, py, t, glow)
+
+
+def _draw_sword_item(s, px, py, t, ground=True):
+    """剑：直刃 + 一侧开锋 + 护手 + 缠皮柄 + 金首。
+
+    只有 22px 宽的地方，画不出「造型」，只能靠**一条亮刃 + 一道暗脊**认出来。
+    刃尖略微上抬（`-2`），不然和一根铁条没区别。
+    """
+    py = int(py + math.sin(t * 2.2) * 0.8)
+    if ground:
+        shadow(s, px, py + 13, 20, 6, 72)
+
+    tip = py - 15
+    # 刃：暗底一层（描边）+ 亮面一层 + 高光一条
+    pygame.draw.polygon(s, C_OUTLINE, [(px - 3, py + 1), (px - 3, tip + 3),
+                                       (px, tip - 2), (px + 3, tip + 3), (px + 3, py + 1)])
+    pygame.draw.polygon(s, (226, 230, 236), [(px - 2, py), (px - 2, tip + 4),
+                                             (px, tip), (px + 2, tip + 4), (px + 2, py)])
+    s.fill((252, 253, 255), pygame.Rect(px - 1, tip + 5, 1, py - tip - 7))    # 高光
+    s.fill((150, 158, 170), pygame.Rect(px + 1, tip + 5, 1, py - tip - 7))    # 暗脊
+    # 护手：一条横档，两端各一颗金钉
+    s.fill(C_OUTLINE, pygame.Rect(px - 7, py + 1, 14, 4))
+    s.fill(C_ITEM, pygame.Rect(px - 6, py + 2, 12, 2))
+    s.fill(C_ITEM, pygame.Rect(px - 7, py + 2, 2, 2))
+    s.fill(C_ITEM, pygame.Rect(px + 5, py + 2, 2, 2))
+    # 柄 + 金首
+    s.fill(C_OUTLINE, pygame.Rect(px - 2, py + 5, 4, 8))
+    s.fill(C_ITEM_LEATHER_DARK, pygame.Rect(px - 1, py + 5, 2, 8))
+    s.fill(C_ITEM, pygame.Rect(px - 2, py + 13, 4, 2))
 
 
 def _draw_bag_item(s, px, py, t, ground=True):

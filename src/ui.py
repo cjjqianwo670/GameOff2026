@@ -10,6 +10,7 @@
 """
 
 import math
+import random
 from typing import TYPE_CHECKING
 
 import pygame
@@ -27,12 +28,13 @@ from src.config import (
     C_TEXT, C_WARN,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
-    ERASE_CAST, ERASING, GRID_N,
+    ERASE_CAST, ERASING, FORMAT_HOLD_TIME, GRID_N,
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
     INTRO_TOTAL, MAP_CELL, MAP_SCROLL_H, MAP_SCROLL_W, MAP_Y, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
     MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H,
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
-    PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN, SPAWN_PX, STAIN_LIMIT, TARGET_N,
+    OLDMAN_HP, OLDMAN_REVIVE_TIME, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN,
+    SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N,
     TARGET_OFFSET, THREAT_Y, VALID, WINDOW_H, WINDOW_W
 )
 from src.grid import cell_center, cell_to_rect, target_rect
@@ -42,22 +44,202 @@ PANEL_INNER = PANEL_W - PANEL_PAD * 2
 
 
 # ==== 开始页 ====
+#
+# 开始页不放任何「玩法解释」，只做三件事：
+#   1. 背景是一张**正在被写出来的真码**（和圣坛同一个生成器），一眼看出这游戏在干什么；
+#   2. 标题有一道扫描带慢慢扫过、偶尔错位一帧，像一行被读坏的数据；
+#   3. 按键说明做成键帽（[J] DARK 而不是「[J] 制造黑域」一大串字）。
+# 所有文字都用已有文案，没有新台词。
+
+TITLE_CELL = 26                                  # 背景水印每格像素（21×26 = 546）
+TITLE_CODE_Y = 428                               # 水印中心（下缘 701，正好让开键帽那一行）
+TITLE_GROW = 1.7                                 # 「写出来」用多久（秒）
+C_RULE = (86, 66, 48)                            # 标题下那条细线（比面板线亮一档，才看得见）
+C_CODE_FAR = (49, 35, 25)                        # 水印墨色：只比底色亮一点，是纹理不是图案
+C_CODE_NEAR = (72, 52, 36)                       # 扫描带经过时被点亮的墨色
+
+_TITLE_CACHE = {}
+
+
+def _title_code():
+    """开始页背景那张码：**每次启动现抽一张**真二维码，纯装饰，和这一局的目标码无关。
+
+    用真码而不是随机点阵，是因为三个定位图案一眼就能认出「这是个码」，
+    和游戏里那座圣坛是同一个东西。
+
+    ⚠️ 两个「随机」不是一回事，别把它们接上线：
+      · 这张 → `random.Random()`（**不带种子**，每次启动不同，进程内只抽一次并缓存）；
+      · 圣坛那张 → `Game.start_act()` 里用 `Game.rng` 现生成，每局不同。
+    它们互相独立（作者 2026-11-12 确认：封面那张不该是你要复原的那张）。
+    进程内缓存是必须的 —— 每帧现抽的话水印会一直在闪。
+    """
+    mat = _TITLE_CACHE.get("code")
+    if mat is None:
+        from src import qr                        # 延迟导入：只有开始页需要
+        mat, _ = qr.generate_target(random.Random())   # 不传种子 = 每次启动新的一张
+        _TITLE_CACHE["code"] = mat
+    return mat
+
+
+def _title_scanlines():
+    """CRT 细横纹：一次性画好再整张贴，逐行现画会掉帧。"""
+    surf = _TITLE_CACHE.get("lines")
+    if surf is None:
+        surf = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        for y in range(0, WINDOW_H, 3):
+            pygame.draw.line(surf, (0, 0, 0, 26), (0, y), (WINDOW_W, y))
+        _TITLE_CACHE["lines"] = surf
+    return surf
+
+
+def _draw_title_code(g: "Game", s, t):
+    """背景水印：从左上往右下逐格「写」出来，写完之后有一道扫描带反复扫过。"""
+    mat = _title_code()
+    full = TARGET_N * TITLE_CELL
+    x0 = (WINDOW_W - full) // 2
+    y0 = TITLE_CODE_Y - full // 2
+    grow = min(1.0, t / TITLE_GROW)              # 0 → 1：写出来的进度
+    band = (t * 0.16) % 1.0 * full               # 扫描带在纸上自上而下走
+    for r in range(TARGET_N):
+        row = mat[r]
+        y = y0 + r * TITLE_CELL
+        near_band = abs(y - y0 - band) < TITLE_CELL * 1.4
+        delay = r / (TARGET_N - 1)               # 行延迟：一行一行往下写
+        for c in range(TARGET_N):
+            if not row[c]:
+                continue
+            if grow * 1.12 < delay + c * 0.004:  # 同一行里从左往右再拖一点
+                continue
+            k = 0.5 + 0.5 * math.sin(t * 1.2 - (r + c) * 0.28)   # 呼吸
+            col = tuple(int(C_CODE_FAR[i] + (C_CODE_NEAR[i] - C_CODE_FAR[i]) * (0.35 * k)) for i in range(3))
+            if near_band:
+                col = tuple(min(255, v + 16) for v in col)
+            s.fill(col, pygame.Rect(x0 + c * TITLE_CELL, y, TITLE_CELL, TITLE_CELL))
+
+
+def _title_word(g: "Game"):
+    """标题的三张图（主字 / 青色残影 / 暗影），只渲染一次。
+
+    「DATA」白、「SHIFT」青：一个词两种色，从标题就把「数据」和「移位」分开，
+    也比整行纯白更像这个世界的字。
+    """
+    imgs = _TITLE_CACHE.get("word")
+    if imgs is None:
+        parts = (("DATA", C_TEXT), ("SHIFT", C_ACCENT))
+        gap = g.f_big.size(" ")[0]
+        widths = [g.f_big.size(w)[0] for w, _ in parts]
+        size = (sum(widths) + gap * (len(parts) - 1), g.f_big.get_height())
+        main = pygame.Surface(size, pygame.SRCALPHA)
+        ghost = pygame.Surface(size, pygame.SRCALPHA)
+        shadow = pygame.Surface(size, pygame.SRCALPHA)
+        x = 0
+        for (word, color), w in zip(parts, widths):
+            main.blit(g.f_big.render(word, True, color), (x, 0))
+            ghost.blit(g.f_big.render(word, True, C_ACCENT), (x, 0))
+            shadow.blit(g.f_big.render(word, True, (8, 6, 5)), (x, 0))
+            x += w + gap
+        imgs = (main, ghost, shadow)
+        _TITLE_CACHE["word"] = imgs
+    return imgs
+
+
+def _draw_title_word(g: "Game", s, t):
+    """标题：暗影托底 → 两道错位青色残影（每 2.6 秒抖一下）→ 主字 → 一条扫描线扫过。"""
+    main, ghost, shadow = _title_word(g)
+    rect = main.get_rect(center=(WINDOW_W // 2, 326))
+
+    shadow.set_alpha(170)                          # 把白字从码纹里「抬」起来
+    s.blit(shadow, rect.move(0, 3))
+
+    phase = t % 2.6
+    jitter = int(6 * math.sin(phase * 62)) if phase < 0.13 else 0   # 偶尔错位一帧
+    for dx, alpha in ((-5 - jitter, 95), (5 + jitter, 65)):
+        ghost.set_alpha(alpha)
+        s.blit(ghost, rect.move(dx, 0))
+    s.blit(main, rect)
+
+    # 扫描线：一条亮线从头往下走，走出标题就从头再来
+    span = rect.height + 30
+    sy = rect.top - 15 + int((t * 120) % span)
+    line = pygame.Surface((rect.width + 60, 3), pygame.SRCALPHA)
+    line.fill((*C_ACCENT, 70))
+    s.blit(line, (rect.left - 30, sy))
+
+
+def _draw_title_rule(s):
+    """标题下面那条细线：中间一颗小菱形，两边各一段。"""
+    cx, y = WINDOW_W // 2, 398
+    for left, right in ((cx - 220, cx - 16), (cx + 16, cx + 220)):
+        pygame.draw.line(s, C_RULE, (left, y), (right, y))
+        pygame.draw.line(s, C_RULE, (left, y + 1), (right, y + 1))
+    pygame.draw.polygon(s, C_ACCENT, [(cx, y - 5), (cx + 5, y), (cx, y + 5), (cx - 5, y)])
+
+
+def _keycap(s, g: "Game", key, x, cy, color=C_ACCENT):
+    """一颗键帽：暗底 + 一像素边 + 底沿一道亮边（看着有厚度）。返回右边缘 x。"""
+    img = g.f_small.render(key, True, color)
+    box = pygame.Rect(x, cy - 14, img.get_width() + 18, 28)
+    s.fill(C_CELL_BLACK, box)
+    pygame.draw.rect(s, C_PANEL_LINE, box, 1)
+    pygame.draw.line(s, C_CODE_NEAR, (box.left + 1, box.bottom - 1), (box.right - 2, box.bottom - 1))
+    s.blit(img, img.get_rect(center=box.center))
+    return box.right
+
+
+def _draw_title_enter(g: "Game", s, t):
+    """进场提示：一个呼吸的框（不硬闪），右边一颗跟着闪的光标。"""
+    label = g.f_main.render("PRESS ENTER", True, C_TEXT)
+    box = pygame.Rect(0, 0, label.get_width() + 56, 46)
+    box.center = (WINDOW_W // 2, 596)
+    k = 0.5 + 0.5 * math.sin(t * 2.4)                    # 0 → 1 呼吸
+    s.fill(C_CELL_BLACK, box)
+    pygame.draw.rect(s, C_ACCENT if k > 0.45 else C_PANEL_LINE, box, 1)
+    s.blit(label, label.get_rect(center=(box.centerx - 7, box.centery)))
+    if int(t * 2.2) % 2 == 0:                            # 闪烁光标
+        s.fill(C_ACCENT, pygame.Rect(box.right - 27, box.centery - 9, 3, 18))
+
+
+def _draw_title_controls(g: "Game", s, cy):
+    """键位说明：键帽 + 右侧一列短词，一行排开。"""
+    items = (("WASD", "MOVE"), ("SHIFT", "ANOMALY"), ("J", "DARK"), ("K", "ERASE"))
+    gap_key, gap_group = 12, 38
+    spans = [(g.f_small.size(k)[0] + 18, g.f_main.size(v)[0]) for k, v in items]
+    total = sum(kw + gap_key + lw for kw, lw in spans) + gap_group * (len(items) - 1)
+    x = (WINDOW_W - total) // 2
+    for (key, label), (kw, lw) in zip(items, spans):
+        right = _keycap(s, g, key, x, cy)
+        img = g.f_main.render(label, True, C_TEXT)
+        s.blit(img, img.get_rect(midleft=(right + gap_key, cy)))
+        x = right + gap_key + lw + gap_group
+
 
 def draw_title(g: "Game"):
     s = g.screen
+    t = g.menu_t                                   # TITLE 里一直在走，回来重开会重播
     s.fill(C_BG)
     for x in range(0, WINDOW_W, CELL):
         pygame.draw.line(s, C_BG_GRID, (x, 0), (x, WINDOW_H))
     for y in range(0, WINDOW_H, CELL):
         pygame.draw.line(s, C_BG_GRID, (0, y), (WINDOW_W, y))
 
-    center_txt(g, "DATA SHIFT", (WINDOW_W // 2, 330), g.f_big, C_ACCENT)
-    center_txt(g, "ACT 1", (WINDOW_W // 2, 410), g.f_mid, C_TEXT)
-    if int(g.menu_t * 2.0) % 2 == 0:
-        center_txt(g, "PRESS ENTER", (WINDOW_W // 2, 560), g.f_main, C_ERASING)
-    center_txt(g, "[WASD] MOVE     [SHIFT] ANOMALY     [J] DARK     [K] ERASE",
-               (WINDOW_W // 2, 700), g.f_main, C_TEXT)
-    center_txt(g, "ESC: QUIT      F1: DEBUG", (WINDOW_W // 2, 750), g.f_small, C_DIM)
+    _draw_title_code(g, s, t)
+    s.blit(_title_scanlines(), (0, 0))              # CRT 细横纹：把水印压回背景层
+
+    _draw_title_word(g, s, t)
+    _draw_title_rule(s)
+    center_txt(g, "ACT 1", (WINDOW_W // 2, 434), g.f_mid, C_ERASING)
+
+    _draw_title_enter(g, s, t)
+    _draw_title_controls(g, s, 720)
+
+    center_txt(g, "ESC: QUIT      F1: DEBUG", (WINDOW_W // 2, 838), g.f_small, C_DIM)
+
+    # 四角括号：把整块画面框住，暗示「你现在看到的也是一块被读出来的东西」
+    m, L = 34, 46
+    for (px, py, dx, dy) in ((m, m, 1, 1), (WINDOW_W - m, m, -1, 1),
+                            (m, WINDOW_H - m, 1, -1), (WINDOW_W - m, WINDOW_H - m, -1, -1)):
+        pygame.draw.line(s, C_PANEL_LINE, (px, py), (px + L * dx, py), 2)
+        pygame.draw.line(s, C_PANEL_LINE, (px, py), (px, py + L * dy), 2)
 
 
 # ==== 世界 ====
@@ -114,7 +296,8 @@ def draw_world(g: "Game"):
                 if inset > 0:
                     s.fill(C_CELL_WHITE, rect.inflate(-2 * inset, -2 * inset))
     for (r, c) in b.flash:
-        surf = g.flash_surf_purple if b.flash_kind.get((r, c)) == "purple" else g.flash_surf
+        kind = b.flash_kind.get((r, c))
+        surf = {"purple": g.flash_surf_purple, "scribe": g.flash_surf_scribe}.get(kind, g.flash_surf)
         s.blit(surf, cell_to_rect(r, c).topleft)
 
     # 地上的死红怪 / 用过的道具：**一直在世界上**，不要等某个相位才画出来
@@ -152,6 +335,14 @@ def draw_world(g: "Game"):
                          hunting=(m.mode == "hunt"), look=look,
                          glow=g.red_glow, base=m.color,
                          dark=sprites._mix(m.color, C_CELL_BLACK, 0.52))
+
+    # 第三幕的黄怪：同一套画法，黄色。盯上玩家（挨过打）时才套环
+    for y in g.yellows:
+        look = g.oldman.pos if (g.oldman is not None and not g.oldman.down) else g.player.pos
+        sprites.draw_red(s, y.pos.x, y.pos.y, y.radius, g.anim_t, y.phase,
+                         hunting=y.hunting, look=look, glow=g.red_glow, base=y.color,
+                         dark=sprites._mix(y.color, C_CELL_BLACK, 0.52),
+                         ring=sprites._mix(y.color, (255, 255, 255), 0.45))
 
     # 第二幕的紫怪：同样的画法，换一套色（它不追人，只盯着线）
     for pu in g.purples:
@@ -243,14 +434,57 @@ def _draw_props(g, s):
 
 
 def _draw_oldman(g, s):
-    sprites.draw_oldman(s, g.oldman, g.anim_t)
+    om = g.oldman
+    if g.act >= 3 and om.down:                       # 第三幕：他被打倒了
+        _draw_revive_ring(g, s, om)                  # 环先画，压在身体底下
+        sprites.draw_oldman_down(s, om, g.anim_t)
+        _draw_revive_hint(g, s, om)                  # [H] 最后画，盖在最上面
+        return
+    sprites.draw_oldman(s, om, g.anim_t)
+    if g.act >= 3:
+        _draw_oldman_hp(g, s, om)
+
+
+def _draw_oldman_hp(g, s, om):
+    """他头顶一根细血条。**只有第三幕有** —— 前两幕他打不到，画出来只是噪音。"""
+    if om.hurt_t > 0:                                # 被咬那一下整体泛红（加色，不遮住他）
+        s.fill((70, 0, 18), pygame.Rect(int(om.pos.x) - 14, int(om.pos.y) - 12, 28, 26),
+               special_flags=pygame.BLEND_RGB_ADD)
+    w, h = 34, 5
+    box = pygame.Rect(int(om.pos.x) - w // 2, int(om.pos.y) - 26, w, h)
+    frac = max(0.0, om.hp / float(OLDMAN_HP))
+    col = C_MONSTER if frac <= 0.3 else C_OLDMAN
+    s.fill(C_CELL_BLACK, box)
+    s.fill(col, pygame.Rect(box.x + 1, box.y + 1, max(0, int((w - 2) * frac)), h - 2))
+    pygame.draw.rect(s, C_OUTLINE, box, 1)
+
+
+def _draw_revive_ring(g, s, om):
+    """他倒下时脚下那圈：平时是一圈暗环，按住 H 的时候按进度长出青色弧。"""
+    r = 20
+    cx, cy = int(om.pos.x), int(om.pos.y) + 2
+    box = pygame.Rect(cx - r, cy - r, r * 2, r * 2)
+    pygame.draw.circle(s, C_PANEL_LINE, (cx, cy), r, 2)
+    frac = g.revive_t / float(OLDMAN_REVIVE_TIME) if OLDMAN_REVIVE_TIME > 0 else 0.0
+    if frac > 0:
+        pygame.draw.arc(s, C_ACCENT, box, math.radians(90), math.radians(90 + 360 * min(frac, 1.0)), 3)
+
+
+def _draw_revive_hint(g, s, om):
+    """头顶的 [H]：闪一下再暗一下，别做成一直亮着的常驻 UI。"""
+    cx, cy = int(om.pos.x), int(om.pos.y) - 32
+    if cy < GRID_ORIGIN[1] + 12:                     # 他在最上面那一行：提示改画到脚下
+        cy = int(om.pos.y) + 44
+    k = (math.sin(g.anim_t * 3.4) + 1.0) * 0.5
+    img = g.f_main.render("[H]", True, C_TEXT if k > 0.45 else C_OLDMAN)
+    s.blit(img, img.get_rect(center=(cx, cy)))
 
 
 def _draw_item(g, s, it):
     rise = int((1.0 - it.t) * 22)
     sprites.draw_item(s, it.kind, it.pos.x, it.pos.y, g.anim_t, rise)
-    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / MAP」
-    label = "BAG" if it.kind == "bag" else "MAP"
+    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / MAP / SWORD」
+    label = {"bag": "BAG", "map": "MAP", "sword": "SWORD"}.get(it.kind, "")
     img = g.f_tiny.render(label, True, C_ITEM)
     s.blit(img, img.get_rect(center=(int(it.pos.x), int(it.pos.y) + rise - 23)))
 
@@ -282,7 +516,45 @@ def draw_player(g: "Game", s):
     p = g.player
     moving = g.input.dir4() is not None
     sprites.draw_sequencer(s, p.pos.x, p.pos.y, p.facing, g.anim_t, moving,
-                           glow=g.glow, has_bag=g.has_bag, holding_map=g.map_open)
+                           glow=g.glow, has_bag=g.has_bag, holding_map=g.map_open,
+                           has_sword=g.has_sword,
+                           swing=(g.swing_t / SWORD_SWING_TIME) if g.swing_t > 0 else 0.0)
+    if g.swing_t > 0:                                # 挥剑：身前一道弧，很快消失
+        _draw_swing(g, s)
+    if g.fill_t > 0:                                 # 按住 J 写格式格：脚下长出一圈进度
+        _draw_fill_ring(g, s, p.pos)
+
+
+def _draw_fill_ring(g, s, pos):
+    """格式信息要「按住」才写得动 —— 这一圈就是他正在写的那一笔。
+
+    用和救人（`_draw_revive_ring`）同一套语言：暗环打底，青色弧按进度长。
+    没有它玩家会以为按键坏了（普通格明明一点就成）。
+    """
+    r = 16
+    cx, cy = int(pos.x), int(pos.y) + 12             # 落在脚下一圈，上半圈压在袍子上
+    box = pygame.Rect(cx - r, cy - r, r * 2, r * 2)
+    pygame.draw.circle(s, mix(C_ACCENT, C_CELL_BLACK, 0.45), (cx, cy), r, 2)
+    frac = min(1.0, g.fill_t / float(FORMAT_HOLD_TIME)) if FORMAT_HOLD_TIME > 0 else 1.0
+    # 从**脚底**往两侧对称长：像水位上涨，也避开脸和手
+    half = math.pi * frac
+    foot = math.pi * 1.5
+    pygame.draw.arc(s, C_ACCENT, box, foot - half, foot, 2)
+    pygame.draw.arc(s, C_ACCENT, box, foot, foot + half, 2)
+
+
+def _draw_swing(g: "Game", s):
+    """挥砍的弧：朝面向那边甩出去，随 swing_t 变淡。"""
+    p = g.player
+    k = g.swing_t / SWORD_SWING_TIME if SWORD_SWING_TIME > 0 else 0.0
+    ang = {0: -90, 1: 90, 2: 180, 3: 0}[p.facing]
+    r = SWORD_RANGE * (0.7 + 0.3 * (1.0 - k))
+    cx, cy = p.pos.x, p.pos.y
+    a0 = math.radians(ang - 42)
+    a1 = math.radians(ang + 42)
+    box = pygame.Rect(cx - r, cy - r, r * 2, r * 2)
+    col = C_TEXT if k > 0.5 else C_ERASING
+    pygame.draw.arc(s, col, box, min(a0, a1), max(a0, a1), 3)
 
 
 def draw_dashed_rect(s, rect, dash=12, color=C_CELL_LINE):
@@ -348,9 +620,16 @@ def draw_hud(g: "Game"):
 
     done = b.progress()
     total = len(b.must) or 1
-    txt(g, "DARK", (x, 196), g.f_small, C_DIM)
-    txt(g, "%d / %d" % (done, total), (x + PANEL_INNER, 192), g.f_panel, C_TEXT, right=True)
-    draw_bar(g, pygame.Rect(x, 226, PANEL_INNER, 18), done / float(total), C_TEXT)
+    # 第三幕：老者把格式信息写完之后，剩下的格**全是玩家自己欠的** —— 这时候只报「还差几格」，
+    # 报 x/y 玩家看不出该干嘛（HUD 上 121/126 和 10/126 一样没用）。
+    owe = max(0, total - done)
+    awaiting_fill = g.act >= 3 and g.scribe_done_said and owe > 0
+    txt(g, "FILL" if awaiting_fill else "DARK", (x, 196), g.f_small,
+        C_MONSTER if awaiting_fill else C_DIM)
+    txt(g, ("%d" % owe) if awaiting_fill else ("%d / %d" % (done, total)),
+        (x + PANEL_INNER, 192), g.f_panel, C_MONSTER if awaiting_fill else C_TEXT, right=True)
+    draw_bar(g, pygame.Rect(x, 226, PANEL_INNER, 18), done / float(total),
+             C_MONSTER if awaiting_fill else C_TEXT)
 
     # 脏格：本幕**累计**涂错格数，擦掉不减；超过额度就转红（那时每次扣血）
     stains = b.stains
@@ -382,12 +661,15 @@ def draw_hud(g: "Game"):
         center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 10), g.f_prompt, C_ACCENT)
     else:
         # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
-        txt(g, "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL",
-            (HUD_X, HINT_Y), g.f_small, C_ERASING)
+        keys = "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL"
+        if g.act >= 3 and g.has_sword:
+            keys += "   [U] SWORD"                  # 第三幕才有剑，别在前两幕挂着让人按
+        txt(g, keys, (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
             txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 6), g.f_prompt, C_ACCENT, right=True)
 
-    if g.mono_t > 0 and g.mono_text:
+    # 心声：暂停中（mono_hold）时 mono_t 是 0，所以两个条件都要认
+    if g.mono_text and (g.mono_hold or g.mono_t > 0):
         _draw_monologue(g, s)
 
     if g.hint_t > 0 and g.hint_text:
@@ -422,6 +704,8 @@ def _draw_bag(g, s, x, y):
     h = 62
     # 背包是「容器」，它本身不占格子；格子里放的是包里的东西
     inside = []
+    if g.has_sword:
+        inside.append("sword")             # 第二幕收尾拿到的
     if g.has_map:
         inside.append("map")
     for i in range(min(BAG_SLOTS, cols * rows)):
@@ -614,9 +898,14 @@ def mono_box(g):
     return pygame.Rect(DLG_BOX[0], DLG_BOTTOM - h, DLG_BOX[2], h)
 
 
-def _mono_paint(g, s, box, vis, typing):
-    """把「心声框」画到 s 上（box 可以是屏幕坐标，也可以是离屏纸的本地坐标）。"""
-    _speech_box(s, g, box, story.SEQUENCER, C_ACCENT, solid_tab=False)
+def _mono_paint(g, s, box, vis, typing, done=False, blink=True):
+    """把「心声框」画到 s 上（box 可以是屏幕坐标，也可以是离屏纸的本地坐标）。
+
+    名牌默认是码序使（青）；老者说话时是暖米色 —— 同一套框区分「我在想」和「他在说」。
+    """
+    who = getattr(g, "mono_who", "") or story.SEQUENCER
+    col = C_OLDMAN if who == story.OLD_MAN else C_ACCENT
+    _speech_box(s, g, box, who, col, solid_tab=False)
     top = box.y + 44
     for i, ln in enumerate(vis):
         s.blit(g.f_mono.render(ln, True, C_TEXT), (box.x + DLG_PAD, top + i * MONO_LINE_H))
@@ -625,35 +914,48 @@ def _mono_paint(g, s, box, vis, typing):
         cx = box.x + DLG_PAD + g.f_mono.size(last)[0] + 4
         cy = top + (len(vis) - 1) * MONO_LINE_H + 8
         s.fill(C_ACCENT, pygame.Rect(cx, cy, 10, MONO_FONT - 12))
+    if not done:
+        return
+    # 字打完了：底部两角给「按回车继续」——世界是停着的，必须让玩家知道怎么走
+    hint = g.f_small.render("ENTER", True, C_ACCENT if blink else C_DIM)
+    s.blit(hint, hint.get_rect(bottomleft=(box.x + DLG_PAD, box.bottom - 18)))
+    if blink:
+        ax, ay = box.right - 52, box.bottom - 34
+        pygame.draw.polygon(s, C_ACCENT, [(ax, ay), (ax + 16, ay), (ax + 8, ay + 12)])
+    tag = g.f_tiny.render("PAUSED", True, C_DIM)
+    s.blit(tag, (box.right - tag.get_width() - DLG_PAD, box.y + 12))
 
 
 def _draw_monologue(g, s):
-    """心声：用和老者对话**同一套框**（实心底、四角括号、骑在上沿的名牌、打字机），
-    只有三处不同 —— 名牌空心描边、没有 ENTER 与「继续」箭头、进出淡入淡出。
+    """心声：和老者对话**同一套框**，但**整个世界是停住的**，直到玩家按回车。
 
-    这三处不同是故意的：心声是自动走的（不需要玩家按回车），
-    而且必须一眼和「开口说的话」分开，否则玩家会以为角色在自言自语。
+    作者 2026-11-12：原来它会自己淡走、而世界照常跑 —— 玩家涂错一格，心声挡住半屏、
+    怪还在打他，看不清也躲不掉。现在停下来，读完再走（见 `Game.say`）。
+
+    和对话的三处不同照旧：名牌空心描边、进出淡入淡出、**必须按回车**才继续。
     """
-    if g.mono_t <= 0 or not g.mono_text:
+    if not g.mono_text or not (g.mono_hold or g.mono_t > 0):
         return
     lines = mono_lines(g)
     total = sum(len(ln) for ln in lines)
-    shown = min(total, int(max(0.0, g.mono_total - g.mono_t) * MONO_CPS))
+    shown = min(total, int(max(0.0, g.mono_elapsed) * MONO_CPS))
     vis, typing = _reveal(lines, shown)
     box = mono_box(g)
+    done = g.mono_elapsed >= g.mono_type_time
 
-    # 淡入淡出：只有边缘那几百毫秒要离屏纸，中间大段时间直接画到屏幕上
-    alpha = 255
-    if g.mono_total - g.mono_t < MONO_FADE_IN:
-        alpha = int(255 * (g.mono_total - g.mono_t) / MONO_FADE_IN)
-    if g.mono_t < MONO_FADE_OUT:
-        alpha = int(255 * g.mono_t / MONO_FADE_OUT)
-    alpha = max(0, min(255, alpha))
+    # 淡入用「出现多久」，淡出用「关闭后还剩多久」（暂停期间 mono_t 一直是 0）
+    alpha = 1.0
+    if g.mono_elapsed < MONO_FADE_IN:
+        alpha = g.mono_elapsed / MONO_FADE_IN
+    if not g.mono_hold:
+        alpha = min(alpha, g.mono_t / MONO_FADE_OUT)
+    alpha = max(0, min(255, int(255 * alpha)))
     if alpha >= 255:
-        _mono_paint(g, s, box, vis, typing)
+        _mono_paint(g, s, box, vis, typing, done, int(g.anim_t * 3) % 2 == 0)
         return
     buf = _mono_buf(box.size)
-    _mono_paint(g, buf, pygame.Rect(0, 0, box.w, box.h), vis, typing)
+    _mono_paint(g, buf, pygame.Rect(0, 0, box.w, box.h), vis, typing, done,
+                int(g.anim_t * 3) % 2 == 0)
     buf.set_alpha(alpha)
     s.blit(buf, box.topleft)
 
