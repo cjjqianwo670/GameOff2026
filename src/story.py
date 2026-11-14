@@ -14,6 +14,8 @@ the plain / the old man / the red ones / erosion。
 ACT_TITLE = "ACT 1 \u2014 END"
 ACT2_TITLE = "ACT 2 \u2014 END"
 ACT3_TITLE = "ACT 3 \u2014 END"
+ACT4_TITLE = "ACT 4 \u2014 END"
+ACT5_TITLE = "ACT 5 \u2014 END"
 
 # ==== 1. 系统提示（全大写，只留按键 / 道具 / 行动指令）====
 
@@ -28,6 +30,8 @@ HINT_FORMAT_BROKEN = "A LINE IS BROKEN.  [J] TO PUT IT BACK"   # 第三幕：老
 HINT_HELP_OLDMAN = "[H] TO HELP HIM"                     # 第三幕：老者倒下，按住 H 四秒救他
 HINT_FILL_REST = "%d LEFT.  FILL THEM."                      # 第三幕：格式写完但整张码还差格
 HINT_FORMAT_HOLD = "FORMAT CELLS:  HOLD [J]"                 # 第三幕：格式格要按住才写得动（2026-11-13）
+HINT_SWEEP = "HOLD [J] TO SWEEP \u2014 THE GREY, NOT THE BLIND"   # 第四幕：按住 J 扫灰域，盲格不写
+HINT_TOLERANCE = "ERRORS %d / %d \u2014 IT ONLY NEEDS TO READ"      # 第五幕：错误压进容量就能被读出来
 
 # ==== 2. 内心独白（不打断操作）====
 # 2026-11-12：原「叙事型系统提示」都搬到这里，变成码序使的嘀咕（增强代入感）。
@@ -167,8 +171,33 @@ A3_STAGGER = "Ah\u2014 hold on. I lost the line."                   # 第一次�
 A3_READ = "That\u2019s the reading. The rest is yours."             # 格式信息写完：剩下的归玩家
 
 
+# ==== 第四幕（2026-11-14 新增）====
+# 骨架齐了，剩下的是「内容」：数据区没有结构可讲，只能一格一格填。
+# 所以这一幕不引入新角色、不引入新图案 —— 它换的是**动词**（按住 J 扫），
+# 文案只负责把「他走了，读法留下来了」和「它不想让我把句子写完」这两句交代清楚。
+
+A4_M1 = ("He came back.\nHe keeps the frame. I keep the words.")
+A4_M2 = "It didn't take one cell.\nIt took the whole line."        # 第一次被紫怪清行
+A4_M3 = "Almost.\nDon't stop now."                                 # 剩下不到 15 格
+
+
+# ==== 第五幕（2026-11-14 新增）====
+# 码被侵蚀掉几块。玩家第一次知道「这张码允许你错」—— 不是补完，是**够用**。
+
+A5_M1 = ("It's not eating the cells.\nIt's eating what they say.\n"
+         "Not all of it. Never all of it.")
+A5_M2 = "Three blocks.\nThat's all it needs."                     # 第一次错误数 ≤ 容量（备用）
+A5_M3 = "Enough.\nLet it read."                                   # 进入扫描
+A5_FRAME = "The frame.\nLet him have it."                           # 骨架第一次被清坏：他管这一头（只一次）
+END_LINE = "IT READS:  %s"                                         # 结局页副标题：把这张码的内容念出来
+
+
 def act_title(act):
     """第 N 幕的结束字幕。"""
+    if act >= 5:
+        return ACT5_TITLE
+    if act >= 4:
+        return ACT4_TITLE
     if act >= 3:
         return ACT3_TITLE
     return ACT2_TITLE if act >= 2 else ACT_TITLE

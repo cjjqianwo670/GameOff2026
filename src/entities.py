@@ -368,21 +368,37 @@ class YellowOne:
         return self.hp <= 0
 
     def update(self, dt, oldman, player):
+        """索敌：**谁近咬谁**（作者 2026-11-14 改）。
+
+        改动前是「默认冲老者，被打才转火玩家」—— 那让玩家可以一直躲在远处看它咬他。
+        改成比距离以后，玩家站得近就是目标，站位本身变成了要判断的事。
+
+        仍然保留的两条：
+          · **被砍过就优先玩家**（`aggro_t`）—— 那是「被打之后的反应」，不是索敌；
+          · **老者倒下时停手**（`down` 不算目标，且直接 return）—— 2026-11-12 的死循环防线：
+            他倒 → 它们转火玩家 → 玩家救不了 → 更救不了。
+        """
         self.bite_cd = max(0.0, self.bite_cd - dt)
         self.flash = max(0.0, self.flash - dt)
         if self.aggro_t > 0:
             self.aggro_t = max(0.0, self.aggro_t - dt)
 
         if self.aggro_t <= 0 and oldman is not None and not oldman.gone and oldman.down:
-            # 他倒了：它们要的是格式信息，不是命 —— **停手**，给玩家时间去扶他起来。
-            # 不加这条会滚成死循环：他倒 → 黄怪转火玩家 → 玩家救不了 → 更救不了（2026-11-12）
-            return "alive"
+            return "alive"          # 他倒了：停手，给玩家时间去扶他起来
 
-        go_oldman = (self.aggro_t <= 0 and oldman is not None
-                     and not oldman.gone and not oldman.down)
-        target = oldman.pos if go_oldman else (player.pos if player is not None else None)
-        if target is None:
-            return "alive"
+        if self.aggro_t > 0 and player is not None:      # 被砍过：先咬砍它的人
+            target, go_oldman = player.pos, False
+        else:
+            cands = []
+            if oldman is not None and not oldman.gone and not oldman.down:
+                cands.append((oldman.pos, True))
+            if player is not None:
+                cands.append((player.pos, False))
+            if not cands:
+                return "alive"
+            target, go_oldman = min(
+                cands, key=lambda kv: (kv[0] - self.pos).length_squared())
+
         d = target - self.pos
         reach = YELLOW_BITE_DIST if go_oldman else RED_HIT_DIST + 3
         if d.length() <= reach:

@@ -28,16 +28,17 @@ from src.config import (
     C_TEXT, C_WARN,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
-    ERASE_CAST, ERASING, FORMAT_HOLD_TIME, GRID_N,
+    ERASE_CAST, ERASING, FORMAT_HOLD_TIME, GRID_N, SCAN_TIME,
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
     INTRO_TOTAL, MAP_CELL, MAP_SCROLL_H, MAP_SCROLL_W, MAP_Y, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
     MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H,
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
     OLDMAN_HP, OLDMAN_REVIVE_TIME, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN,
-    SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N,
-    TARGET_OFFSET, THREAT_Y, VALID, WINDOW_H, WINDOW_W
+    SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
+    TARGET_OFFSET, THREAT_Y, VALID, WHITE, WINDOW_H, WINDOW_W
 )
 from src.grid import cell_center, cell_to_rect, target_rect
+from src.qr import ERROR_TOLERANCE
 
 PLAY_W = PANEL_X             # 左侧世界区域的宽度
 PANEL_INNER = PANEL_W - PANEL_PAD * 2
@@ -272,6 +273,9 @@ def draw_world(g: "Game"):
         if b.revealed(r, c):
             pygame.draw.rect(s, C_MUST, cell_to_rect(r, c), 2)
 
+    if g.act >= 5 and g.state in ("BATTLE", "SCAN"):
+        _draw_error_blocks(g, s)
+
     # 网格线
     for i in range(GRID_N + 1):
         x = GRID_ORIGIN[0] + i * CELL
@@ -360,6 +364,11 @@ def draw_world(g: "Game"):
     if not in_intro:
         draw_player(g, s)
 
+    if g.state == "SCAN":                            # 第五幕的收尾：一束光把码读出去
+        _draw_scan(g, s)
+
+    _draw_toasts(g, s)                               # 嘀咕：飘在头顶，不挡、不冻世界
+
     # 碎片画在最上层
     for d in g.debris:
         rect = pygame.Rect(int(d[0]), int(d[1]), CELL, CELL)
@@ -369,6 +378,97 @@ def draw_world(g: "Game"):
     # 威胁台词（红怪的狠话）
     if g.threat_t > 0:
         _draw_threat(g, s)
+
+
+def _draw_error_blocks(g, s):
+    """第五幕：把「坏掉的码字」标出来（红框）。
+
+    没有这个标记，玩家面对一堆随机图案根本不知道哪块坏了、该修哪块 ——
+    而这一幕的全部玩法就是「决定放弃哪几块」，所以必须让他看得见。
+    """
+    for mods in g.cw_modules.values():
+        bad = [(r, c, dark) for (r, c, dark) in mods
+               if ((g.board.state[r][c] != VALID) if dark else (g.board.state[r][c] != WHITE))]
+        if not bad:
+            continue
+        for (r, c, dark) in bad:
+            _damage_cell(s, cell_to_rect(r, c))
+
+
+_DAMAGE_WASH = None
+
+
+def _damage_cell(s, rect, size=6):
+    """坏格：一层淡红水洗 + 四角 2px 角标。
+
+    只画细边在 1x 下几乎看不见（试过 1px 四角，截图里要盯才找得到）；
+    整圈 2px 红框又太吵，会和绿框（必涂格）抢。淡红水洗 + 角标是这两者中间那档：
+    一眼扫得到，但不至于像 UI 弹窗。
+    """
+    global _DAMAGE_WASH
+    if _DAMAGE_WASH is None:
+        _DAMAGE_WASH = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        _DAMAGE_WASH.fill((*C_MONSTER, 44))
+    s.blit(_DAMAGE_WASH, rect.topleft)
+    x, y, w, h = rect.x, rect.y, rect.width, rect.height
+    for (px, py, dx, dy) in ((x, y, 1, 1), (x + w - 2, y, -1, 1),
+                             (x, y + h - 2, 1, -1), (x + w - 2, y + h - 2, -1, -1)):
+        pygame.draw.line(s, C_MONSTER, (px, py), (px + dx * size, py), 2)
+        pygame.draw.line(s, C_MONSTER, (px, py), (px, py + dy * size), 2)
+
+
+def _draw_toasts(g, s):
+    """嘀咕：玩家头顶上方的一行小字，2 秒淡掉。
+
+    为什么不做成框（作者 2026-11-14）：框占半屏，一次涂错就挡住要涂的那片；
+    而且它一出现世界就得停。反馈类不需要仪式感，需要的是**看得见、又不碍事**。
+    所以：贴着头顶、带 1px 暗描边（白格上也读得清）、不做背景板。
+    """
+    if not g.toasts:
+        return
+    px, py = int(g.player.pos.x), int(g.player.pos.y)
+    top = GRID_ORIGIN[1] + 12
+    for i, (text, t, life, who) in enumerate(g.toasts):
+        fade = min(1.0, t / 0.12, max(0.0, (life - t) / 0.5))
+        if fade <= 0.02:
+            continue
+        col = C_OLDMAN if who == story.OLD_MAN else C_ACCENT
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        block_h = len(lines) * 18
+        y0 = py - TOAST_LIFT - i * 22 - block_h
+        if y0 < top:                                 # 贴着上边：改画到脚下，别顶进 HUD
+            y0 = py + 26 + i * 22
+        for k, line in enumerate(lines):
+            img = g.f_small.render(line, True, col)
+            sh = g.f_small.render(line, True, C_CELL_BLACK)
+            rect = img.get_rect(center=(px, y0 + 9 + k * 18))
+            rect.x = max(GRID_ORIGIN[0] + 6,
+                         min(rect.x, GRID_ORIGIN[0] + GRID_PX - rect.w - 6))
+            img.set_alpha(int(255 * fade))
+            sh.set_alpha(int(200 * fade))
+            s.blit(sh, (rect.x + 1, rect.y + 1))
+            s.blit(img, rect)
+
+
+def _draw_scan(g, s):
+    """扫描束：从上往下把整张码读一遍。
+
+    已经扫过的部分压一层冷光（"读过了"），前沿是一道亮线。
+    这是全游戏唯一一次「光从上往下走」—— 清屏波是从中心往外扩，两者不会混。
+    """
+    rect = target_rect()
+    k = min(1.0, g.scan_t / float(SCAN_TIME)) if SCAN_TIME > 0 else 1.0
+    y = rect.top + int(rect.height * k)
+    if k > 0:
+        band = pygame.Surface((rect.width, max(1, y - rect.top)), pygame.SRCALPHA)
+        band.fill((*C_ACCENT, 26))
+        s.blit(band, (rect.left, rect.top))
+    pygame.draw.line(s, C_ACCENT, (rect.left, y), (rect.right, y), 3)
+    halo = pygame.Surface((rect.width, 10), pygame.SRCALPHA)
+    halo.fill((*C_ACCENT, 70))
+    s.blit(halo, (rect.left, y - 5))
 
 
 def _draw_intro_code(g, s):
@@ -441,7 +541,7 @@ def _draw_oldman(g, s):
         _draw_revive_hint(g, s, om)                  # [H] 最后画，盖在最上面
         return
     sprites.draw_oldman(s, om, g.anim_t)
-    if g.act >= 3:
+    if g.act == 3:                                   # 只有第三幕他会挨咬；第四幕没人咬他，别画假血条
         _draw_oldman_hp(g, s, om)
 
 
@@ -620,10 +720,42 @@ def draw_hud(g: "Game"):
 
     done = b.progress()
     total = len(b.must) or 1
+    if g.act >= 5:                                    # 第五幕：唯一的数字是「错了几块」
+        eff = g.act5_errors()
+        fr = g.frame_broken()
+        col = C_MONSTER if (fr or eff > ERROR_TOLERANCE) else C_ACCENT
+        txt(g, "FRAME" if fr else "ERRORS", (x, 196), g.f_small,
+            C_MONSTER if fr else C_DIM)
+        txt(g, ("%d" % fr) if fr else ("%d / %d" % (eff, ERROR_TOLERANCE)),
+            (x + PANEL_INNER, 192), g.f_panel, col, right=True)
+        draw_bar(g, pygame.Rect(x, 226, PANEL_INNER, 18),
+                 min(1.0, eff / float(ERROR_TOLERANCE + 1)), col)
+        if fr:
+            # 第五幕他在场：骨架归他，玩家不用管这一头 —— 所以别写「坏了」，
+            # 写「他在补」。同一行字承担「现在为什么还不能读」的解释。
+            txt(g, "HE'S ON THE FRAME" if (g.oldman is not None and not g.oldman.gone)
+                else "THE FRAME IS BROKEN", (x, 252), g.f_small, C_MONSTER)
+        else:
+            txt(g, "IT READS AT %d OR LESS" % ERROR_TOLERANCE, (x, 252), g.f_small, C_DIM)
+        txt(g, "STAINS", (x, 280), g.f_small, C_DIM)
+        txt(g, "%d / %d" % (b.stains, STAIN_LIMIT), (x + PANEL_INNER, 276), g.f_panel, C_TEXT, right=True)
+        txt(g, "RED ON FIELD", (x, 340), g.f_small, C_DIM)
+        txt(g, str(len(g.monsters)), (x + PANEL_INNER, 336), g.f_panel,
+            C_MONSTER if g.monsters else C_TEXT, right=True)
+        txt(g, "PURPLE ON FIELD", (x, 372), g.f_small, C_DIM)
+        txt(g, str(len(g.purples)), (x + PANEL_INNER, 368), g.f_panel,
+            C_PURPLE if g.purples else C_TEXT, right=True)
+        pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + PANEL_INNER, 396))
+        if g.has_bag:
+            _draw_bag(g, s, x, 412)
+        if g.has_map:
+            _draw_map(g, s, x, MAP_Y)
+        _draw_bottom(g, s)
+        return
     # 第三幕：老者把格式信息写完之后，剩下的格**全是玩家自己欠的** —— 这时候只报「还差几格」，
     # 报 x/y 玩家看不出该干嘛（HUD 上 121/126 和 10/126 一样没用）。
     owe = max(0, total - done)
-    awaiting_fill = g.act >= 3 and g.scribe_done_said and owe > 0
+    awaiting_fill = g.act == 3 and g.scribe_done_said and owe > 0   # 只有第三幕是他写你欠
     txt(g, "FILL" if awaiting_fill else "DARK", (x, 196), g.f_small,
         C_MONSTER if awaiting_fill else C_DIM)
     txt(g, ("%d" % owe) if awaiting_fill else ("%d / %d" % (done, total)),
@@ -653,17 +785,26 @@ def draw_hud(g: "Game"):
     if g.has_map:
         _draw_map(g, s, x, MAP_Y)
 
+    _draw_bottom(g, s)
+
+
+def _draw_bottom(g, s):
+    """底部那一层：键位表 / 心声 / 系统提示。第五幕的 HUD 提前 return，所以抽出来复用。"""
     # ---- 底部：键位 + 提示 + 系统消息 ----
     if g.state == "DIALOG":
         pass                                    # 对话框自带 ENTER 提示，底部别再摆键位表
     elif g.state == "TUTORIAL" and g.prompt_text:
         # 教程阶段那句提示本身就是键位表，不用再摆一遍
         center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 10), g.f_prompt, C_ACCENT)
-    else:
+    elif g.state != "SCAN":                     # 扫描时世界只剩那一束光，别摆键位
         # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
         keys = "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL"
+        if g.act >= 5:                          # 第五幕：只修，不再有"扫"的新东西
+            keys = "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE"
+        elif g.act >= 4:                        # 第四幕换动词：按住 J 扫灰域
+            keys = "[WASD] MOVE   [SHIFT] ANOMALY   HOLD [J] SWEEP   [K] ERASE"
         if g.act >= 3 and g.has_sword:
-            keys += "   [U] SWORD"                  # 第三幕才有剑，别在前两幕挂着让人按
+            keys += "   [U] SWORD"              # 第三幕才有剑，别在前两幕挂着让人按
         txt(g, keys, (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
             txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 6), g.f_prompt, C_ACCENT, right=True)
@@ -1067,9 +1208,12 @@ def draw_dead(g: "Game"):
 def draw_end(g: "Game"):
     s = g.screen
     veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-    veil.fill((0, 0, 0, 216))
+    # 第五幕是终幕：压得轻一点，让**写满的那张码**在后面亮着（它本身就是结局）
+    veil.fill((0, 0, 0, 188 if g.act >= 5 else 216))
     s.blit(veil, (0, 0))
     center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
+    if getattr(g, "end_line", ""):                   # 结局副标题：这张码到底写了什么
+        center_txt(g, g.end_line, (PLAY_W // 2, WINDOW_H // 2 + 30), g.f_mid, C_ACCENT)
     if int(g.menu_t * 2.0) % 2 == 0:
         center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
 

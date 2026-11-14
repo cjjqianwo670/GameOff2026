@@ -86,6 +86,7 @@ def required_cells(target=None, act=1):
     第一幕：三个定位图案各 33 格 + 暗模块 1 格 = **100**
     第二幕：再加定时图案 6 格 = **106**（定时图案是 QR 的固有结构，位置和数量写死不浮动）
     第三幕：再加格式信息里该黑的 10~20 格 = **116~126**（取决于掩码，所以必须传 target）
+    第四幕：**整张码的所有黑格** = 206~244（剩下的就是「内容」，数据区）
 
     target 只用来校验（这些格子在真码里必须是黑的），不传就跳过校验。
     ⚠️ act>=3 必须传 target：格式信息有一半是白的，不传就分不出哪些该算必涂格。
@@ -111,8 +112,146 @@ def required_cells(target=None, act=1):
             raise ValueError("act>=3 需要 target：格式信息里哪些格该黑由这一局的掩码决定")
         cells |= format_dark_cells(target)
 
+    if act >= 4:
+        # 第四幕：还剩「数据区」—— 它是这张码的**内容**，没有结构可讲，只能一格一格填。
+        # 所以这里的必涂格 = 整张码所有的黑格（206~244），前 112 格已经在手里了。
+        if target is None:
+            raise ValueError("act>=4 需要 target：数据区就是这张码本身")
+        orr, occ = TARGET_OFFSET
+        for tr in range(TARGET_N):
+            for tc in range(TARGET_N):
+                if target[tr][tc]:
+                    cells.add((orr + tr, occ + tc))
+
     if target is not None:
         for r, c in cells:
             if not target[r - orr][c - occ]:
                 raise ValueError("required cell %s is white in target" % ((r, c),))
     return cells
+
+
+# ==== 码字（codeword）映射：第五幕「容错」的地基 ====
+#
+# 二维码的纠错不是按「格」算的，是按**码字**算的：v1 一共 26 个码字，每个 8 格；
+# 纠错 L 级有 7 个纠错码字，能纠正 t = ⌊7/2⌋ = **3 个码字**。
+# ⚠️ 关键一句：**一格错了，整个码字就废了**。所以「你能错几格」这个问题本身是错的 ——
+# 正确的是「你能废掉几个码字」。3 个码字 = 最多 24 格（整块留白），但也可能只有 3 格（零散错）。
+# 第五幕的玩法就建立在这句话上：不是「再细心一点」，是「决定放弃哪几块」。
+
+
+def _reserved_mask():
+    """v1 里**不属于任何码字**的格子（功能图形）。
+
+    正好三块 9×9 / 9×8 / 8×9 的角落 + 第 6 行/列剩下的定时图案：
+    441 - (81 + 72 + 72 + 8) = **208 格** = 26 个码字 × 8。
+    数不对就说明这张掩码写错了 —— `_verify_act5_codeword.py` 会先断言这一点。
+    """
+    m = [[False] * TARGET_N for _ in range(TARGET_N)]
+    for r in range(9):                                  # 左上：定位 + 分隔符 + 格式信息（行 8 / 列 8）
+        for c in range(9):
+            m[r][c] = True
+    for r in range(9):                                  # 右上：定位 + 分隔符 + 格式信息（行 8）
+        for c in range(13, TARGET_N):
+            m[r][c] = True
+    for r in range(13, TARGET_N):                       # 左下：定位 + 分隔符 + 格式信息（列 8）
+        for c in range(9):
+            m[r][c] = True
+    for i in range(9, 13):                              # 定时图案：两块角落之间那 4+4 格
+        m[6][i] = True
+        m[i][6] = True
+    return m
+
+
+def _build_codeword_index():
+    """按 QR 的之字形放码：从右下开始，两列一组，上下交替，跳过第 6 列。
+
+    返回 21×21 的码字编号表；功能图形那 233 格是 -1。
+    """
+    res = _reserved_mask()
+    idx = [[-1] * TARGET_N for _ in range(TARGET_N)]
+    col = TARGET_N - 1
+    bit = 0
+    upward = True
+    while col > 0:
+        if col == 6:                                    # 第 6 列是竖直定时图案，整列跳过
+            col = 5
+        rows = range(TARGET_N - 1, -1, -1) if upward else range(TARGET_N)
+        for r in rows:
+            for c in (col, col - 1):
+                if not res[r][c]:
+                    idx[r][c] = bit // 8
+                    bit += 1
+        upward = not upward
+        col -= 2
+    if bit != 208:
+        raise RuntimeError("码字映射出错：数据格 %d ≠ 208（功能图形掩码有问题）" % bit)
+    return idx
+
+
+CODEWORD_INDEX = _build_codeword_index()
+CODEWORD_TOTAL = 26                                    # v1：19 个数据码字 + 7 个纠错码字
+EC_CODEWORDS = 7                                       # L 级
+ERROR_TOLERANCE = EC_CODEWORDS // 2                    # t = 3：最多废掉 3 个码字
+
+
+def codeword_of(r, c):
+    """QR 坐标 (0~20) → 码字编号；功能图形返回 -1。"""
+    return CODEWORD_INDEX[r][c]
+
+
+def codeword_cells(target):
+    """码字编号 → 它覆盖的格子（只返回**该是黑的**那些，主网格坐标）。
+
+    第五幕修一块就是修它该黑的那几格；白格不用管（少了黑格才算这一块坏了）。
+    """
+    orr, occ = TARGET_OFFSET
+    out = {}
+    for r in range(TARGET_N):
+        for c in range(TARGET_N):
+            k = CODEWORD_INDEX[r][c]
+            if k >= 0 and target[r][c]:
+                out.setdefault(k, []).append((orr + r, occ + c))
+    return out
+
+
+def functional_cells(target):
+    """骨架格：定位 / 定时 / 格式 / 暗模块（不属于任何码字，但坏了就**根本扫不出来**）。"""
+    orr, occ = TARGET_OFFSET
+    cells = set()
+    for r in range(TARGET_N):
+        for c in range(TARGET_N):
+            if CODEWORD_INDEX[r][c] < 0:
+                cells.add((orr + r, occ + c))
+    return cells
+
+
+def structural_black_cells(target):
+    """骨架里**该是黑的**那些（定位图案 + 暗模块 + 定时图案 + 格式信息），主网格坐标。
+
+    第四幕老者只修这一批：他懂结构，不懂内容。数据区（`CODEWORD_INDEX >= 0`）他一格都不碰。
+    """
+    orr, occ = TARGET_OFFSET
+    return {(orr + r, occ + c)
+            for r in range(TARGET_N) for c in range(TARGET_N)
+            if CODEWORD_INDEX[r][c] < 0 and target[r][c]}
+
+
+def module_table(target):
+    """把整张码拆成两张表，给第五幕的「错误计数」用。
+
+    返回 `(cw, fn)`：
+      · `cw`：码字编号 → [(主网格 r, c, 该黑吗)]，26 个码字各 8 格；
+      · `fn`：骨架格 [(r, c, 该黑吗)]（定位 / 定时 / 格式 / 暗模块）。
+    「该黑」和「该白」都要检查 —— 该白的格被涂黑了，同样算这个码字坏了。
+    """
+    orr, occ = TARGET_OFFSET
+    cw, fn = {}, []
+    for r in range(TARGET_N):
+        for c in range(TARGET_N):
+            k = CODEWORD_INDEX[r][c]
+            item = (orr + r, occ + c, bool(target[r][c]))
+            if k < 0:
+                fn.append(item)
+            else:
+                cw.setdefault(k, []).append(item)
+    return cw, fn

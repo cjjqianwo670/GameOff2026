@@ -31,6 +31,7 @@ from src.config import (
     CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
     ITEM_PICK_RANGE,
     ITEM_RISE_TIME, MONO_CPS, MONO_FADE_OUT, MONO_FONT, MONO_REPEAT_GAP, MONOLOGUE_TIME, OLDMAN_CELL,
+    TOAST_GAP, TOAST_MAX, TOAST_TIME,
     OLDMAN_BLAST_RADIUS, OLDMAN_HP, OLDMAN_REVIVE_HP,
     OLDMAN_REVIVE_RANGE, OLDMAN_REVIVE_TIME, PROMPT_FONT,
     OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
@@ -46,12 +47,15 @@ from src.config import (
     YELLOW_MAX, YELLOW_SPAWN_PER_MIN,
     ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W,
     A2_OPEN_SECONDS, PURPLE_EAT_DIST, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE, PURPLE_SPAWN_PER_MIN,
-    PURPLE_SPAWN_PER_MIN_ACT3
+    PURPLE_SPAWN_PER_MIN_ACT3, PURPLE_SPAWN_PER_MIN_ACT4,
+    MIRAGE_RADIUS_ACT4, ALMOST_OWE, ERODE_BLOCKS, PURPLE_SPAWN_PER_MIN_ACT5, SCAN_TIME,
+    ERODE_EVERY, ERODE_CAP, OLDMAN_REPAIR_PAUSE
 )
 from src.entities import Item, Monster, OldMan, Player, PurpleOne, SceneRed, YellowOne
 from src.grid import altar_center, cell_center
 from src.input_state import InputState
-from src.qr import format_dark_cells, generate_target, required_cells
+from src.qr import (ERROR_TOLERANCE, format_dark_cells, generate_target, module_table,
+                      required_cells, structural_black_cells)
 from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_title, draw_world,
                     make_stain_tile)
 
@@ -147,6 +151,11 @@ class Game:
         self.target = []
         self.qr_content = ""
         self.must = set()
+        self.cw_modules = {}                          # 第五幕：码字编号 → [(r, c, 该黑吗)]
+        self.fn_modules = []                          # 第五幕：骨架格 [(r, c, 该黑吗)]
+        self.scan_t = 0.0
+        self.erode_t = 0.0
+        self.end_line = ""                            # 结局页副标题（读出来的内容）
         self.board = None
         self.player = None
         self.oldman = None
@@ -168,6 +177,14 @@ class Game:
         self.fill_t = 0.0                             # 按住 J 写格式格的进度（0 → FORMAT_HOLD_TIME）
         self.fill_cell = None                         # 这个进度属于哪一格（换格就从 0 数）
         self.hold_said = False                        # 「格式格要按住」教过一次没有
+        self.almost_said = False                      # 第四幕「快写完了」那句说过没有
+        # 第四幕：老者回来补骨架（定位/定时/格式/暗模块），数据区他一格不碰
+        self.repair_cells = set()
+        self.repair_target = None
+        self.repair_writing = False
+        self.repair_t = 0.0
+        self.repair_i = 0
+        self.frame_said = False                       # 第五幕「骨架归他」那句说过没有
         # 第三幕 M2：黄怪 / 老者倒下与救援 / 挥剑
         self.yellows = []
         self.yellow_t = 0.0
@@ -217,6 +234,10 @@ class Game:
         self.mono_elapsed = 0.0
         self.mono_type_time = 0.0
         self.mono_gap = 0.0
+        #   toasts 嘀咕（不冻世界的反馈）：[[文字, 活了多久, 寿命, 说话人], ...]
+        self.toasts = []
+        self.mumble_last = ""
+        self.mumble_gap = 0.0
         self.mono_who = ""
         self.mono_last = ""
         self.hint_text = ""
@@ -329,6 +350,12 @@ class Game:
         self.fill_t = 0.0
         self.fill_cell = None
         self.hold_said = False
+        self.almost_said = False
+        self.repair_cells = set()
+        self.repair_target = None
+        self.repair_writing = False
+        self.repair_t = 0.0
+        self.frame_said = False
         self.stagger_said = False
         self.dlg_after = None
         self.yellows = []
@@ -360,11 +387,15 @@ class Game:
         self.input.held.clear()
 
     def next_act(self):
-        """幕结束画面按下回车：1 → 2 → 3；第三幕之后回标题（第四幕还没做）。"""
+        """幕结束画面按下回车：1 → 2 → 3 → 4 → 5；第五幕之后回标题。"""
         if self.act < 2:
             self.start_act2()
         elif self.act < 3:
             self.start_act3()
+        elif self.act < 4:
+            self.start_act4()
+        elif self.act < 5:
+            self.start_act5()
         else:
             self.state = "TITLE"
             self.menu_t = 0.0
@@ -411,6 +442,12 @@ class Game:
         self.fill_t = 0.0
         self.fill_cell = None
         self.hold_said = False
+        self.almost_said = False
+        self.repair_cells = set()
+        self.repair_target = None
+        self.repair_writing = False
+        self.repair_t = 0.0
+        self.frame_said = False
         self.stagger_said = False
         self.yellows = []
         self.yellow_t = 0.0
@@ -464,6 +501,206 @@ class Game:
         self.audio.play("clear")
         self.checkpoint = self.make_checkpoint()
 
+    def start_act4(self):
+        """第三幕结束 → 第四幕：**骨架齐了，剩下的是「内容」**。
+
+        这一幕换动词：不再一格一格按 J，而是**按住 J 扫**（`sweep`）——
+        走过照出来的灰域就自动制造黑域；没照过的格直接跳过（不写、也不算脏格）。
+        所以压力从「手快不快」变成「照哪儿、怎么走」，而灰域 5 秒就褪，
+        7×7 的窗口走完要 6.4 秒 —— 覆盖不完，必须取舍。
+
+        数据区没有结构可讲（它就是这张码的内容），所以这一幕没有新图案 ——
+        只有紫怪回潮（4 只/分，一次清一行）和照旧的红怪：**你写多快，它吃多快**。
+
+        **老者回来了（作者 2026-11-14）**：他只补**骨架** —— 定位图案、定时图案、
+        固定黑点（暗模块）、格式信息，数据区他一格都不碰。分工正好接第三幕：
+        他懂结构，不懂内容。所以玩家可以安心扫数据区，碎片由他兜着。
+        """
+        self._begin_act(4)
+        self.must = required_cells(self.target, act=4)    # 整张码的所有黑格 206~244
+        self.board.set_must(self.must)
+
+        # 他只负责这一批格（结构黑格），玩家负责数据区
+        self.repair_cells = structural_black_cells(self.target)
+
+        # 他回来，站在坛外老位置（和第三幕同一个位置、同一朝向）
+        self.oldman = OldMan(OLDMAN_CELL, facing=1)
+        self.oldman_turned = True
+
+        self.state = "BATTLE"
+        self.spawn_rate = RED_SPAWN_PER_MIN
+        self.say(story.A4_M1)
+        self.show_hint(story.HINT_SWEEP, 6.0)
+        self.audio.play("clear")
+        self.checkpoint = self.make_checkpoint()
+
+    def start_act5(self):
+        """第四幕结束 → 第五幕：**读**。
+
+        这一幕不涂新格。开场先被「侵蚀」掉几个**码字**（整块变白，`ERODE_BLOCKS=6`），
+        玩家的活不是「把码补完」，而是**把错误压进容错容量**（`qr.ERROR_TOLERANCE = 3`）：
+        3 个码字以内的错，纠错码自己能修回来，码就能被读出来。
+
+        ⚠️ 容量按**码字**算：一格错也毁一个码字。所以「放弃一整块」和「错一格」代价一样，
+        这才是这一幕要玩家做的判断 —— 不是再细心一点，是决定哪几块不要了。
+        """
+        self._begin_act(5)
+        self.must = required_cells(self.target, act=4)    # 整张码（和第四幕同一套必涂格）
+        self.board.set_must(self.must)
+        self.cw_modules, self.fn_modules = module_table(self.target)
+
+        # 老者也在场（作者 2026-11-14）：他**只补骨架** —— 定位图案、定时图案、
+        # 暗模块、格式信息。这一幕紫怪清掉一整行时会连骨架一起清，
+        # 而骨架坏一格就根本读不出来；他替你把这一头兜住，你才能专心压错误数。
+        # 数据区（那 26 个码字）他一格不碰：那正是你要判断「放弃哪几块」的地方。
+        self.repair_cells = structural_black_cells(self.target)
+        self.oldman = OldMan(OLDMAN_CELL, facing=1)
+        self.oldman_turned = True
+
+        self.erode(ERODE_BLOCKS)                          # 侵蚀：挑几块整块抹掉
+        self.erode_t = 0.0
+
+        self.state = "BATTLE"
+        self.spawn_rate = RED_SPAWN_PER_MIN
+        self.say(story.A5_M1)
+        self.audio.play("clear")
+        self.checkpoint = self.make_checkpoint()
+
+    def erode(self, n):
+        """侵蚀 n 个码字：把它们该黑的格整块抹白（这就是这一幕开局的「欠账」）。
+
+        只挑「黑格够多」的码字 —— 抹一个只有 2 格黑的码字，玩家看不出发生了什么，
+        但 HUD 上照样 +1 错误，那是骗人。
+        """
+        n = min(n, max(0, ERODE_CAP - self.act5_errors()))   # 封顶在这儿，别指望调用方记得
+        if n <= 0:
+            return
+        pools = [k for k, mods in self.cw_modules.items()
+                 if sum(1 for (_, _, dark) in mods if dark) >= 4]
+        if not pools:
+            return
+        # 只吃「还是好的」那些块：吃一块已经坏了的等于没吃，HUD 数字不动，玩家会以为卡了
+        intact = [k for k in pools
+                  if all((self.board.state[r][c] == VALID) if dark
+                         else (self.board.state[r][c] == WHITE)
+                         for (r, c, dark) in self.cw_modules[k])]
+        for k in self.rng.sample(intact or pools, min(n, len(intact or pools))):
+            for (r, c, dark) in self.cw_modules[k]:
+                if dark:
+                    self.board.state[r][c] = WHITE           # 只抹黑格：白格本来就是白的
+
+    def tick_erode(self, dt):
+        """侵蚀不会停：每 `ERODE_EVERY` 秒再吃掉一个码字，但**吃到 `ERODE_CAP` 就收手**。
+
+        封顶的理由（2026-11-14 实测）：不封顶的话晾着不管 90 秒就坏到 23 块，
+        玩家要修 20 块才够得着 3 —— 那不是难，是没有路。
+        而且这一行也接上了 `A5_M1` 那句 `Never all of it`：它吃不完整张码。
+        """
+        self.erode_t += dt
+        if self.erode_t >= ERODE_EVERY:
+            self.erode_t = 0.0
+            if self.act5_errors() < ERODE_CAP:
+                self.erode(1)                        # 封顶由 erode() 自己保证
+                self.audio.play("purple")
+
+    def act5_errors(self):
+        """现在有几个**码字**是坏的（第五幕的 HUD 数字，也是能不能读出来的唯一判据）。"""
+        bad = 0
+        for mods in self.cw_modules.values():
+            for (r, c, dark) in mods:
+                st = self.board.state[r][c]
+                if (st != VALID) if dark else (st != WHITE):
+                    bad += 1
+                    break
+        return bad
+
+    def frame_broken(self):
+        """骨架坏了几格（定位 / 定时 / 格式）。**一格都不能坏** —— 骨架坏了根本扫不到码。"""
+        n = 0
+        for (r, c, dark) in self.fn_modules:
+            st = self.board.state[r][c]
+            if (st != VALID) if dark else (st != WHITE):
+                n += 1
+        return n
+
+    def enter_scan(self):
+        """错误压进容量了：圣坛开始「读」这张码。
+
+        ⚠️ 扫描**不清场**：怪被光定住不再动，但**侵蚀照吃**。
+        所以「压到 3 块」不是终点 —— 得压住它 2.6 秒，让它读出来。
+        """
+        self.state = "SCAN"
+        self.scan_t = 0.0
+        self.hint_text, self.hint_t = "", 0.0
+        self.claims.clear()
+        self.audio.play("clear")
+        self.say(story.A5_M3)
+
+    def update_scan(self, dt):
+        """扫描束从上往下走一遍：走完就进结局。
+
+        ⚠️ 扫描期间**侵蚀暂停**（`tick_erode` 只在 `update_battle` 里走）。
+        理由是公平：玩家看不见「还有几秒被侵蚀」，拿一个看不见的计时器去断他最后 2.6 秒，
+        赢的时候只会觉得倒霉。难度全部放在「怎么把它压到 3 块」上。
+        """
+        self.scan_t += dt
+        if self.scan_t < SCAN_TIME:
+            return
+        self.state = "END"
+        self.menu_t = 0.0
+        self.show_banner(story.ACT5_TITLE, 999.0)
+        self.end_line = story.END_LINE % self.qr_content.upper()
+
+    def pick_repair_target(self):
+        """挑下一个要补的结构格：离他最近的、该黑却是白的。全好了就返回 None。"""
+        need = [(r, c) for (r, c) in self.repair_cells if self.board.state[r][c] == WHITE]
+        if not need:
+            return None
+        om = self.oldman
+        if om is None:
+            return need[0]
+        px, py = om.pos.x, om.pos.y
+        return min(need, key=lambda rc: (cell_center(*rc)[0] - px) ** 2
+                   + (cell_center(*rc)[1] - py) ** 2)
+
+    def update_repair(self, dt):
+        """第四、五幕：老者补**骨架**（定位图案 / 定时图案 / 暗模块 / 格式信息）。
+
+        作者 2026-11-14：「老者帮忙制造黑域，但是他只能修复定位图案、定时图案、
+        固定黑点以及格式信息」。所以数据区他一格都不碰 —— 那是玩家的活。
+        走位和落笔沿用第三幕那套（走过去、站定、停 `OLDMAN_REPAIR_PAUSE` 再写），
+        只是不再需要长按、也不会「写完就清屏」。
+        """
+        om = self.oldman
+        if om is None or om.gone or om.down:
+            return
+        if self.repair_target is None:
+            self.repair_target = self.pick_repair_target()
+            self.repair_writing = False
+            if self.repair_target is None:
+                return
+        r, c = self.repair_target
+        if self.board.state[r][c] != WHITE:           # 玩家先补上了 / 又被清成别的
+            self.repair_target = None
+            self.repair_writing = False
+            return
+        if not self.repair_writing:
+            if om.move_toward(cell_center(r, c), SCRIBE_WALK_SPEED, dt):
+                self.repair_writing = True
+                self.repair_t = 0.0
+                om.face_to(pygame.Vector2(*cell_center(r, c)))
+            return
+        self.repair_t += dt
+        if self.repair_t < OLDMAN_REPAIR_PAUSE:
+            return
+        self.board.state[r][c] = VALID
+        self.board.flash[(r, c)] = SCRIBE_FLASH       # 暖色一闪：和第三幕他写的格一个样子
+        self.board.flash_kind[(r, c)] = "scribe"
+        self.audio.play("paint")
+        self.repair_i += 1
+        self.repair_target = None
+        self.repair_writing = False
+
     def pick_format_target(self):
         """挑下一个要写的格式格：**离他最近的那一格白的**。
 
@@ -493,7 +730,7 @@ class Game:
         """
         self.check_format_broken()
         om = self.oldman
-        if om is None or om.down:                     # 倒下了就写不动了 —— 去救他
+        if om is None or om.gone or om.down:          # 走了 / 倒下了就写不动了（第四幕他已离场）
             return
 
         if self.scribe_target is None:
@@ -566,7 +803,7 @@ class Game:
                 if not self.format_warned:
                     self.format_warned = True
                     self.show_hint(story.HINT_FORMAT_BROKEN, 3.0)
-                    self.say(story.A3_M2, 2.2)
+                    self.mumble(story.A3_M2)
 
     def update_a2_open(self, dt):
         self.open_t += dt
@@ -670,6 +907,9 @@ class Game:
         self.mono_elapsed = 0.0
         self.mono_type_time = 0.0
         self.mono_gap = 0.0
+        self.toasts = []
+        self.mumble_last = ""
+        self.mumble_gap = 0.0
 
     def say(self, text, secs=MONOLOGUE_TIME, who=None):
         """内心独白 / NPC 说话：**整个世界静止**，直到玩家按回车（作者 2026-11-12 定）。
@@ -713,6 +953,24 @@ class Game:
             self.mono_t = MONO_FADE_OUT               # 开始淡出
             self.mono_gap = MONO_REPEAT_GAP           # 同句冷却从「关闭」那一刻算
         return True
+
+    def mumble(self, text, secs=TOAST_TIME, who=None):
+        """嘀咕：**不冻世界**的反馈，飘在他头顶上方一行，2 秒淡掉。
+
+        为什么和 `say()` 分开（作者 2026-11-14）：
+        原来所有心声都冻世界 + 等回车，可「涂错一格」「被咬一口」这种事一分钟要发生十几次，
+        每次都停车读一句，玩起来像被不断打断。真正的问题从来是**遮挡**（框占半屏、怪还在打你），
+        不是世界在动 —— 所以反馈类改成不遮不挡的飘字，叙事类（进幕、老者说话、倒下）仍然停。
+
+        同一句 `TOAST_GAP` 秒内不重复；同时最多 `TOAST_MAX` 条（新的把最老的顶掉）。
+        """
+        if text == self.mumble_last and self.mumble_gap > 0:
+            return
+        self.mumble_last = text
+        self.mumble_gap = TOAST_GAP
+        self.toasts.append([text, 0.0, secs, who or story.SEQUENCER])
+        while len(self.toasts) > TOAST_MAX:
+            self.toasts.pop(0)
 
     def show_hint(self, text, secs=HINT_TIME):
         """系统提示：底部一条，全大写。"""
@@ -879,10 +1137,18 @@ class Game:
             self.update_clear(dt)
         elif st == "REWARD":
             self.update_reward(dt)
+        elif st == "SCAN":
+            self.update_scan(dt)
 
     def tick_timers(self, dt):
         if self.mono_gap > 0:
             self.mono_gap = max(0.0, self.mono_gap - dt)
+        if self.mumble_gap > 0:
+            self.mumble_gap = max(0.0, self.mumble_gap - dt)
+        if self.toasts:
+            for t in self.toasts:
+                t[1] += dt
+            self.toasts = [t for t in self.toasts if t[1] < t[2]]
         if self.hint_t > 0:
             self.hint_t = max(0.0, self.hint_t - dt)
         if self.mono_t > 0:
@@ -976,6 +1242,10 @@ class Game:
         if self.move_time >= TUTORIAL_MOVE_SECONDS and self.prompt_text != story.TUTORIAL_SHIFT:
             self.prompt_text = story.TUTORIAL_SHIFT
 
+    def mirage_radius(self):
+        """这一幕的异象半径：第四幕给 7×7（扫街要覆盖），前三幕还是 5×5。"""
+        return MIRAGE_RADIUS_ACT4 if self.act >= 4 else None
+
     def cast_anomaly(self):
         if self.state not in PAINT_STATES:
             return
@@ -983,7 +1253,7 @@ class Game:
             return
         if self.input.down(SC_J):
             return                                      # 正在涂：按不动异象
-        n = self.board.reveal_around(*self.player.cell)
+        n = self.board.reveal_around(*self.player.cell, radius=self.mirage_radius())
         if n > 0:
             self.audio.play("anomaly")
             if not self.reveal_used:
@@ -1184,9 +1454,9 @@ class Game:
         self.purple_spawned = 0
         # 第一幕「它们要来了」/ 第二幕紫怪那句。第三幕不喊 —— 情绪已经由开场对话给足了。
         if self.act < 2:
-            self.say(story.MONO_INCOMING, 2.8)
+            self.mumble(story.MONO_INCOMING)
         elif self.act < 3:
-            self.say(story.MONO_PURPLE_IN, 2.8)
+            self.mumble(story.MONO_PURPLE_IN)
 
     def update_gap(self, dt):
         self.gap_t += dt
@@ -1195,10 +1465,12 @@ class Game:
 
     # ---------- 战斗 ----------
     def update_battle(self, dt):
-        if self.act >= 3:
+        if self.act == 3:
             self.update_scribe(dt)                   # 他一直在写（写完这一格就清屏了）
             if self.state != "BATTLE":               # 刚写完最后一格 → 已经进 CLEAR
                 return
+        elif self.act >= 4:
+            self.update_repair(dt)                   # 第四、五幕：他只补骨架，不碰数据区
         for m in self.monsters[:]:
             res = m.update(dt, self.board, self.claims, self.player)
             if res != "alive":
@@ -1206,7 +1478,7 @@ class Game:
                     self.health = max(0, self.health - HIT_DAMAGE)
                     self.break_pen()                    # 被咬 → 手里的这一笔断了
                     self.audio.play("hurt")             # 被咬：下坠的一声
-                    self.say(story.MONO_HIT, 1.6)       # 掉血改用心声嘀咕（血量条 HUD 已经反映）
+                    self.mumble(story.MONO_HIT)        # 掉血用飘字：不冻世界，血条 HUD 已经反映
                 elif res == "eat":
                     self.audio.play("red_die")          # 吃掉了黑域，然后自毁
                 self.monsters.remove(m)
@@ -1216,7 +1488,15 @@ class Game:
             self.purple_t += dt
             # 首只按 PURPLE_FIRST_DELAY（作者定 8 秒），之后按 PURPLE_SPAWN_PER_MIN
             # 第三幕慢下来（作者 2026-11-12）：格式信息躺在第 10 行/列上，一次清行能抹掉 16 格
-            rate = PURPLE_SPAWN_PER_MIN_ACT3 if self.act >= 3 else PURPLE_SPAWN_PER_MIN
+            # 第四幕回潮（4 只/分）：那一幕玩家一趟能写几十格，没有清行就没压力
+            if self.act >= 5:
+                rate = PURPLE_SPAWN_PER_MIN_ACT5
+            elif self.act >= 4:
+                rate = PURPLE_SPAWN_PER_MIN_ACT4
+            elif self.act >= 3:
+                rate = PURPLE_SPAWN_PER_MIN_ACT3
+            else:
+                rate = PURPLE_SPAWN_PER_MIN
             due = PURPLE_FIRST_DELAY if self.purple_spawned == 0 else 60.0 / max(rate, 1e-6)
             if self.purple_t >= due:
                 self.purple_t = 0.0
@@ -1232,7 +1512,7 @@ class Game:
                             self.health = max(0, self.health - PURPLE_HIT_DAMAGE)
                             self.break_pen()            # 被撞 → 这一笔也断
                             self.audio.play("hurt")
-                            self.say(story.MONO_PURPLE_HIT, 1.8)
+                            self.mumble(story.MONO_PURPLE_HIT)
                     self.purples.remove(pu)
                     self.claims.clear()          # 紫怪不占 claims，但清一下更稳
 
@@ -1258,6 +1538,22 @@ class Game:
             self.state = "DEAD"
             self.menu_t = 0.0
             return
+        # 第五幕：骨架完好 + 错误压进容错容量 → 码能读了。**先于「涂满了」判定** ——
+        # 这一幕的胜利条件不是「补完」，是「够用」。
+        if self.act >= 5:
+            self.tick_erode(dt)
+            if not self.frame_said and self.frame_broken() > 0:
+                self.frame_said = True                   # 只一次：把「他管骨架」这件事说清
+                self.mumble(story.A5_FRAME)
+            if self.frame_broken() == 0 and self.act5_errors() <= ERROR_TOLERANCE:
+                self.enter_scan()
+                return
+        # 第四幕：快写完了 —— 说一句，只一次（不然整幕静悄悄的，收尾没有情绪）
+        if self.act == 4 and not self.almost_said:
+            owe = len(self.must) - self.board.progress()
+            if 0 < owe <= ALMOST_OWE:
+                self.almost_said = True
+                self.mumble(story.A4_M3)
         if self.board.is_complete():
             self.enter_clear()
 
@@ -1282,10 +1578,20 @@ class Game:
     def hold_paint(self, dt):
         """按住 J 写字：普通格立即落笔，格式格要压满 `FORMAT_HOLD_TIME` 秒。
 
+        **第四幕换成「扫」**（作者 2026-11-14）：按住 J 走过照出来的灰域就自动制造黑域，
+        没照过的格**直接跳过** —— 不写、也不算脏格。于是盲涂在第四幕不是「罚」，是「白走」；
+        压力从手速变成「照哪儿、怎么走」。
+
         进度**绑在这一格上**（`fill_cell`）：松手 / 走开 / 换格都从 0 重数。
         不绑的话会串味 —— 在 A 上按半秒、挪到 B 再按 0.3 秒就能把 B 写掉（实测踩过）。
         """
         r, c = self.player.cell
+        if self.act >= 4:                               # 扫：只写灰域，灰域褪了就停手
+            self.fill_t = 0.0
+            self.fill_cell = None
+            if self.board.reveal[r][c] > 0:
+                self.paint_here()
+            return
         if not self.needs_hold(r, c):
             self.fill_t = 0.0
             self.fill_cell = None
@@ -1317,14 +1623,14 @@ class Game:
                 self.stain_warned = True
                 self.show_hint(story.HINT_CLEAR, 3.0)
             if blind:
-                self.say(story.MONO_BLIND, 1.8)        # 「还没看」→ 嘀咕
+                self.mumble(story.MONO_BLIND)          # 「还没看」→ 嘀咕（不冻世界）
             else:
-                self.say(story.MONO_STAIN, 1.8)        # 涂错成脏格 → 嘀咕「好像失败了」
+                self.mumble(story.MONO_STAIN)          # 涂错成脏格 → 嘀咕「好像失败了」
             if self.board.stains > STAIN_LIMIT:
                 # 额度用完之后的每一格脏格：一次外伤，不是判负
                 self.health = max(0, self.health - STAIN_DAMAGE)
                 self.audio.play("hurt")
-                self.say(story.MONO_STAIN_HURT, 2.0)   # 超标扣血 → 嘀咕
+                self.mumble(story.MONO_STAIN_HURT)     # 超标扣血 → 嘀咕
         elif res == "plain":
             self.audio.play("paint")                    # 平地诱饵也算「写下一格」
 
@@ -1338,13 +1644,15 @@ class Game:
         """黄怪从生成环进场，一路冲老者；被打一次就转火玩家（`YellowOne.update` 里判）。"""
         self.yellow_t += dt
         due = YELLOW_FIRST_DELAY if self.yellow_spawned == 0 else 60.0 / max(YELLOW_SPAWN_PER_MIN, 1e-6)
-        if self.yellow_t >= due and len(self.yellows) < YELLOW_MAX:
+        # 只有第三幕会刷黄怪（2026-11-14 明确定死）：第四幕的追兵是紫怪 + 红怪，
+        # 不然再加上「谁近咬谁」的黄怪，那一幕会同时有扫街、清行、咬人三件事，节奏就散了。
+        if self.act == 3 and self.yellow_t >= due and len(self.yellows) < YELLOW_MAX:
             self.yellow_t = 0.0
             self.yellow_spawned += 1
             self.yellows.append(YellowOne(self.ring_spawn_pos()))
             self.audio.play("purple")                # 低音：和紫怪同一种「东西进场了」
             if self.yellow_spawned == 1:
-                self.say(story.A3_Y1, 2.8)
+                self.mumble(story.A3_Y1)
 
         for y in self.yellows[:]:
             res = y.update(dt, self.oldman, self.player)
@@ -1354,12 +1662,12 @@ class Game:
                     self.on_oldman_down()
                 elif not self.stagger_said:          # 第一次被咬断：他自己嘟囔一句（只一次，不然太吵）
                     self.stagger_said = True
-                    self.say(story.A3_STAGGER, 2.4, who=story.OLD_MAN)
+                    self.mumble(story.A3_STAGGER, who=story.OLD_MAN)
             elif res == "bite_player":
                 self.health = max(0, self.health - YELLOW_PLAYER_DAMAGE)
                 self.break_pen()                     # 被黄怪咬：正在制造的黑域作废（作者 2026-11-13）
                 self.audio.play("hurt")
-                self.say(story.MONO_HIT, 1.4)
+                self.mumble(story.MONO_HIT)
 
     def on_oldman_down(self):
         """老者倒下：停笔、呼救、等玩家来救（作者定：站到他旁边按住 H 四秒）。"""
@@ -1389,7 +1697,7 @@ class Game:
             om.revive(OLDMAN_REVIVE_HP)
             self.audio.play("clear")
             self.hint_text, self.hint_t = "", 0.0
-            self.say(story.A3_UP_MAN, 2.4, who=story.OLD_MAN)   # 他自己回一句
+            self.mumble(story.A3_UP_MAN, who=story.OLD_MAN)     # 他自己回一句
             self.blast_yellows(om)
 
     def blast_yellows(self, om, radius=OLDMAN_BLAST_RADIUS):
@@ -1476,11 +1784,12 @@ class Game:
 
         心声**只在第一次**被清时说（`A2_M4`，作者 2026-11-12：每次都说会影响体验）。
         之后靠画面（整条变白）+ "wipe" 音效就够了，玩家自己看得见。
+        第四幕换一句 `A4_M2` —— 那一幕你一眨眼就写了十几格，被清一行是另一种痛。
         """
         self.audio.play("wipe")
         if not self.wipe_warned:                     # 一生只一次：正式独白
             self.wipe_warned = True
-            self.say(story.A2_M4)
+            self.mumble(story.A4_M2 if self.act >= 4 else story.A2_M4)
 
     def ring_spawn_pos(self):
         """在 30×30 生成环上随机取一点（红怪和紫怪共用）。"""

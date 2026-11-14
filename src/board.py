@@ -92,16 +92,17 @@ class Board:
         self.flash[(r, c)] = 0.15
         self.flash_kind[(r, c)] = kind
 
-    def reveal_around(self, r, c):
+    def reveal_around(self, r, c, radius=None):
         """异象：以 (r,c) 为中心 (2R+1)² 照出灰域，返回被点亮（含给旧灰域续期）的格数。
 
         - 只在圣坛内生效；站在平地上按 Shift 一个灰域都没有（叙事设定 + 玩法边界）
         - 只照「该黑且还白」的格子：已经涂黑的、本来就不该黑的，照了也没意义
         - 已经照过的格子会把 5 秒重新充满（再照一次就是再看一眼）
+        - `radius` 不传就用默认的 `MIRAGE_RADIUS`；第四幕给 3（7×7），因为那一幕是「扫」
         """
         if not self.in_altar(r, c):
             return 0
-        k = MIRAGE_RADIUS
+        k = MIRAGE_RADIUS if radius is None else radius
         n = 0
         for rr in range(max(0, r - k), min(GRID_N, r + k + 1)):
             for cc in range(max(0, c - k), min(GRID_N, c + k + 1)):
