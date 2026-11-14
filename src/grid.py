@@ -6,7 +6,7 @@
 
 import pygame
 
-from src.config import CELL, GRID_N, GRID_ORIGIN, TARGET_N, TARGET_OFFSET
+from src.config import CELL, GRID_ORIGIN, TARGET_N, TARGET_OFFSET
 
 # ==== 坐标工具 ====
 

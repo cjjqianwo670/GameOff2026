@@ -10,7 +10,6 @@
 """
 
 import math
-import random
 from typing import TYPE_CHECKING
 
 import pygame
@@ -22,18 +21,19 @@ from src import sprites, story
 from src.config import (
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
     C_BAG_SLOT, C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_ITEM_INK,
-    C_ITEM_PAPER, C_ITEM_PAPER_DARK, C_ITEM_LEATHER_DARK, C_MISSING, C_MONSTER, C_MUST,
-    C_OUTLINE, C_PLAYER, C_PURPLE,
+    C_ITEM_PAPER, C_ITEM_PAPER_DARK, C_ITEM_LEATHER_DARK, C_MONSTER, C_MUST,
+    C_OUTLINE, C_PLAYER, C_PURPLE, C_MIRAGE,
     C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PROP_TOOL, C_RING,
-    C_TEXT, C_WARN,
+    C_BOX, C_PAPER, C_TEXT, C_WARN,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
     ERASE_CAST, ERASING, FORMAT_HOLD_TIME, GRID_N, SCAN_TIME,
-    GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HINT_Y, HUD_X, HUD_Y, INTRO_FALL, INTRO_SHOW,
+    GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HEALTH_WARN, HINT_Y, HUD_X, HUD_Y,
+    INTRO_FALL, INTRO_PRINT, INTRO_SHOW,
     INTRO_TOTAL, MAP_CELL, MAP_SCROLL_H, MAP_SCROLL_W, MAP_Y, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
     MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H,
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
-    OLDMAN_HP, OLDMAN_REVIVE_TIME, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN,
+    OLDMAN_HP, OLDMAN_REVIVE_TIME, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN,
     SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
     TARGET_OFFSET, THREAT_Y, VALID, WHITE, WINDOW_H, WINDOW_W
 )
@@ -55,29 +55,30 @@ PANEL_INNER = PANEL_W - PANEL_PAD * 2
 TITLE_CELL = 26                                  # 背景水印每格像素（21×26 = 546）
 TITLE_CODE_Y = 428                               # 水印中心（下缘 701，正好让开键帽那一行）
 TITLE_GROW = 1.7                                 # 「写出来」用多久（秒）
-C_RULE = (86, 66, 48)                            # 标题下那条细线（比面板线亮一档，才看得见）
-C_CODE_FAR = (49, 35, 25)                        # 水印墨色：只比底色亮一点，是纹理不是图案
-C_CODE_NEAR = (72, 52, 36)                       # 扫描带经过时被点亮的墨色
+# 标题下那行小字。原来写的是「ACT 1」—— 但这一页是**整局**的封面（五幕、也包含通关后回到这里），
+# 标幕号既多余又不对。留空 = 不画；想放一句副标题就改这里。
+TITLE_SUB = ""
+C_RULE = (72, 104, 140)                          # 标题下那条细线（比面板线亮一档，才看得见）
+C_CODE_FAR = (26, 42, 62)                        # 水印墨色：只比底色亮一点，是纹理不是图案
+C_CODE_NEAR = (58, 88, 124)                      # 扫描带经过时被点亮的墨色
 
 _TITLE_CACHE = {}
 
 
 def _title_code():
-    """开始页背景那张码：**每次启动现抽一张**真二维码，纯装饰，和这一局的目标码无关。
+    """开始页背景那张码：**就是本局要复原的那一张**（作者 2026-11-14 定）。
+
+    以前是「每次启动现抽一张、和这一局的码无关」（2026-11-12 的结论）；
+    内容固定成 `config.QR_CONTENT` 之后，封面 / 棋盘 / 终幕那张卡是同一张码 ——
+    于是宣传图、预告、截图里那张码，扫出来和玩家结局扫出来的是**同一句话**。
 
     用真码而不是随机点阵，是因为三个定位图案一眼就能认出「这是个码」，
-    和游戏里那座圣坛是同一个东西。
-
-    ⚠️ 两个「随机」不是一回事，别把它们接上线：
-      · 这张 → `random.Random()`（**不带种子**，每次启动不同，进程内只抽一次并缓存）；
-      · 圣坛那张 → `Game.start_act()` 里用 `Game.rng` 现生成，每局不同。
-    它们互相独立（作者 2026-11-12 确认：封面那张不该是你要复原的那张）。
-    进程内缓存是必须的 —— 每帧现抽的话水印会一直在闪。
+    和游戏里那座圣坛是同一个东西。进程内缓存是必须的 —— 每帧现算会掉帧。
     """
     mat = _TITLE_CACHE.get("code")
     if mat is None:
         from src import qr                        # 延迟导入：只有开始页需要
-        mat, _ = qr.generate_target(random.Random())   # 不传种子 = 每次启动新的一张
+        mat, _ = qr.generate_target()             # 内容固定，所以每局每启动都一样
         _TITLE_CACHE["code"] = mat
     return mat
 
@@ -137,7 +138,7 @@ def _title_word(g: "Game"):
         for (word, color), w in zip(parts, widths):
             main.blit(g.f_big.render(word, True, color), (x, 0))
             ghost.blit(g.f_big.render(word, True, C_ACCENT), (x, 0))
-            shadow.blit(g.f_big.render(word, True, (8, 6, 5)), (x, 0))
+            shadow.blit(g.f_big.render(word, True, (6, 10, 18)), (x, 0))
             x += w + gap
         imgs = (main, ghost, shadow)
         _TITLE_CACHE["word"] = imgs
@@ -228,7 +229,8 @@ def draw_title(g: "Game"):
 
     _draw_title_word(g, s, t)
     _draw_title_rule(s)
-    center_txt(g, "ACT 1", (WINDOW_W // 2, 434), g.f_mid, C_ERASING)
+    if TITLE_SUB:                                    # 副标题：留空就什么都不画
+        center_txt(g, TITLE_SUB, (WINDOW_W // 2, 436), g.f_main, C_ERASING)
 
     _draw_title_enter(g, s, t)
     _draw_title_controls(g, s, 720)
@@ -369,11 +371,9 @@ def draw_world(g: "Game"):
 
     _draw_toasts(g, s)                               # 嘀咕：飘在头顶，不挡、不冻世界
 
-    # 碎片画在最上层
-    for d in g.debris:
-        rect = pygame.Rect(int(d[0]), int(d[1]), CELL, CELL)
-        s.fill(C_MISSING, rect)
-        pygame.draw.rect(s, C_CELL_LINE, rect, 1)
+    # 碎片画在最上层：先炸开、再被吸回脚下（塌完就只剩那一片灰）
+    if g.debris:
+        _draw_debris(g, s)
 
     # 威胁台词（红怪的狠话）
     if g.threat_t > 0:
@@ -471,19 +471,93 @@ def _draw_scan(g, s):
     s.blit(halo, (rect.left, y - 5))
 
 
+def _intro_glitch(tr, tc, t, rate=34):
+    """颤动阶段的 bit flip：每帧约 3% 的模块闪白。
+
+    用坐标 + 时间的哈希，不存状态 —— 这样抖动是「这一格这一刻该不该闪」，
+    而不是一串要维护的随机数；也让同一帧重画（截图 / 测试）结果一致。
+    """
+    h = (tr * 73856093) ^ (tc * 19349663) ^ (int(t * 40.0) * 83492791)
+    return (h & 1023) < rate
+
+
 def _draw_intro_code(g, s):
-    """开场前 1.5 秒：整张码用黑色铺出来（先单独亮一下暗模块）。"""
+    """开场前 1.5 秒：一条扫描线从上往下把整张码印出来，印完开始颤。"""
     t = INTRO_TOTAL - g.intro_t
-    if t < DARK_MODULE_LEAD:
-        dr, dc = DARK_MODULE
-        s.fill(C_CELL_BLACK, cell_to_rect(TARGET_OFFSET[0] + dr, TARGET_OFFSET[1] + dc))
-        return
     orr, occ = TARGET_OFFSET
+    if t < DARK_MODULE_LEAD:                     # 第一拍：暗模块先单独亮一下
+        dr, dc = DARK_MODULE
+        s.fill(C_CELL_BLACK, cell_to_rect(orr + dr, occ + dc))
+        return
+
+    span = max(0.01, INTRO_PRINT - DARK_MODULE_LEAD)
+    p = min(1.0, (t - DARK_MODULE_LEAD) / span)
+    front = p * (TARGET_N + 1.0)                 # 印到第几行（浮点；末尾稍微超扫，保证印满）
+    shaking = g.shake_t > 0
     for tr in range(TARGET_N):
+        if tr > front:
+            break
         row = g.target[tr]
         for tc in range(TARGET_N):
-            if row[tc]:
-                s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
+            if not row[tc]:
+                continue
+            if shaking and _intro_glitch(tr, tc, t):
+                continue                         # 颤动：这一格这一帧闪白
+            s.fill(C_CELL_BLACK, cell_to_rect(orr + tr, occ + tc))
+
+    if p < 1.0:                                  # 还在印：扫描线 + 上方一层光晕
+        rows = min(front, TARGET_N - 1.0)
+        y = int(GRID_ORIGIN[1] + (occ + rows + 1.0) * CELL)
+        x0 = GRID_ORIGIN[0] + occ * CELL
+        w = TARGET_N * CELL
+        halo = pygame.Surface((w, 18), pygame.SRCALPHA)
+        halo.fill((*C_ACCENT, 46))
+        s.blit(halo, (x0, y - 18))
+        s.fill(C_ACCENT, pygame.Rect(x0, y - 1, w, 3))
+
+
+def _debris_col(k):
+    """碎片在这一刻的颜色：黑（the Dark）→ 灰（异象那个灰）→ 白（底色）。
+
+    塌陷途中变灰是关键：这样「码碎了」和「异象亮着」是同一种颜色语言，
+    碎片收完，脚下那片灰就接上了。
+    """
+    if k <= 0.55:
+        a, b, u = C_CELL_BLACK, C_MIRAGE, k / 0.55
+    else:
+        a, b, u = C_MIRAGE, C_CELL_WHITE, (k - 0.55) / 0.45
+    return tuple(int(a[i] + (b[i] - a[i]) * u) for i in range(3))
+
+
+def _draw_debris(g, s):
+    """塌陷：冲击环 + 白闪 + 缩小的碎片。
+
+    ⚠️ 全部裁在**棋盘矩形**里：碎片和冲击环跑出圣坛边界会糊到右侧面板和褐色背景上，
+    看起来像 bug 而不是「炸开」。裁掉之后，这一下就只发生在「地上那张码」的范围里。
+    """
+    k = min(1.0, max(0.0, (INTRO_TOTAL - g.intro_t - INTRO_SHOW) / INTRO_FALL))
+    cx, cy = getattr(g, "burst_center", (WINDOW_W / 2.0, WINDOW_H / 2.0))
+    old_clip = s.get_clip()
+    s.set_clip(pygame.Rect(GRID_ORIGIN, (GRID_PX, GRID_PX)))
+
+    if k < 0.08:                                  # 炸开那一下的白闪（4 帧）
+        a = int(120 * (1.0 - k / 0.08))
+        flash = pygame.Surface((TARGET_N * CELL, TARGET_N * CELL), pygame.SRCALPHA)
+        flash.fill((255, 255, 255, a))
+        s.blit(flash, (GRID_ORIGIN[0] + TARGET_OFFSET[1] * CELL,
+                       GRID_ORIGIN[1] + TARGET_OFFSET[0] * CELL))
+    if k < 0.45:                                  # 冲击环：从脚下荡出去，前 45% 散完
+        u = k / 0.45
+        col = tuple(int(C_ACCENT[i] + (C_CELL_WHITE[i] - C_ACCENT[i]) * u) for i in range(3))
+        pygame.draw.circle(s, col, (int(cx), int(cy)), int(60 + 620 * u), 2)
+
+    for d in g.debris:
+        scale = d[4] if len(d) > 4 else 1.0
+        dk = d[5] if len(d) > 5 else 0.0
+        size = max(2, int(CELL * scale))
+        rect = pygame.Rect(int(d[0] - size / 2.0), int(d[1] - size / 2.0), size, size)
+        s.fill(_debris_col(dk), rect)
+    s.set_clip(old_clip)
 
 
 def _draw_ghost(g, s):
@@ -686,7 +760,7 @@ def mix(a, b, k):
             int(a[2] + (b[2] - a[2]) * k))
 
 
-def draw_bar(g: "Game", rect, frac, color, back=(19, 14, 11)):
+def draw_bar(g: "Game", rect, frac, color, back=(12, 20, 32)):
     s = g.screen
     s.fill(back, rect)
     w = int(rect.w * max(0.0, min(1.0, frac)))
@@ -713,7 +787,14 @@ def draw_hud(g: "Game"):
     x = PANEL_X + PANEL_PAD
 
     hp = g.health
-    hp_col = C_MONSTER if hp <= HEALTH_LOW else C_ACCENT
+    # 三档：正常青绿 / 60% 以下转黄（预警）/ 35% 以下转红（快死了）。
+    # 原来只有 30% 一档，玩家在 55% 时看到的还是「一切正常」的青绿 —— 太晚。
+    if hp <= HEALTH_LOW:
+        hp_col = C_MONSTER
+    elif hp <= HEALTH_WARN:
+        hp_col = C_WARN
+    else:
+        hp_col = C_ACCENT
     txt(g, "HEALTH", (x, 96), g.f_small, C_DIM)
     txt(g, "%d%%" % hp, (x + PANEL_INNER, 92), g.f_panel, hp_col, right=True)
     draw_bar(g, pygame.Rect(x, 126, PANEL_INNER, 24), hp / float(HEALTH_MAX), hp_col)
@@ -1011,7 +1092,7 @@ def _speech_box(s, g, box, name, who, solid_tab=True):
     `solid_tab=False` 时名牌改成空心描边（字用强调色）—— 心声用它：
     同一个框、同一个名牌位置，但一眼看得出「这是心里说的，不是开口说的」。
     """
-    s.fill((20, 14, 11), box)                 # 实心：半透明会把底下的白格透出来，显得脏
+    s.fill(C_BOX, box)                        # 实心：半透明会把底下的白格透出来，显得脏
     pygame.draw.rect(s, C_PANEL_LINE, box, 1)
     _corner_brackets(s, box, 20, who)
     img = g.f_dlg_name.render(name, True, who if not solid_tab else (8, 10, 14))
@@ -1019,7 +1100,7 @@ def _speech_box(s, g, box, name, who, solid_tab=True):
     if solid_tab:
         s.fill(who, tab)
     else:
-        s.fill((20, 14, 11), tab)
+        s.fill(C_BOX, tab)
         pygame.draw.rect(s, who, tab, 1)
     s.blit(img, img.get_rect(center=tab.center))
 
@@ -1207,15 +1288,69 @@ def draw_dead(g: "Game"):
 
 def draw_end(g: "Game"):
     s = g.screen
-    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-    # 第五幕是终幕：压得轻一点，让**写满的那张码**在后面亮着（它本身就是结局）
-    veil.fill((0, 0, 0, 188 if g.act >= 5 else 216))
+    if g.act >= 5:
+        # 终幕直接盖成纯底：那张**干净**的码是唯一主角。
+        # 试过 188 / 210 / 246 三档遮罩，棋盘和 HUD 总会从底下透出来 ——
+        # 屏幕上同时有两张码，视觉上就是在打架（虽然卡上那张照样能扫）。
+        # 因为整屏都归它了，排版也改成**整窗居中**（PLAY_W//2 会偏到左边）。
+        s.fill(C_BG)
+        _draw_clean_code(g, s)
+        cx = WINDOW_W // 2
+        center_txt(g, g.banner_text, (cx, 604), g.f_big, C_TEXT)
+        if getattr(g, "end_line", ""):
+            center_txt(g, g.end_line, (cx, 660), g.f_mid, C_ACCENT)
+        if int(g.menu_t * 2.0) % 2 == 0:
+            center_txt(g, "PRESS ENTER", (cx, 722), g.f_main, C_ERASING)
+        return
+    # 幕末压暗：**只压世界，不把 HUD 一起黑掉**。
+    # 原来是一张盖满整屏的 216 遮罩，右侧面板连数字都看不见 —— 第一眼像游戏卡死了。
+    # 现在世界照旧压满（幕结束，舞台暗下来），状态面板只压一档，留得住最后的数字。
+    veil = pygame.Surface((PLAY_W, WINDOW_H), pygame.SRCALPHA)
+    veil.fill((0, 0, 0, 216))
     s.blit(veil, (0, 0))
+    side = pygame.Surface((WINDOW_W - PLAY_W, WINDOW_H), pygame.SRCALPHA)
+    side.fill((0, 0, 0, 96))                         # 96 ≈ 留 62% 亮度
+    s.blit(side, (PLAY_W, 0))
     center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
     if getattr(g, "end_line", ""):                   # 结局副标题：这张码到底写了什么
         center_txt(g, g.end_line, (PLAY_W // 2, WINDOW_H // 2 + 30), g.f_mid, C_ACCENT)
     if int(g.menu_t * 2.0) % 2 == 0:
         center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
+
+
+END_CODE_MODULE = 12           # 终幕那张码每格多少像素（≥6 才好扫，12 是整屏的观感上限）
+END_CODE_QUIET = 4             # 静区格数（QR 规范下限，别减）
+
+
+def _end_code_rect(g):
+    """终幕那张卡的位置和尺寸。**画和测试都用它** —— 两边各算一遍迟早会走偏。"""
+    n = len(g.target)
+    side = (n + END_CODE_QUIET * 2) * END_CODE_MODULE
+    return WINDOW_W // 2 - side // 2, 200, side
+
+
+def _draw_clean_code(g, s, module=END_CODE_MODULE, quiet=END_CODE_QUIET):
+    """终幕那张「能扫」的码：**没有网格线、有静区、纸是白的**。
+
+    棋盘上的那张码是「你在写的东西」，带格子、带绿框、带光晕 —— 手机扫不出来。
+    所以结局另画一张印刷版：21×21 + 四周 4 格静区（QR 规范要求，少了扫不出），
+    底色用暖白（和 C_TEXT 同色），模块用近黑。这张是「你写出来的东西在现实里的样子」。
+
+    它也是全游戏唯一一个**出了屏幕还有用**的东西：玩家可以拿手机扫自己的结局。
+    """
+    mat = g.target
+    n = len(mat)
+    x0, y0, side = _end_code_rect(g)
+    module = side // (n + quiet * 2)                 # 由 rect 反推，别让两个地方各算一遍
+    card = pygame.Surface((side, side))
+    card.fill(C_PAPER)
+    for r in range(n):
+        for c in range(n):
+            if mat[r][c]:
+                card.fill(C_CELL_BLACK, ((c + quiet) * module, (r + quiet) * module,
+                                         module, module))
+    s.blit(card, (x0, y0))
+    pygame.draw.rect(s, C_ACCENT, (x0 - 1, y0 - 1, side + 2, side + 2), 1)
 
 
 def make_stain_tile():

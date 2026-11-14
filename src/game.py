@@ -26,15 +26,16 @@ from src import sfx, story
 from src.board import Board
 from src.config import (
     BANNER_TIME, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_BG, C_MIRAGE, C_MONSTER, C_OLDMAN,
-    C_PLAYER, C_PURPLE, CLOSE_RANGE_PX, DEBRIS_GRAVITY, DEBRIS_JITTER, DEBRIS_SPEED, DEBRIS_UP, FPS,
+    C_PLAYER, C_PURPLE, CLOSE_RANGE_PX, DEBRIS_ANGLE, DEBRIS_DEATH, DEBRIS_DRAG, DEBRIS_SHRINK,
+    DEBRIS_POP, DEBRIS_PULL, DEBRIS_PULL_EASE, DEBRIS_UP, FPS,
     GAP_SECONDS, HEALTH_MAX, HINT_TIME, HIT_DAMAGE, INTRO_FADE, INTRO_FALL, INTRO_SHOW, MIRAGE_ALPHA_MAX,
-    CLEAR_GLOW_TIME, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
+    CLEAR_GLOW_TIME, MINI_WAVE_REACH, DLG_CPS, DLG_FONT, DLG_LAST_MIN_SHOW, DLG_NAME_FONT, INTRO_TOTAL, MAP_OPEN_TIME,
     ITEM_PICK_RANGE,
     ITEM_RISE_TIME, MONO_CPS, MONO_FADE_OUT, MONO_FONT, MONO_REPEAT_GAP, MONOLOGUE_TIME, OLDMAN_CELL,
     TOAST_GAP, TOAST_MAX, TOAST_TIME,
     OLDMAN_BLAST_RADIUS, OLDMAN_HP, OLDMAN_REVIVE_HP,
     OLDMAN_REVIVE_RANGE, OLDMAN_REVIVE_TIME, PROMPT_FONT,
-    OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PROP_DEAD_CELL, PROP_RANGE_PX,
+    OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PLAYER_START_CELL, PROP_DEAD_CELL, PROP_RANGE_PX,
     PROP_TOOL_CELL, RED_RADIUS, RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
     RED_SPD_JITTER,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
@@ -46,7 +47,7 @@ from src.config import (
     THREAT_TIME, VALID, WHITE, YELLOW_BITE_DAMAGE, YELLOW_FIRST_DELAY, YELLOW_PLAYER_DAMAGE,
     YELLOW_MAX, YELLOW_SPAWN_PER_MIN,
     ANOMALY_MISS_LIMIT, TUTORIAL_MOVE_SECONDS, WINDOW_H, WINDOW_W,
-    A2_OPEN_SECONDS, PURPLE_EAT_DIST, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE, PURPLE_SPAWN_PER_MIN,
+    A2_OPEN_SECONDS, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE, PURPLE_SPAWN_PER_MIN,
     PURPLE_SPAWN_PER_MIN_ACT3, PURPLE_SPAWN_PER_MIN_ACT4,
     MIRAGE_RADIUS_ACT4, ALMOST_OWE, ERODE_BLOCKS, PURPLE_SPAWN_PER_MIN_ACT5, SCAN_TIME,
     ERODE_EVERY, ERODE_CAP, OLDMAN_REPAIR_PAUSE
@@ -252,6 +253,9 @@ class Game:
         self.move_time = 0.0
         self.last_cell = None
         self.reveal_used = False
+        self.looked = False             # 「认真看过一次地面」：T 的提示要等它
+        self.taught_write = False       # 第一笔落下去之前，一直教「站在灰上按 J」
+        self.tut_t = 0.0                # 教程计时：站着不动的玩家也得收到提示
         self.anomaly_miss = 0
         self.stain_warned = False
         self.wipe_warned = False                     # 第二幕：第一次被清行的独白只放一次
@@ -296,7 +300,12 @@ class Game:
     def start_act(self):
         self.act = 1
         self.target, self.qr_content = generate_target(self.rng)
-        self.must = required_cells(self.target, act=self.act)
+        self.must_all = required_cells(self.target, act=self.act)
+        # 第一幕分两波（2026-11-14）：先写完自己醒来的那个角（左下定位图案 33 格）→ 一次清屏 →
+        # 再写另外两个角 + 暗模块（67 格）。理由：100 格是全程最长的活，却压在玩家最不熟练的时候；
+        # 拆开之后「清屏」这个爽点在第一幕就出现一次，而不是只在幕末。
+        self.act1_wave = 1
+        self.must = self.wave1_cells()
         self.board = Board(self.target, self.must)
         self.player = Player()
         self.oldman = OldMan(OLDMAN_CELL, facing=0)      # 背对玩家：朝世界外（上方）
@@ -323,6 +332,9 @@ class Game:
         self.move_time = 0.0
         self.last_cell = self.player.cell
         self.reveal_used = False
+        self.looked = False             # 「认真看过一次地面」：T 的提示要等它
+        self.taught_write = False       # 第一笔落下去之前，一直教「站在灰上按 J」
+        self.tut_t = 0.0                # 教程计时：站着不动的玩家也得收到提示
         self.anomaly_miss = 0
         self.stain_warned = False
         self.wipe_warned = False
@@ -335,6 +347,7 @@ class Game:
         self.prop_done = {"dead": False, "tool": False}
 
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
+        self.mini_wave = False                       # 第一幕第一波那种「只放波、不放道具」的清屏
         self.items = []
         self.has_bag = self.has_map = self.has_sword = False
         self.format_cells = set()
@@ -351,6 +364,9 @@ class Game:
         self.fill_cell = None
         self.hold_said = False
         self.almost_said = False
+        self.taught_write = False
+        self.looked = False
+        self.tut_t = 0.0
         self.repair_cells = set()
         self.repair_target = None
         self.repair_writing = False
@@ -377,6 +393,7 @@ class Game:
         # 开场动画：完整码铺出 → 抖 → 碎成碎片 → 只剩脚下 5×5
         self.intro_t = INTRO_TOTAL
         self.debris = []
+        self.burst_center = cell_center(*self.player.cell)   # 塌陷的收敛点：脚下，不是屏幕中心
         self.shake_t = 0.0
         self.shake_started = False
         self.shake_off = (0, 0)
@@ -385,6 +402,36 @@ class Game:
 
         self.state = "INTRO"
         self.input.held.clear()
+
+    def wave1_cells(self):
+        """第一幕第一波要写的格：**左下定位图案**的 33 个黑格。
+
+        出生点 `(19,5)` 就在这一块的 3×3 黑核正中 —— 所以第一波是「把你醒来的那个角补完」，
+        不是随机切一刀。⚠️ 出生点换到哪个角，这里就得跟着换：
+        否则一睁眼脚下没有活，开场那片灰是空的，`reveal_around` 也照不出东西（2026-11-14 教训）。
+        """
+        orr, occ = TARGET_OFFSET
+        return {(orr + r, occ + c) for r in range(14, 21) for c in range(7) if self.target[r][c]}
+
+    def start_wave2(self):
+        """第一波清完：换回整张码，接着写另外两个角和暗模块。
+
+        ⚠️ 这里**重打检查点**（state=BATTLE）：第一波写完是一个真正的里程碑，
+        死在第二波不该被踢回「什么都没写」的开场。
+        """
+        self.act1_wave = 2
+        self.must = set(self.must_all)
+        self.board.set_must(self.must)
+        self.state = "BATTLE"
+        self.mini_wave = False
+        self.clear_phase = None
+        self.clear_t = 0.0
+        self.wave_r = 0.0
+        self.spawn_acc = 0.0
+        owe = len(self.must) - self.board.progress()
+        self.show_hint(story.HINT_WAVE2 % owe, 4.0)
+        self.say(story.A1_WAVE)
+        self.checkpoint = self.make_checkpoint()
 
     def next_act(self):
         """幕结束画面按下回车：1 → 2 → 3 → 4 → 5；第五幕之后回标题。"""
@@ -443,6 +490,9 @@ class Game:
         self.fill_cell = None
         self.hold_said = False
         self.almost_said = False
+        # ⚠️ 这里**故意不复位** taught_write / looked：Shift 和 J 只教一次，
+        # 每一幕开头再把提示顶出来就是噪音（2026-11-14 审计发现）。只有 start_act（重开一局）才清。
+        self.tut_t = 0.0
         self.repair_cells = set()
         self.repair_target = None
         self.repair_writing = False
@@ -469,6 +519,7 @@ class Game:
         self._begin_act(2)
         # 同一个 target、同一个 board：只把必涂格从 100 扩到 106
         self.must = required_cells(self.target, act=2)
+        self.must_all = set(self.must)                   # 幕变了，must_all 也跟着幕走
         self.board.set_must(self.must)
 
         # 开场：一行独白，不打断操作；读完自动进战斗
@@ -486,6 +537,7 @@ class Game:
         """
         self._begin_act(3)
         self.must = required_cells(self.target, act=3)   # 106 + 格式信息里该黑的 10~20 格
+        self.must_all = set(self.must)
         self.board.set_must(self.must)
 
         # 他按顺序写：先把「贴着左上的那一份」写完，再写「右上 + 左下」那一份
@@ -518,6 +570,7 @@ class Game:
         """
         self._begin_act(4)
         self.must = required_cells(self.target, act=4)    # 整张码的所有黑格 206~244
+        self.must_all = set(self.must)
         self.board.set_must(self.must)
 
         # 他只负责这一批格（结构黑格），玩家负责数据区
@@ -546,6 +599,7 @@ class Game:
         """
         self._begin_act(5)
         self.must = required_cells(self.target, act=4)    # 整张码（和第四幕同一套必涂格）
+        self.must_all = set(self.must)
         self.board.set_must(self.must)
         self.cw_modules, self.fn_modules = module_table(self.target)
 
@@ -831,6 +885,7 @@ class Game:
             "act": self.act,
             "state": self.state,          # 第一幕回 GAP、第二幕回 A2_OPEN
             "must": set(self.must),
+            "act1_wave": getattr(self, "act1_wave", 1),
             "bag": self.has_bag,          # 第一幕之后一直带着，回检查点不能丢
             "map": self.has_map,
             "sword": self.has_sword,      # 第二幕之后一直带着
@@ -845,6 +900,7 @@ class Game:
         if "must" in cp:
             self.must = set(cp["must"])
             self.board.set_must(self.must)
+        self.act1_wave = cp.get("act1_wave", 1)
         self.health = cp["health"]
         self.elapsed = cp["elapsed"]
         self.spawn_rate = cp["spawn_rate"]
@@ -1140,6 +1196,11 @@ class Game:
         elif st == "SCAN":
             self.update_scan(dt)
 
+        if st in PAINT_STATES:
+            if st != "TUTORIAL":                 # 教程自己有一套提示顺序，别抢
+                self.update_look_prompt()
+            self.update_write_prompt()
+
     def tick_timers(self, dt):
         if self.mono_gap > 0:
             self.mono_gap = max(0.0, self.mono_gap - dt)
@@ -1186,14 +1247,10 @@ class Game:
         else:
             self.shake_off = (0, 0)
 
-        alive = []
-        for d in self.debris:
-            d[3] += DEBRIS_GRAVITY * dt
-            d[0] += d[2] * dt
-            d[1] += d[3] * dt
-            if d[1] < WINDOW_H + CELL:
-                alive.append(d)
-        self.debris = alive
+        # 塌陷：碎片被吸回脚下（k = 这一拍走了多少）
+        if self.burst_done:
+            k = min(1.0, max(0.0, (t - INTRO_SHOW) / INTRO_FALL))
+            self._collapse_debris(dt, k)
 
         # 淡入只到「灰域最深」那一档，和醒来后脚下那一片无缝接上
         fade_start = INTRO_SHOW + INTRO_FALL
@@ -1208,9 +1265,20 @@ class Game:
             self.enter_tutorial()
 
     def burst(self):
+        """炸开：每一格变成一个**要被吸回去**的碎片。
+
+        ⚠️ 收敛点是**玩家脚下**，不是屏幕中心（2026-11-14）。出生点挪到定位图案之后，
+        从屏幕中心炸开会显得「我掉到了角落」；从脚下炸开再收回脚下，讲的是同一件事：
+        这张码最后只剩你脚边那一小片。
+
+        每个碎片存 `[x, y, vx, vy, scale, k]`，`max(CELL/2)` 是它的中心点。
+        """
         orr, occ = TARGET_OFFSET
-        cx, cy = WINDOW_W / 2.0, WINDOW_H / 2.0
+        pr, pc = self.player.cell
+        cx, cy = cell_center(pr, pc)
+        self.burst_center = (cx, cy)
         self.debris = []
+        far = math.hypot(WINDOW_W / 2.0 - cx, WINDOW_H / 2.0 - cy) or 1.0
         for tr in range(TARGET_N):
             row = self.target[tr]
             for tc in range(TARGET_N):
@@ -1218,11 +1286,39 @@ class Game:
                     continue
                 x, y = cell_center(orr + tr, occ + tc)
                 dx, dy = x - cx, y - cy
-                dist = (dx * dx + dy * dy) ** 0.5 or 1.0
-                speed = random.uniform(*DEBRIS_SPEED)
-                vx = dx / dist * speed + random.uniform(-DEBRIS_JITTER, DEBRIS_JITTER)
-                vy = dy / dist * speed - random.uniform(0, DEBRIS_UP)
-                self.debris.append([x - CELL / 2.0, y - CELL / 2.0, vx, vy])
+                d = math.hypot(dx, dy) or 1.0
+                # 离得越远炸得越快：远处先散，近处先被吸回来，中间不会挤成一团
+                speed = self.rng.uniform(*DEBRIS_POP) * (0.45 + 0.75 * d / far)
+                ang = math.atan2(dy, dx) + self.rng.uniform(-DEBRIS_ANGLE, DEBRIS_ANGLE)
+                self.debris.append([x, y, math.cos(ang) * speed,
+                                    math.sin(ang) * speed - DEBRIS_UP,
+                                    1.0, 0.0, self.rng.uniform(*DEBRIS_DEATH)])
+
+    def _collapse_debris(self, dt, k):
+        """塌陷每一帧：阻尼 + 向玩家的引力（越到后面吸得越狠）。
+
+        每个碎片有自己的死亡尺寸（`d[6]`），缩到就消失 —— 所以这一批是**渐次**没的，
+        不会在 k=1 那一帧整批凭空不见。
+        """
+        cx, cy = self.burst_center
+        pull = DEBRIS_PULL * (k ** DEBRIS_PULL_EASE)
+        drag = math.exp(-DEBRIS_DRAG * dt)
+        alive = []
+        for d in self.debris:
+            d[2] *= drag
+            d[3] *= drag
+            dx, dy = cx - d[0], cy - d[1]
+            dist = math.hypot(dx, dy) or 1.0
+            if dist > 1.0:
+                d[2] += dx / dist * pull * dt
+                d[3] += dy / dist * pull * dt
+            d[0] += d[2] * dt
+            d[1] += d[3] * dt
+            d[4] = max(0.0, 1.0 - (k / d[6]) ** DEBRIS_SHRINK)
+            d[5] = k
+            if dist > 3.0 and d[4] > 0.02:
+                alive.append(d)
+        self.debris = alive
 
     def enter_tutorial(self):
         self.state = "TUTORIAL"
@@ -1239,12 +1335,50 @@ class Game:
         if self.oldman_dist() <= CALL_RANGE_PX:
             self.enter_free_roam()
             return
-        if self.move_time >= TUTORIAL_MOVE_SECONDS and self.prompt_text != story.TUTORIAL_SHIFT:
+        # 还没亲手照过：开场那一小片灰**先别褪**。
+        # 它会散，但玩家还没学会按 Shift 之前，散掉就等于「邀请消失了」（2026-11-14）。
+        # 只续出生点那一片（不跟着人走）：跟着走的话玩家可以一路按住 J 不用学 Shift。
+        if not self.reveal_used:
+            self.board.reveal_around(*PLAYER_START_CELL)
+        # 提示：走满 5 秒，或者原地站够 6 秒都算 —— 站着不动的玩家不能永远收不到提示
+        self.tut_t += dt
+        if (self.move_time >= TUTORIAL_MOVE_SECONDS or self.tut_t >= 6.0) \
+                and self.prompt_text != story.TUTORIAL_SHIFT:
             self.prompt_text = story.TUTORIAL_SHIFT
 
     def mirage_radius(self):
         """这一幕的异象半径：第四幕给 7×7（扫街要覆盖），前三幕还是 5×5。"""
         return MIRAGE_RADIUS_ACT4 if self.act >= 4 else None
+
+    def update_look_prompt(self):
+        """还没照过一次灰域：**在任何位置**都提示 `TRY [SHIFT]`。
+
+        2026-11-14 作者要求：这条提示不该挂在老者身上（之前只在呼喊范围内给，是错的）——
+        玩家可以站在任意位置收到它，因为「照地面」这件事和老者没关系。
+        TUTORIAL 里不接管：那一阶段有自己的顺序（先教走路，再教 Shift）。
+        """
+        if self.looked:
+            if self.prompt_text == story.TUTORIAL_SHIFT:
+                self.prompt_text = ""           # 照到了：这句立刻退场
+            return
+        self.prompt_text = story.TUTORIAL_SHIFT
+
+    def update_write_prompt(self):
+        """第一笔之前：站在亮着的灰域上就提示「按 J」。
+
+        J 是全程唯一一个**没有被任何演出教过**的键（Shift 有 TRY [SHIFT]，T 有 PRESS [T] TO CALL OUT，
+        B 有 PRESS [B] TO PICK UP）—— 玩家照出灰域之后，屏幕上只有 HUD 的 `DARK 0/33` 和底部一行小字。
+        这条提示不是一次性弹窗：只要还没写下第一笔、脚下又是亮的，它就会一直在（走开就收），
+        所以玩家怎么绕都绕不出提示范围，也不会刷屏。
+        """
+        if self.taught_write:
+            return
+        r, c = self.player.cell
+        lit = self.board.reveal[r][c] > 0 and self.board.state[r][c] == WHITE
+        if lit and not self.prompt_text:
+            self.prompt_text = story.PROMPT_WRITE
+        elif not lit and self.prompt_text == story.PROMPT_WRITE:
+            self.prompt_text = ""
 
     def cast_anomaly(self):
         if self.state not in PAINT_STATES:
@@ -1255,6 +1389,7 @@ class Game:
             return                                      # 正在涂：按不动异象
         n = self.board.reveal_around(*self.player.cell, radius=self.mirage_radius())
         if n > 0:
+            self.looked = True
             self.audio.play("anomaly")
             if not self.reveal_used:
                 self.reveal_used = True
@@ -1262,8 +1397,12 @@ class Game:
                 if self.state == "TUTORIAL":
                     self.enter_free_roam()
             return
-        # 按了却什么都没照出来（多半是站在平地上）：不给提示，但要防止永远卡住
+        # 按了却什么都没照出来：坛外是平地（不给提示），坛内是「这一层还轮不到你写」。
+        # 2026-11-14 起灰域只说真话，坛内也会有照不出东西的位置 —— 那就得给一句，
+        # 否则玩家会以为 Shift 坏了。
         self.anomaly_miss += 1
+        if self.state != "TUTORIAL" and self.board.in_altar(*self.player.cell):
+            self.mumble(story.MONO_EMPTY)
         if self.state == "TUTORIAL" and self.anomaly_miss >= ANOMALY_MISS_LIMIT:
             self.enter_free_roam()
 
@@ -1342,6 +1481,10 @@ class Game:
         on_altar = self.board.in_altar(*self.player.cell)
         if d > CALL_RANGE_PX:
             self.prompt_text = ""
+        elif not self.looked:
+            # 还没照过灰域：T 的提示**不出现**（不是换成别的句子）。
+            # 「按 Shift」那句是全局的 —— 站在哪儿都给，见 update_look_prompt()。
+            self.prompt_text = ""
         elif self.oldman_turned and not on_altar and d > CLOSE_RANGE_PX:
             self.prompt_text = ""                        # 已经转身了：再走近才喊得动
         else:
@@ -1350,6 +1493,10 @@ class Game:
     def try_call(self):
         d = self.oldman_dist()
         if d > CALL_RANGE_PX:
+            return
+        if not self.looked:
+            # 提示都没给，就不该能跳过那一步：按了只回一句「TRY [SHIFT]」
+            self.show_hint(story.TUTORIAL_SHIFT, 2.0)
             return
         if self.board.in_altar(*self.player.cell):
             # 坛内呼喊：他看到脚下的异象，兴奋地跑过来
@@ -1614,6 +1761,10 @@ class Game:
         res = self.board.paint(r, c)
         if res == "valid":
             self.audio.play("paint")                    # 落子：写对了
+            if not self.taught_write:                   # 第一笔：给一句确认，然后不再教了
+                self.taught_write = True
+                self.prompt_text = ""
+                self.mumble(story.MONO_FIRST)
             return
         if res == "dirty":
             self.audio.play("stain")                    # 落错：失谐的一声
@@ -1812,13 +1963,17 @@ class Game:
     def enter_clear(self):
         self.scribe_cells = []                       # 写完了，他停手（剩下的交给清屏波）
         self.scribe_target = None
+        self.mini_wave = (self.act == 1 and self.act1_wave == 1)
         self.state = "CLEAR"
         self.clear_phase = "glow"
         self.clear_t = 0.0
         self.wave_r = 0.0
         self.glow_t = 0.0
         self.prompt_text = ""
-        self.show_hint(story.STEP_INTO_ALTAR, 999.0)
+        # 第一波时玩家本来就站在坛里，不用再叫他进去；
+        # 整幕收尾时他多半也站在坛里（刚涂完最后一格）—— 那就别喊了，否则这句会一直挂到波扫完。
+        if not self.mini_wave and not self.board.in_altar(*self.player.cell):
+            self.show_hint(story.STEP_INTO_ALTAR, 999.0)
         for m in self.monsters:
             m.claim(self.claims)
             m.mode = "hunt"
@@ -1829,6 +1984,9 @@ class Game:
 
     def update_clear(self, dt):
         self.glow_t += dt
+        # 「走进圣坛」只说给还没进来的人听：他一进来就把这句收掉（2026-11-14）
+        if self.hint_text == story.STEP_INTO_ALTAR and self.board.in_altar(*self.player.cell):
+            self.hint_text, self.hint_t = "", 0.0
         cx, cy = altar_center()
         for m in self.monsters:                          # 被光牵着往中心漂，不再伤人
             d = pygame.Vector2(cx - m.pos.x, cy - m.pos.y)
@@ -1847,16 +2005,23 @@ class Game:
         elif self.clear_phase == "wave":
             self.wave_r += CLEAR_WAVE_SPEED * dt
             self.clear_monsters_in_wave()
-            far = max(math.hypot(x - cx, y - cy) for x in (0, WINDOW_W) for y in (0, WINDOW_H))
+            if self.mini_wave:                       # 半场：扫到圣坛外沿就停（整屏要 3.7 秒，太干）
+                far = MINI_WAVE_REACH
+            else:
+                far = max(math.hypot(x - cx, y - cy) for x in (0, WINDOW_W) for y in (0, WINDOW_H))
             if self.wave_r >= far:
                 self.board.wipe_stains()                 # 顺手把全部脏格抹掉
-                self.capture_map()                       # 这一幕的圣坛定妆了 → 记进地图
+                if not self.mini_wave:
+                    self.capture_map()                   # 这一幕的圣坛定妆了 → 记进地图
                 self.clear_phase = "hold"
                 self.clear_t = 0.0
         elif self.clear_phase == "hold":
             self.clear_t += dt
             if self.clear_t >= CLEAR_WAVE_HOLD:          # 光散完停一下，再让道具浮出来
-                self.enter_reward()
+                if self.mini_wave:
+                    self.start_wave2()                   # 第一幕第一波 → 接着写第二波
+                else:
+                    self.enter_reward()
 
     def clear_monsters_in_wave(self):
         cx, cy = altar_center()

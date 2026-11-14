@@ -95,8 +95,14 @@ class Board:
     def reveal_around(self, r, c, radius=None):
         """异象：以 (r,c) 为中心 (2R+1)² 照出灰域，返回被点亮（含给旧灰域续期）的格数。
 
+        ⚠️ **只照「本轮必涂格」**（2026-11-14 改）。原来是按整张目标码 `target` 照 ——
+            结果第一幕圣坛中央能照出 13 格灰，而那 13 格全部不在本幕清单里，
+            照着灰域涂 = 13 个脏格、掉 15% 血。玩家学的是「灰的就能写」，
+            却在 56% 的面积上被这条规则反过来罚（实测：谨慎机器人 67 秒攒 29 个脏格，掉到 5% 血）。
+            现在灰域的语义只有一条：**它亮着，就是此刻该写的地方**。
+
         - 只在圣坛内生效；站在平地上按 Shift 一个灰域都没有（叙事设定 + 玩法边界）
-        - 只照「该黑且还白」的格子：已经涂黑的、本来就不该黑的，照了也没意义
+        - 已经涂黑的、本来就不该黑的，照了也没意义
         - 已经照过的格子会把 5 秒重新充满（再照一次就是再看一眼）
         - `radius` 不传就用默认的 `MIRAGE_RADIUS`；第四幕给 3（7×7），因为那一幕是「扫」
         """
@@ -106,10 +112,7 @@ class Board:
         n = 0
         for rr in range(max(0, r - k), min(GRID_N, r + k + 1)):
             for cc in range(max(0, c - k), min(GRID_N, c + k + 1)):
-                t = to_target(rr, cc)
-                if t is None:
-                    continue
-                if not self.target[t[0]][t[1]]:
+                if (rr, cc) not in self.must:          # 本幕还轮不到的部分：不照，也就不骗人
                     continue
                 if self.state[rr][cc] != WHITE:
                     continue

@@ -5,37 +5,36 @@
 这里同时提供「本轮必涂格集合」——第一幕就是三个定位图案 + 暗模块，共 100 格。
 """
 
-import random
-import string
 
 import segno
 
-from src.config import DARK_MODULE, QR_CONTENT_LEN, QR_ERROR, QR_VERSION, TARGET_N, TARGET_OFFSET
-
-# 去掉容易看错的 0/O/1/l/I，剩下的都是能一眼读出来的 ASCII
-ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
-
-
-def random_content(rng):
-    """8 位 ASCII 内容。以后换成用户给的短网址（上限 17 字符，见 config.QR_CONTENT_LEN）。"""
-    return "".join(rng.choice(ALPHABET) for _ in range(QR_CONTENT_LEN))
-
+from src.config import DARK_MODULE, QR_CONTENT, QR_ERROR, QR_VERSION, TARGET_N, TARGET_OFFSET
 
 def make_qr(content):
     """内容 → 21×21 的 0/1 矩阵。
 
     version 和 error **必须写死**：不写会自动选版本，选到 v2 就不是 21×21 了。
+
+    `boost_error=False` 也是必须的（作者 2026-11-14）：segno 默认会给短内容**偷偷提升
+    纠错等级**（`YOU WERE HERE` 实测会被提到 Q = 13 个纠错码字 / t=6），
+    那样 §4.24 那套「L / 7 个纠错码字 / 只能废 3 块」的说法就不成立了。
+    关掉之后纠错**恒为 L**，容错容量才是玩家在第五幕看到的那个 3。
     """
-    qr = segno.make(content, version=QR_VERSION, error=QR_ERROR)
+    qr = segno.make(content, version=QR_VERSION, error=QR_ERROR, boost_error=False)
     matrix = [[1 if cell else 0 for cell in row] for row in qr.matrix]
     if len(matrix) != TARGET_N:
         raise ValueError("QR size %d != %d" % (len(matrix), TARGET_N))
     return matrix
 
 
-def generate_target(rng, content=None):
-    """生成这一局的目标码，返回 (matrix, content)。"""
-    content = content or random_content(rng)
+def generate_target(rng=None, content=None):
+    """生成这一局的目标码，返回 (matrix, content)。
+
+    内容是**固定**的（`config.QR_CONTENT`），所以每一局、每一次启动得到的都是同一张码 ——
+    这换来两件事：宣传图 / 预告里那张码就是玩家最后写出来的那张；而且它真能扫。
+    `rng` 参数只为兼容旧调用保留，现在不参与生成（segno 的掩码选择也是确定的）。
+    """
+    content = content or QR_CONTENT
     return make_qr(content), content
 
 

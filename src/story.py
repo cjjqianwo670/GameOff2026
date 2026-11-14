@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """DATA SHIFT —— 第一幕全部文本。
 
-**唯一来源**：`D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_第一幕英文文案.md`。
+**唯一来源**：`docs/DATA_SHIFT_第一幕英文文案.md`（2026-11-14 从工作区 `游戏设计方案/` 搬进仓库）。
 这里是从那份文件**逐字抄下来**的：不要改写、不要翻译、不要新增台词、不要给角色起名字。
 要改文案，先改那份文件，再同步这里。
 
@@ -22,8 +22,10 @@ ACT5_TITLE = "ACT 5 \u2014 END"
 TUTORIAL_MOVE = "[W] UP    [S] DOWN    [A] LEFT    [D] RIGHT"
 TUTORIAL_SHIFT = "TRY [SHIFT]"
 PROMPT_CALL = "PRESS [T] TO CALL OUT"
+PROMPT_WRITE = "PRESS [J] TO WRITE HERE"   # 第一次站在灰域上：J 从来没被教过（2026-11-14 补）
 PROMPT_PICK = "PRESS [B] TO PICK UP"
 HINT_CLEAR = "[K] TO CLEAR IT."            # 第一次涂脏格时教 K（从旧 STAIN_WARNING 拆出，按键相关保留）
+HINT_WAVE2 = "%d LEFT.  TWO CORNERS."      # 第一幕第一波清完：还剩两个角
 STEP_INTO_ALTAR = "STEP INTO THE ALTAR"
 MAP_IN_HANDS = "FOLD THE MAP FIRST   [M]"  # 地图摊开时想涂：双手捧着纸（2026-11-12 作者要求）
 HINT_FORMAT_BROKEN = "A LINE IS BROKEN.  [J] TO PUT IT BACK"   # 第三幕：老者写的格式格被吃掉
@@ -42,10 +44,14 @@ M2 = "Why do I feel the pattern under the floor... moving?"
 M3 = "Why you two?"
 M4 = "What is this? It looks like the things the old man drove off. It's not moving."
 M5 = "These tools are dead. What were they for?"
+# 第一幕第一波清完之后的一句（2026-11-14 拆两波）：老者交代过「每写完一部分，圣坛会护你一会儿」
+A1_WAVE = "One corner holds.\nIt pushed them back."
 
 # 这些是「从系统提示改成心声」的嘀咕（2026-11-12 作者要求），正常大小写：
 MONO_STAIN = "That one failed. It's just a stain."          # 涂错成脏格
+MONO_FIRST = "That one held."                                # 第一次涂对（和 MONO_STAIN 对称）
 MONO_BLIND = "I can't see it. I should look first."          # 没照出灰域就落笔
+MONO_EMPTY = "Nothing here yet."                             # 照了，但这个位置此刻没有可写的东西
 MONO_INCOMING = "They're coming back."                       # 红怪来袭（第一幕开战）
 MONO_PURPLE_IN = "Something else is moving."                 # 紫怪第一次进场
 MONO_HIT = "Agh! It bit me."                                 # 被红怪咬
