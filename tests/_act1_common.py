@@ -118,27 +118,63 @@ def reveal_once(g):
     return bool(getattr(g, "reveal_used", False))
 
 
-def clear_wave1(g):
-    """第一幕第一波（左下定位图案 33 格）写完 + 跳过那一次迷你清屏，停在 BATTLE。
+def clear_board(g, limit=1200):
+    """把**当前这一块板块**写满，推进到下一块（或整幕收尾）。
 
-    2026-11-14 起第一幕是两波：`g.must` 开局只有 33 格，清一次屏之后才换成整张码的 100 格
-    （`g.must_all`）。测试想测「整幕的 100 格」得先过这一道，否则断言会一直看到 33。
-    返回 True 表示确实进了第二波。
+    第一幕是四块板块（BL 34 → TL 67 → TR 100 → BR 0 格），所以「写满一次」不再等于整幕完成。
+    返回 True 表示确实推进了（`act1_wave` 变大，或者进了 REWARD / END）。
     """
+    from src.grid import cell_center
+
+    # 清屏的发光段要求玩家站在坛内。测试常把人挪到坛外（贴道具、贴老者），
+    # 那会让清屏**永远卡在 glow**；真实玩法里玩家出不去，所以这里直接把人挪回来。
+    if not g.board.in_altar(*g.player.cell):
+        r, c = sorted(g.must)[0]
+        g.player.cell = (r, c)
+        g.player.pos.update(cell_center(r, c))
+    wave0 = getattr(g, "act1_wave", 1)
     fill_must(g)
-    if getattr(g, "act1_wave", 2) == 2:
-        return True                       # 已经自己触发过了（BATTLE 相位里会自动进 CLEAR）
-    if g.state != "CLEAR":
-        g.enter_clear()                   # 测试常直接停在 FREE_ROAM：手动发动这一次迷你清屏
-        g.clear_phase = "wave"            # 跳过「必须站在坛内发光」那道门，测试不关心它
-        g.clear_t = 0.0
-        g.wave_r = 0.0
-    for _ in range(600):
+    for _ in range(limit):
         auto_mono(g)
         g.update(1 / 60)
-        if getattr(g, "act1_wave", 2) == 2:
+        if getattr(g, "act1_wave", 1) != wave0 or g.state in ("REWARD", "END"):
             return True
     return False
+
+
+def clear_wave1(g):
+    """（旧名，保留）把第一块板块（BL，34 格）写完并推进到 TL。"""
+    return clear_board(g)
+
+
+def all_boards(g, limit=6):
+    """把四块板块依次写完，停在 REWARD / END。返回停下来的状态。"""
+    for _ in range(limit):
+        if g.state in ("REWARD", "END"):
+            break
+        if not clear_board(g):
+            break
+    return g.state
+
+
+def oldman_cell():
+    """第一幕老者的站位（在第 3~5 幕是另一个常量）。"""
+    from src.config import OLDMAN_CELL_ACT1
+    return OLDMAN_CELL_ACT1
+
+
+def go_to_oldman(g):
+    """站到老者旁边（他左边一格，平地/板块上都可以站），返回距离。
+
+    2026-11-14：第一幕他站在玩家板块 BL 的**左侧空地**上（`OLDMAN_CELL_ACT1`），
+    不再在 `(1,12)`。测试里凡是「走到老者跟前喊话」的地方统一走这里。
+    """
+    from src.grid import cell_center
+    r, c = oldman_cell()
+    cell = (r, max(2, c + 1))                 # 他右边一格：那是 BL 的左沿
+    g.player.cell = cell
+    g.player.pos.update(cell_center(*cell))
+    return g.oldman_dist()
 
 
 def shot(g, name):

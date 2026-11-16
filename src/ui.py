@@ -19,26 +19,28 @@ if TYPE_CHECKING:            # 只为 IDE 补全与类型检查，运行时不�
 
 from src import sprites, story
 from src.config import (
+    BOARD_PUSH, BOARDS,
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
-    C_BAG_SLOT, C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM, C_ITEM_INK,
-    C_ITEM_PAPER, C_ITEM_PAPER_DARK, C_ITEM_LEATHER_DARK, C_MONSTER, C_MUST,
-    C_OUTLINE, C_PLAYER, C_PURPLE, C_MIRAGE,
-    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_PROP_TOOL, C_RING,
+    C_BAG_SLOT, C_CELL_LINE, C_CELL_WHITE, C_DIM, C_ERASING, C_ITEM,
+    C_MONSTER, C_MUST,
+    C_OUTLINE, C_PURPLE, C_GREEN, C_MIRAGE, C_CORE, C_CORE_BROKEN,
+    C_OLDMAN, C_PANEL, C_PANEL_LINE, C_RING,
     C_BOX, C_PAPER, C_TEXT, C_WARN,
+    C_THREAD, C_THREAD_DIM, C_THREAD_GLOW,
     DIRTY, DARK_MODULE, DARK_MODULE_LEAD, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H,
     DLG_MIN_ROWS, DLG_PAD,
     ERASE_CAST, ERASING, FORMAT_HOLD_TIME, GRID_N, SCAN_TIME,
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HEALTH_WARN, HINT_Y, HUD_X, HUD_Y,
     INTRO_FALL, INTRO_PRINT, INTRO_SHOW,
-    INTRO_TOTAL, MAP_CELL, MAP_SCROLL_H, MAP_SCROLL_W, MAP_Y, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
+    INTRO_TOTAL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
     MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H,
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
-    OLDMAN_HP, OLDMAN_REVIVE_TIME, PROP_DEAD_CELL, PROP_TOOL_CELL, SPAWN_ORIGIN,
+    OLDMAN_HP, OLDMAN_REVIVE_TIME, SPAWN_ORIGIN,
     SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
-    TARGET_OFFSET, THREAT_Y, VALID, WHITE, WINDOW_H, WINDOW_W
+    TARGET_OFFSET, THREAT_Y, TIME_SLOW_CD, DASH_CD, VALID, WHITE, WINDOW_H, WINDOW_W
 )
 from src.grid import cell_center, cell_to_rect, target_rect
-from src.qr import ERROR_TOLERANCE
+from src.qr import ERROR_TOLERANCE, finder_cores
 
 PLAY_W = PANEL_X             # 左侧世界区域的宽度
 PANEL_INNER = PANEL_W - PANEL_PAD * 2
@@ -258,7 +260,7 @@ def draw_world(g: "Game"):
         pygame.draw.line(s, C_BG_GRID, (0, y), (PLAY_W, y))
 
     draw_dashed_rect(s, pygame.Rect(SPAWN_ORIGIN, (SPAWN_PX, SPAWN_PX)), color=C_RING)
-    s.fill(C_CELL_WHITE, pygame.Rect(GRID_ORIGIN, (GRID_PX, GRID_PX)))
+    _draw_boards(g, s, g.board)
 
     # ---- 开场：完整码铺出 → 碎 → 只剩脚下一小片 ----
     in_intro = g.intro_t > 0
@@ -273,29 +275,25 @@ def draw_world(g: "Game"):
     # 绿框：本轮必涂格。照出来才看得见
     for (r, c) in b.must:
         if b.revealed(r, c):
-            pygame.draw.rect(s, C_MUST, cell_to_rect(r, c), 2)
+            pygame.draw.rect(s, C_MUST, _cell_screen_rect(b, r, c), 2)
 
     if g.act >= 5 and g.state in ("BATTLE", "SCAN"):
         _draw_error_blocks(g, s)
 
-    # 网格线
-    for i in range(GRID_N + 1):
-        x = GRID_ORIGIN[0] + i * CELL
-        y = GRID_ORIGIN[1] + i * CELL
-        pygame.draw.line(s, C_CELL_LINE, (x, GRID_ORIGIN[1]), (x, GRID_ORIGIN[1] + GRID_PX))
-        pygame.draw.line(s, C_CELL_LINE, (GRID_ORIGIN[0], y), (GRID_ORIGIN[0] + GRID_PX, y))
+    _draw_board_lines(g, s, g.board)
+    _draw_crack_shadow(g, s, g.board)
 
-    # 格子状态
+    # 格子状态（都跟着所属板块的推开偏移走，否则会脱离石板）
     for r in range(GRID_N):
         srow = b.state[r]
         for c in range(GRID_N):
             st = srow[c]
             if st == VALID:
-                s.fill(C_CELL_BLACK, cell_to_rect(r, c))
+                s.fill(C_CELL_BLACK, _cell_screen_rect(b, r, c))
             elif st == DIRTY:
-                s.blit(g.stain_tile, cell_to_rect(r, c).topleft)
+                s.blit(g.stain_tile, _cell_screen_rect(b, r, c).topleft)
             elif st == ERASING:
-                rect = cell_to_rect(r, c)
+                rect = _cell_screen_rect(b, r, c)
                 s.fill(C_ERASING, rect)
                 k = 1.0 - b.erase_t[r][c] / ERASE_CAST
                 inset = int(CELL * 0.5 * (1.0 - k))
@@ -304,13 +302,13 @@ def draw_world(g: "Game"):
     for (r, c) in b.flash:
         kind = b.flash_kind.get((r, c))
         surf = {"purple": g.flash_surf_purple, "scribe": g.flash_surf_scribe}.get(kind, g.flash_surf)
-        s.blit(surf, cell_to_rect(r, c).topleft)
+        s.blit(surf, _cell_screen_rect(b, r, c).topleft)
 
-    # 地上的死红怪 / 用过的道具：**一直在世界上**，不要等某个相位才画出来
-    _draw_props(g, s)
+    _draw_core_marks(g, s)
+    _draw_thread(g, s)                      # 界丝黑点 + 跨缝通道
 
     # 圣坛边框：平时暗框；清屏阶段跟着光脉动
-    frame = target_rect().inflate(6, 6)
+    frame = (target_rect() if getattr(g, "intro_t", 0) > 0 else altar_rect(b)).inflate(6, 6)
     if g.state in ("CLEAR", "REWARD"):
         k = (math.cos(g.glow_t * 6.0) + 1.0) * 0.5
         pygame.draw.rect(s, mix(C_ALTAR, C_ACCENT, k), frame, 3)
@@ -337,7 +335,8 @@ def draw_world(g: "Game"):
     for m in g.monsters:
         look = cell_center(*m.target) if m.target is not None else (
             g.player.pos if g.player is not None else None)
-        sprites.draw_red(s, m.pos.x, m.pos.y, m.radius, g.anim_t, m.phase,
+        mx, my = _pos_screen(b, m.pos)
+        sprites.draw_red(s, mx, my, m.radius, g.anim_t, m.phase,
                          hunting=(m.mode == "hunt"), look=look,
                          glow=g.red_glow, base=m.color,
                          dark=sprites._mix(m.color, C_CELL_BLACK, 0.52))
@@ -345,18 +344,45 @@ def draw_world(g: "Game"):
     # 第三幕的黄怪：同一套画法，黄色。盯上玩家（挨过打）时才套环
     for y in g.yellows:
         look = g.oldman.pos if (g.oldman is not None and not g.oldman.down) else g.player.pos
-        sprites.draw_red(s, y.pos.x, y.pos.y, y.radius, g.anim_t, y.phase,
+        yx, yy = _pos_screen(b, y.pos)
+        sprites.draw_red(s, yx, yy, y.radius, g.anim_t, y.phase,
                          hunting=y.hunting, look=look, glow=g.red_glow, base=y.color,
                          dark=sprites._mix(y.color, C_CELL_BLACK, 0.52),
                          ring=sprites._mix(y.color, (255, 255, 255), 0.45))
 
-    # 第二幕的紫怪：同样的画法，换一套色（它不追人，只盯着线）
+    # 第四幕的紫怪：同样的画法，换一套色（它不追人，只盯着线）
     for pu in g.purples:
         look = cell_center(*pu.target) if pu.target is not None else (
             g.player.pos if g.player is not None else None)
-        sprites.draw_red(s, pu.pos.x, pu.pos.y, pu.radius, g.anim_t, pu.phase,
+        ux, uy = _pos_screen(b, pu.pos)
+        sprites.draw_red(s, ux, uy, pu.radius, g.anim_t, pu.phase,
                          hunting=False, look=look, glow=g.red_glow, base=pu.color,
                          dark=sprites._mix(pu.color, C_CELL_BLACK, 0.50))
+
+    # 第二幕的绿怪：同样的画法，绿色（吃一片 3×3，体型比红怪大）
+    for gr in g.greens:
+        look = cell_center(*gr.target) if gr.target is not None else (
+            g.player.pos if g.player is not None else None)
+        gx, gy = _pos_screen(b, gr.pos)
+        sprites.draw_red(s, gx, gy, gr.radius, g.anim_t, gr.phase,
+                         hunting=(gr.mode == "hunt"), look=look, glow=g.red_glow,
+                         base=gr.color, dark=sprites._mix(gr.color, C_CELL_BLACK, 0.52))
+
+    # 诱饵：一个假黑格方块 + 头顶血条（2026-11-16 升级成有血量的独立实体）
+    for dc in g.decoys:
+        if dc.dead:
+            continue
+        px, py = _cell_screen_center(b, *dc.cell)
+        # 方块本体（比普通格子更「实」，一眼认出是诱饵）
+        pygame.draw.rect(s, C_GREEN, pygame.Rect(px - 11, py - 11, 22, 22), border_radius=3)
+        pygame.draw.rect(s, C_CELL_BLACK, pygame.Rect(px - 11, py - 11, 22, 22), 1, border_radius=3)
+        # 头顶血条：宽 24、高 4，红底 + 剩余绿
+        bar_w = 24
+        frac = dc.hp / float(dc.max_hp)
+        bx = px - bar_w // 2
+        by = py - 20
+        pygame.draw.rect(s, C_CELL_BLACK, pygame.Rect(bx, by, bar_w, 4))
+        pygame.draw.rect(s, C_GREEN, pygame.Rect(bx, by, int(bar_w * frac), 4))
 
     # 老者同理：他从第一帧就站在那儿（只有走了以后才不画）
     if g.oldman is not None and not g.oldman.gone:
@@ -378,6 +404,252 @@ def draw_world(g: "Game"):
     # 威胁台词（红怪的狠话）
     if g.threat_t > 0:
         _draw_threat(g, s)
+
+
+def _board_rect(b, name):
+    """一块板块在屏幕上的矩形。**没接回来的会被推开 1 格**（`config.BOARD_PUSH`）。
+
+    这就是「裂缝」的全部实现：缝不是格子，是两块被推开的板块之间空出来的那一条底色。
+    所以裂着的圣坛占 23×23，拼好了才是 21×21 —— 面积真的变小，不是画个黑线糊过去。
+    """
+    r0, c0, r1, c1 = BOARDS[name]
+    pdy, pdx = BOARD_PUSH[name]
+    f = b.push_frac(name)                                   # 1 = 还推着，0 = 已归位
+    dy, dx = int(pdy * f * CELL), int(pdx * f * CELL)
+    oy, ox = TARGET_OFFSET
+    return pygame.Rect(GRID_ORIGIN[0] + (ox + c0) * CELL + dx,
+                       GRID_ORIGIN[1] + (oy + r0) * CELL + dy,
+                       (c1 - c0 + 1) * CELL, (r1 - r0 + 1) * CELL)
+
+
+def altar_rect(b):
+    """整座圣坛当前占的矩形：四块（含被推开的那几块）的并集。
+
+    全拼好时它就等于 21×21 的 `target_rect()`；还裂着时更大。圣坛边框照着它画。
+    """
+    r = None
+    for name in BOARDS:
+        rr = _board_rect(b, name)
+        r = rr if r is None else r.union(rr)
+    return r
+
+
+def _cell_screen_center(b, r, c):
+    """格子 (r, c) 的**视觉**屏幕坐标（含所属板块被推开的那一格偏移）。
+
+    逻辑上格子永远是格心（`cell_center`），但板块分离时整块被推开 1 格，
+    所以画界丝通道得用这里的坐标，否则通道会短一截、连不到对面板块。
+    """
+    cx, cy = cell_center(r, c)
+    name = b.board_of(r, c)
+    if name is not None:
+        pdy, pdx = BOARD_PUSH[name]
+        f = b.push_frac(name)
+        cx += int(pdx * f * CELL)
+        cy += int(pdy * f * CELL)
+    return cx, cy
+
+
+def _cell_screen_rect(b, r, c):
+    """格子 (r, c) 的**视觉**矩形（含板块推开偏移）。
+
+    所有「站在板块上的格子内容」（黑域、脏格、必须格、鬼影、核心标记等）都得用这里画，
+    否则板块分离时它们会脱离石板、悬浮在虚空里（2026-11-17 修）。
+    """
+    cx, cy = _cell_screen_center(b, r, c)
+    return pygame.Rect(int(cx - CELL // 2), int(cy - CELL // 2), CELL, CELL)
+
+
+def _pos_screen(b, pos):
+    """把逻辑屏幕坐标（`cell_center` 系）转成视觉屏幕坐标（加所属板块推开偏移）。
+
+    怪物 / 界丝这些用连续 `pos`（可能是格间）画的，就用它按「最近的格」查偏移。
+    """
+    r = int(round((pos.y - GRID_ORIGIN[1] - CELL // 2) / CELL))
+    c = int(round((pos.x - GRID_ORIGIN[0] - CELL // 2) / CELL))
+    name = b.board_of(r, c)
+    if name is None:
+        return pos.x, pos.y
+    pdy, pdx = BOARD_PUSH[name]
+    f = b.push_frac(name)
+    return pos.x + int(pdx * f * CELL), pos.y + int(pdy * f * CELL)
+
+
+def _draw_boards(g, s, b):
+    """圣坛的底面：**四个板块**（2026-11-14 第一幕重做）。
+
+    四块**都是白石板**（作者 2026-11-14 定：不要做成蓝的）。裂着和拼好的区别只有两件事：
+    没接回来的**被推开一格**（于是中间空出一条底色 —— 那就是裂缝），以及踩不上去。
+    缝里没有格子，所以玩家踩不到一个不存在的地方。
+    """
+    # 开场那一拍，码是**完整的**（碎是后面的事）：先铺回一整块 21×21，别让四块石板提前露出来。
+    if getattr(g, "intro_t", 0) > 0:
+        s.fill(C_CELL_WHITE, target_rect())
+        return
+    # ⚠️ 故意**不铺满**整个 25×25：石板之间那条空出来的地方要露出世界底面的暗格，
+    # 那才是「缝」—— 底下的地面从裂口里透出来。铺满了就只是一块深色而已（第一版就是这样）。
+    # 四块**都是白石板**（2026-11-14 作者定）：裂着还是拼好，石头的颜色不变，
+    # 变的只有「能不能踩上去」和那条缝。所以这里不再按开/关分色。
+    for name in BOARDS:
+        s.fill(C_CELL_WHITE, _board_rect(b, name))
+
+
+def _open_qr(b, tr, tc):
+    """QR 坐标的这一格是不是「能写的圣坛」（在某块已接回的板块里）。"""
+    if not (0 <= tr < TARGET_N and 0 <= tc < TARGET_N):
+        return False
+    for name, (r0, c0, r1, c1) in BOARDS.items():
+        if r0 <= tr <= r1 and c0 <= tc <= c1:
+            return name in b.open_boards
+    return False
+
+
+def _draw_crack_shadow(g, s, b):
+    """缝的暗边：石板朝着缝的那一侧压一道内阴影。
+
+    只有 1 格宽的缝在深蓝底上很容易被看成「两条线」；压了阴影之后它是**坑** ——
+    石板的边缘往下沉，光从上打过来，边缘自然是最暗的。
+    """
+    if getattr(g, "intro_t", 0) > 0:                        # 开场不画缝：那时候码是整的
+        return
+    dark = (8, 13, 22)
+    t = 3
+    for name, (r0, c0, r1, c1) in BOARDS.items():
+        rect = _board_rect(b, name)
+        sides = {
+            "top": [(r0 - 1, c) for c in range(c0, c1 + 1)],
+            "bottom": [(r1 + 1, c) for c in range(c0, c1 + 1)],
+            "left": [(r, c0 - 1) for r in range(r0, r1 + 1)],
+            "right": [(r, c1 + 1) for r in range(r0, r1 + 1)],
+        }
+        for side, cells in sides.items():
+            inner = [(r, c) for (r, c) in cells if 0 <= r < TARGET_N and 0 <= c < TARGET_N]
+            if inner and all(_open_qr(b, r, c) for (r, c) in inner):
+                continue                                # 这一侧紧贴着另一块接回来的石板：无缝
+            if side == "top":
+                s.fill(dark, pygame.Rect(rect.left, rect.top, rect.width, t))
+            elif side == "bottom":
+                s.fill(dark, pygame.Rect(rect.left, rect.bottom - t, rect.width, t))
+            elif side == "left":
+                s.fill(dark, pygame.Rect(rect.left, rect.top, t, rect.height))
+            else:
+                s.fill(dark, pygame.Rect(rect.right - t, rect.top, t, rect.height))
+
+
+def _draw_board_lines(g, s, b):
+    """网格线只画在板块内部（缝里没有线 —— 那不是格子）。"""
+    if getattr(g, "intro_t", 0) > 0:                        # 开场：整张码是完整的
+        for i in range(TARGET_N + 1):
+            x = GRID_ORIGIN[0] + (TARGET_OFFSET[1] + i) * CELL
+            y = GRID_ORIGIN[1] + (TARGET_OFFSET[0] + i) * CELL
+            pygame.draw.line(s, C_CELL_LINE, (x, GRID_ORIGIN[1] + TARGET_OFFSET[0] * CELL),
+                             (x, GRID_ORIGIN[1] + (TARGET_OFFSET[0] + TARGET_N) * CELL))
+            pygame.draw.line(s, C_CELL_LINE, (GRID_ORIGIN[0] + TARGET_OFFSET[1] * CELL, y),
+                             (GRID_ORIGIN[0] + (TARGET_OFFSET[1] + TARGET_N) * CELL, y))
+        return
+    for name, (r0, c0, r1, c1) in BOARDS.items():
+        rect = _board_rect(b, name)
+        col = C_CELL_LINE
+        for i in range(c1 - c0 + 2):
+            x = rect.left + i * CELL
+            pygame.draw.line(s, col, (x, rect.top), (x, rect.bottom))
+        for j in range(r1 - r0 + 2):
+            y = rect.top + j * CELL
+            pygame.draw.line(s, col, (rect.left, y), (rect.right, y))
+
+
+def _draw_core_marks(g, s):
+    """第二幕起：三块定位图案的「核心」（中心 3×3）各画一个淡色四角标记。
+
+    用途是让玩家一眼知道「这 9 格是要守住的」—— 核心被怪物破坏（哪怕 1 格），
+    整块板块就分离。核心完好的板子用 `C_CORE` 淡蓝；正在分离的板子用 `C_CORE_BROKEN`
+    红、并随动画呼吸闪烁，把「这里出事了」拍在脸上。
+    """
+    if g.act < 2 or g.state not in ("BATTLE", "SCAN", "A2_OPEN"):
+        return
+    for name, cells in finder_cores().items():
+        broken = name in g.board.detached
+        col = C_CORE_BROKEN if broken else C_CORE
+        if broken:                                   # 分离中：呼吸闪烁，别让玩家看漏
+            k = 0.5 + 0.5 * math.sin(g.anim_t * 6.0)
+            col = tuple(int(a + (b - a) * k) for a, b in zip(C_CORE_BROKEN, (255, 255, 255)))
+        for (r, c) in cells:
+            rect = _cell_screen_rect(g.board, r, c).inflate(-5, -5)
+            pygame.draw.rect(s, col, rect, 2)
+
+
+def _draw_thread(g, s):
+    """界丝：固定黑点（暗模块）上停着一根淡青细丝；活动通道画成一条跨缝的丝线。
+
+    黑点只在第二幕起有界丝（`g.thread_on_cell`）；通道是 `g.thread_bridge` 里那两格的连线。
+    """
+    if g.act < 2:
+        return
+    # 黑点上的界丝：一根细丝 + 一圈淡光，微微上下浮（呼吸感）
+    r, c = g.board.thread_cell()
+    px, py = _cell_screen_center(g.board, r, c)
+    if g.thread_on_cell:
+        bob = math.sin(g.anim_t * 3.0) * 2.0
+        cx, cy = px, py + bob
+        glow = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*C_THREAD, 60), (CELL // 2, CELL // 2), CELL // 2)
+        s.blit(glow, (cx - CELL // 2, cy - CELL // 2))
+        pygame.draw.line(s, C_THREAD, (cx - 8, cy), (cx + 8, cy), 2)
+        pygame.draw.circle(s, C_THREAD_GLOW, (int(cx), int(cy)), 3)
+    else:
+        # 还没长出来：一个很淡的暗点提示「这里会长东西」
+        pygame.draw.circle(s, C_THREAD_DIM, (px, py), 2)
+    # 活动通道：一块彩色长方形「桥板」，横跨整条缝，两端踩在各自板块上
+    if g.thread_bridge is not None:
+        (r0, c0), (r1, c1) = g.thread_bridge["cells"]
+        x0, y0 = _cell_screen_center(g.board, r0, c0)
+        x1, y1 = _cell_screen_center(g.board, r1, c1)
+        # 通道必须**轴对齐**（玩家只能上下左右走）：跨垂直缝就水平，跨水平缝就垂直。
+        # 板块是斜向推开的（比如 BL 往左下），但通道只取「沿缝方向」的那个分量，
+        # 忽略垂直方向的多余偏移，否则通道会跟着斜。
+        if r0 == r1:                       # 左右相邻 → 垂直缝 → 通道水平
+            y0 = y1 = (y0 + y1) / 2
+        else:                              # 上下相邻 → 水平缝 → 通道垂直
+            x0 = x1 = (x0 + x1) / 2
+        _draw_bridge_plank(s, x0, y0, x1, y1)
+
+
+def _draw_bridge_plank(s, x0, y0, x1, y1):
+    """界丝通道：一块长方形彩色桥板，从起点格中心铺到对面格中心。
+
+    宽度约一格（`CELL - 8`），长度随两端视觉距离（缝越宽桥越长）。
+    用两层：暗底描边 + 淡青亮面 + 中央一条高光丝，看起来是「铺出来的通道」而不是一根线。
+    """
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length < 1.0:
+        return
+    ux, uy = dx / length, dy / length          # 通道方向单位向量
+    nx, ny = -uy, ux                           # 法向（垂直方向）
+    half_w = (CELL - 8) / 2.0                  # 半宽
+
+    # 四个角（沿通道方向的首尾 + 垂直方向的两侧）
+    corners = [
+        (x0 + nx * half_w, y0 + ny * half_w),
+        (x1 + nx * half_w, y1 + ny * half_w),
+        (x1 - nx * half_w, y1 - ny * half_w),
+        (x0 - nx * half_w, y0 - ny * half_w),
+    ]
+    # 暗底（描边 + 桥板暗面）
+    pygame.draw.polygon(s, C_THREAD_DIM, corners)
+    # 亮面：往里收 2px，露出暗边当描边
+    inner = [
+        (x0 + nx * (half_w - 2), y0 + ny * (half_w - 2)),
+        (x1 + nx * (half_w - 2), y1 + ny * (half_w - 2)),
+        (x1 - nx * (half_w - 2), y1 - ny * (half_w - 2)),
+        (x0 - nx * (half_w - 2), y0 - ny * (half_w - 2)),
+    ]
+    pygame.draw.polygon(s, (*C_THREAD, 180), inner)
+    # 中央一条高光丝：沿通道方向的一根亮线
+    pygame.draw.line(s, C_THREAD_GLOW, (x0, y0), (x1, y1), 2)
+    # 两端各一个小圆点，标出「接在哪两块板上」
+    pygame.draw.circle(s, C_THREAD_GLOW, (int(x0), int(y0)), 3)
+    pygame.draw.circle(s, C_THREAD_GLOW, (int(x1), int(y1)), 3)
 
 
 def _draw_error_blocks(g, s):
@@ -426,7 +698,7 @@ def _draw_toasts(g, s):
     """
     if not g.toasts:
         return
-    px, py = int(g.player.pos.x), int(g.player.pos.y)
+    px, py = _cell_screen_center(g.board, *g.player.cell)
     top = GRID_ORIGIN[1] + 12
     for i, (text, t, life, who) in enumerate(g.toasts):
         fade = min(1.0, t / 0.12, max(0.0, (life - t) / 0.5))
@@ -591,22 +863,6 @@ def _draw_mirage(g, s):
             s.blit(g.mirage_tile, cell_to_rect(r, c).topleft)
 
 
-def _draw_props(g, s):
-    """圣坛外的两件背景物：一只死掉的红怪、几件用过的道具。"""
-    sprites.draw_dead_red(s, *cell_center(*PROP_DEAD_CELL))
-
-    # 用过的道具：一块歪掉的板 + 一根探针，都蒙着灰
-    x, y = cell_center(*PROP_TOOL_CELL)
-    plate = pygame.Rect(x - 12, y - 7, 10, 15)
-    pygame.draw.rect(s, C_OUTLINE, plate.inflate(2, 2), border_radius=3)
-    pygame.draw.rect(s, C_PROP_TOOL, plate, border_radius=2)
-    s.fill(C_OUTLINE, pygame.Rect(plate.x + 2, plate.y + 3, 6, 1))
-    s.fill(C_OUTLINE, pygame.Rect(plate.x + 2, plate.y + 6, 4, 1))
-    pygame.draw.line(s, C_OUTLINE, (x + 3, y + 6), (x + 11, y - 4), 4)
-    pygame.draw.line(s, C_PROP_TOOL, (x + 3, y + 6), (x + 11, y - 4), 2)
-    pygame.draw.circle(s, C_OUTLINE, (x + 11, y - 5), 3)
-
-
 def _draw_oldman(g, s):
     om = g.oldman
     if g.act >= 3 and om.down:                       # 第三幕：他被打倒了
@@ -657,8 +913,8 @@ def _draw_revive_hint(g, s, om):
 def _draw_item(g, s, it):
     rise = int((1.0 - it.t) * 22)
     sprites.draw_item(s, it.kind, it.pos.x, it.pos.y, g.anim_t, rise)
-    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / MAP / SWORD」
-    label = {"bag": "BAG", "map": "MAP", "sword": "SWORD"}.get(it.kind, "")
+    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / SWORD」
+    label = {"bag": "BAG", "sword": "SWORD"}.get(it.kind, "")
     img = g.f_tiny.render(label, True, C_ITEM)
     s.blit(img, img.get_rect(center=(int(it.pos.x), int(it.pos.y) + rise - 23)))
 
@@ -689,14 +945,16 @@ def _draw_spread(g, s):
 def draw_player(g: "Game", s):
     p = g.player
     moving = g.input.dir4() is not None
-    sprites.draw_sequencer(s, p.pos.x, p.pos.y, p.facing, g.anim_t, moving,
-                           glow=g.glow, has_bag=g.has_bag, holding_map=g.map_open,
+    # 玩家站在分离板块上时，视觉上要跟着板块一起被推开（否则悬浮在虚空里）
+    px, py = _cell_screen_center(g.board, *p.cell)
+    sprites.draw_sequencer(s, px, py, p.facing, g.anim_t, moving,
+                           glow=g.glow, has_bag=g.has_bag,
                            has_sword=g.has_sword,
                            swing=(g.swing_t / SWORD_SWING_TIME) if g.swing_t > 0 else 0.0)
     if g.swing_t > 0:                                # 挥剑：身前一道弧，很快消失
         _draw_swing(g, s)
     if g.fill_t > 0:                                 # 按住 J 写格式格：脚下长出一圈进度
-        _draw_fill_ring(g, s, p.pos)
+        _draw_fill_ring(g, s, pygame.Vector2(px, py))
 
 
 def _draw_fill_ring(g, s, pos):
@@ -723,7 +981,7 @@ def _draw_swing(g: "Game", s):
     k = g.swing_t / SWORD_SWING_TIME if SWORD_SWING_TIME > 0 else 0.0
     ang = {0: -90, 1: 90, 2: 180, 3: 0}[p.facing]
     r = SWORD_RANGE * (0.7 + 0.3 * (1.0 - k))
-    cx, cy = p.pos.x, p.pos.y
+    cx, cy = _cell_screen_center(g.board, *p.cell)
     a0 = math.radians(ang - 42)
     a1 = math.radians(ang + 42)
     box = pygame.Rect(cx - r, cy - r, r * 2, r * 2)
@@ -829,8 +1087,7 @@ def draw_hud(g: "Game"):
         pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + PANEL_INNER, 396))
         if g.has_bag:
             _draw_bag(g, s, x, 412)
-        if g.has_map:
-            _draw_map(g, s, x, MAP_Y)
+        _draw_abilities(g, s, x, 590)
         _draw_bottom(g, s)
         return
     # 第三幕：老者把格式信息写完之后，剩下的格**全是玩家自己欠的** —— 这时候只报「还差几格」，
@@ -863,8 +1120,8 @@ def draw_hud(g: "Game"):
 
     if g.has_bag:
         _draw_bag(g, s, x, 412)
-    if g.has_map:
-        _draw_map(g, s, x, MAP_Y)
+
+    _draw_abilities(g, s, x, 590)
 
     _draw_bottom(g, s)
 
@@ -886,6 +1143,17 @@ def _draw_bottom(g, s):
             keys = "[WASD] MOVE   [SHIFT] ANOMALY   HOLD [J] SWEEP   [K] ERASE"
         if g.act >= 3 and g.has_sword:
             keys += "   [U] SWORD"              # 第三幕才有剑，别在前两幕挂着让人按
+        if g.act >= 2:
+            keys += "   [I] BRIDGE"             # 第二幕起：界丝搭跨缝通道
+        # 道具（2026-11-16）：每幕解锁一个，键位随解锁追加
+        if g.has_time_slow:
+            keys += "   [E] HOLD"
+        if g.has_dash:
+            keys += "   [Q] DASH"
+        if g.decoy_count > 0:
+            keys += "   [F] DECOY"
+        if g.scroll_count > 0:
+            keys += "   [G] PULL"
         txt(g, keys, (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
             txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 6), g.f_prompt, C_ACCENT, right=True)
@@ -896,6 +1164,8 @@ def _draw_bottom(g, s):
 
     if g.hint_t > 0 and g.hint_text:
         _draw_hint(g, s)
+
+    _draw_awaken(g, s)
 
     if g.debug:
         txt(g, "FPS %d  CELL %d,%d  QR %s  STATE %s  WAVE %.0f  LAST SC %d" % (
@@ -928,129 +1198,79 @@ def _draw_bag(g, s, x, y):
     inside = []
     if g.has_sword:
         inside.append("sword")             # 第二幕收尾拿到的
-    if g.has_map:
-        inside.append("map")
+    if getattr(g, "thread_count", 0) > 0:
+        inside.append("thread")            # 界丝：堆叠占一格，数量画在格子里
     for i in range(min(BAG_SLOTS, cols * rows)):
         r, c = divmod(i, cols)
         rect = pygame.Rect(x + c * (w + gap), y + 26 + r * (h + 10), w, h)
         s.fill(C_BAG_SLOT, rect)
         pygame.draw.rect(s, C_PANEL_LINE, rect, 1, border_radius=4)
         if i < len(inside):                       # 2 倍图标（预生成），格子才不显得空
-            icon = _bag_icon(inside[i])
-            s.blit(icon, icon.get_rect(center=rect.center))
+            kind = inside[i]
+            if kind == "thread":
+                _draw_thread_icon(g, s, rect, g.thread_count)
+            else:
+                icon = _bag_icon(kind)
+                s.blit(icon, icon.get_rect(center=rect.center))
 
 
-def _draw_scroll_closed(g, s, cx, cy):
-    """卷起来的地图：横躺的一卷纸，中间一道捆带，两端是卷头。"""
-    w, h = MAP_SCROLL_W, MAP_SCROLL_H
-    x, y = cx - w // 2, cy - h // 2
-    center_txt(g, "MAP", (cx, y - 20), g.f_small, C_DIM)
-    sprites.shadow(s, cx, y + h + 4, w - 10, 9, 70)
-
-    body = pygame.Rect(x, y, w, h)
-    pygame.draw.rect(s, C_OUTLINE, body.inflate(2, 2), border_radius=9)
-    pygame.draw.rect(s, C_ITEM_PAPER_DARK, body, border_radius=8)
-    pygame.draw.rect(s, C_ITEM_PAPER, body.inflate(-6, -8), border_radius=6)
-    for dy in (-5, 4):                              # 卷了几层的纹路
-        pygame.draw.line(s, C_ITEM_INK, (x + 14, cy + dy), (x + w - 14, cy + dy), 1)
-
-    for ex in (x - 4, x + w - 8):                   # 两端卷头
-        cap = pygame.Rect(ex, y - 3, 12, h + 6)
-        pygame.draw.rect(s, C_ITEM_PAPER_DARK, cap, border_radius=5)
-        pygame.draw.rect(s, C_OUTLINE, cap, 1, border_radius=5)
-
-    tie = pygame.Rect(cx - 6, y - 4, 12, h + 8)     # 中间那道捆带
-    pygame.draw.rect(s, C_ITEM_LEATHER_DARK, tie, border_radius=3)
-    pygame.draw.rect(s, C_OUTLINE, tie, 1, border_radius=3)
-    s.fill(C_ITEM, pygame.Rect(cx - 2, cy - 2, 4, 4))
-
-    center_txt(g, "M", (cx, y + h + 18), g.f_small, C_DIM)
+def _draw_thread_icon(g, s, rect, count):
+    """界丝的背包图标：一根淡青丝线 + 右下角数量。"""
+    cx, cy = rect.centerx, rect.centery
+    pygame.draw.line(s, C_THREAD, (cx - 12, cy + 6), (cx + 12, cy - 6), 3)
+    pygame.draw.circle(s, C_THREAD_GLOW, (cx - 12, cy + 6), 3)
+    pygame.draw.circle(s, C_THREAD_GLOW, (cx + 12, cy - 6), 3)
+    # 数量标在格子右下角
+    num = g.f_small.render(str(count), True, C_THREAD_GLOW)
+    s.blit(num, (rect.right - num.get_width() - 3, rect.bottom - num.get_height() - 2))
 
 
-def _draw_roll_bar(s, left, y, w, above=True):
-    """展开时上下那两根卷轴轴。**画在纸的外侧**，不然会盖掉第一行 / 最后一行的格子。"""
-    bar = pygame.Rect(left - 10, y - 13 if above else y, w + 20, 13)
-    pygame.draw.rect(s, C_ITEM_PAPER_DARK, bar, border_radius=6)
-    pygame.draw.rect(s, C_OUTLINE, bar, 1, border_radius=6)
-    for ex in (bar.left - 2, bar.right - 10):
-        cap = pygame.Rect(ex, bar.top - 3, 12, bar.height + 6)
-        pygame.draw.rect(s, C_ITEM_LEATHER_DARK, cap, border_radius=4)
-        pygame.draw.rect(s, C_OUTLINE, cap, 1, border_radius=4)
+def _draw_abilities(g, s, x, y):
+    """技能区（物品栏下方）：4 个技能图标 + CD 遮罩 + 一次性道具数量。
 
-
-_MAP_TILE_CACHE = {}
-
-
-def _map_tile():
-    """地图像素格：一块纯墨。预生成一张，别每帧现画（铺开时最多 441 格）。"""
-    surf = _MAP_TILE_CACHE.get("ink")
-    if surf is None:
-        surf = pygame.Surface((MAP_CELL, MAP_CELL))
-        surf.fill(C_CELL_BLACK)
-        _MAP_TILE_CACHE["ink"] = surf
-    return surf
-
-
-def map_rect(open_t=1.0):
-    """地图铺开后纸面的矩形（`open_t` = 铺开进度）。
-
-    单独拎出来是因为**验收脚本要按格子逐像素取样**：手算坐标差一格，
-    断言就会取到隔壁格子上，测过了也是假过。
+    常驻能力（时停/冲刺）显示冷却遮罩；一次性（诱饵/卷轴）显示剩余数量。
+    未解锁的格子显示暗占位。
     """
-    full = TARGET_N * MAP_CELL
-    cx = PANEL_X + PANEL_PAD + PANEL_INNER // 2
-    cy = MAP_Y + 30 + full // 2
-    h = max(8, int(round(full * open_t)))
-    return pygame.Rect(cx - full // 2, cy - h // 2, full, h)
+    txt(g, "ABILITIES", (x, y), g.f_small, C_DIM)
+    cols = 4
+    gap = 14
+    w = (PANEL_INNER - gap * (cols - 1)) // cols
+    h = 70
+    # 每个技能：kind / 是否解锁 / 冷却进度(0~1) / 剩余数量
+    abilities = [
+        ("timeslow", g.has_time_slow, _cd_frac(g.time_slow_cd, TIME_SLOW_CD), None),
+        ("dash", g.has_dash, _cd_frac(g.dash_cd, DASH_CD), None),
+        ("decoy", g.decoy_count > 0, None, g.decoy_count),
+        ("scroll", g.scroll_count > 0, None, g.scroll_count),
+    ]
+    for i, (kind, unlocked, cd, count) in enumerate(abilities):
+        rect = pygame.Rect(x + i * (w + gap), y + 26, w, h)
+        if not unlocked:
+            s.fill(C_BAG_SLOT, rect)
+            pygame.draw.rect(s, C_PANEL_LINE, rect, 1, border_radius=4)
+            continue
+        s.fill(C_BAG_SLOT, rect)
+        pygame.draw.rect(s, C_PANEL_LINE, rect, 1, border_radius=4)
+        # 图标
+        sprites.draw_ability_icon(s, kind, rect.centerx, rect.centery)
+        # 冷却遮罩：从底部往上盖，cd 剩余越多遮得越多
+        if cd is not None and cd > 0:
+            mask_h = int(rect.height * cd)
+            mask = pygame.Rect(rect.x, rect.y + rect.height - mask_h, rect.width, mask_h)
+            shade = pygame.Surface((mask.width, mask.height), pygame.SRCALPHA)
+            shade.fill((10, 16, 26, 150))
+            s.blit(shade, mask)
+        # 一次性道具：右下角标数量
+        if count is not None:
+            num = g.f_panel.render(str(count), True, C_TEXT)
+            s.blit(num, (rect.right - num.get_width() - 4, rect.bottom - num.get_height() - 3))
 
 
-def _draw_map(g, s, x, y):
-    """右下角的地图：卷着是一个卷轴，按 M 铺开成「上一幕收尾时圣坛的样子」。
-
-    画的是 `g.map_cells`（每一幕收尾那一刻拍下来的定格照），**不读棋盘**：
-      · 这一幕涂的格子，地图不会立刻变黑；
-      · 紫怪清掉的整行，地图上的墨也不会跟着掉。
-    只有一幕真正收尾（清屏波扫完、脏格抹掉）才重新拍一张 —— 见 `Game.capture_map()`。
-    也正因为拍的是「已经发生的事」，它永远不会剧透「下一步该涂哪」。
-    """
-    if not g.has_map:
-        return
-    full = TARGET_N * MAP_CELL
-    cx = x + PANEL_INNER // 2
-    top = y + 30
-    cy = top + full // 2
-    t = g.map_t
-
-    if t <= 0.01:                                   # 完全卷起来
-        _draw_scroll_closed(g, s, cx, cy)
-        return
-
-    box = map_rect(t)
-    s.fill(C_ITEM_PAPER, box)
-
-    old = s.get_clip()
-    s.set_clip(box)
-    ink = _map_tile()
-    for (tr, tc) in g.map_cells:                    # 定格照：本幕怎么涂都不会动它
-        s.blit(ink, (box.left + tc * MAP_CELL, box.top + tr * MAP_CELL))
-    # 自己在哪（这个是实时的 —— 位置又不是「幕账」）
-    pr, pc = g.player.cell
-    ptr, ptc = pr - TARGET_OFFSET[0], pc - TARGET_OFFSET[1]
-    if 0 <= ptr < TARGET_N and 0 <= ptc < TARGET_N:
-        px = box.left + ptc * MAP_CELL + MAP_CELL // 2
-        py = box.top + ptr * MAP_CELL + MAP_CELL // 2
-        pygame.draw.circle(s, C_OUTLINE, (px, py), 5)
-        pygame.draw.circle(s, C_PLAYER, (px, py), 3)
-    s.set_clip(old)
-
-    # 这张图是哪一幕收尾时拍的（不然玩家会以为地图坏了：怎么涂都不动）
-    if g.map_act:
-        txt(g, "AS OF ACT %d" % g.map_act, (box.left, box.top - 36), g.f_small, C_DIM)
-
-    # 上下两根卷轴跟着展开的边缘走 —— 读起来才是「纸从轴里滚出来」，
-    # 而不是「一张图被裁掉了下半截」
-    _draw_roll_bar(s, box.left, box.top, full, above=True)
-    _draw_roll_bar(s, box.left, box.bottom, full, above=False)
+def _cd_frac(cd, total):
+    """冷却剩余比例 0~1（0 = 冷却完毕）。"""
+    if cd is None or cd <= 0:
+        return 0.0
+    return max(0.0, min(1.0, cd / float(total)))
 
 
 def _reveal(lines, n):
@@ -1193,6 +1413,47 @@ def _draw_hint(g, s):
     pygame.draw.rect(s, C_WARN, plate, 1)
     for i, im in enumerate(imgs):
         s.blit(im, im.get_rect(center=(plate.centerx, plate.top + 15 + 30 * i)))
+
+
+def _draw_awaken(g, s):
+    """天赋觉醒横幅：屏幕中央浮出技能图标 + 名字 + 按键，淡入淡出，不冻世界。"""
+    if g.awaken_t <= 0 or not g.awaken_kind:
+        return
+    name, key = story.AWAKEN.get(g.awaken_kind, ("", ""))
+    # 淡入（前 0.3s）与淡出（后 0.5s）的 alpha
+    t = g.awaken_total - g.awaken_t
+    alpha = int(255 * min(1.0, t / 0.3, g.awaken_t / 0.5))
+
+    cx = PLAY_W // 2
+    cy = WINDOW_H // 2 - 40
+    icon_r = 26
+
+    label = g.f_big.render(name, True, C_TEXT)
+    key_im = g.f_mid.render("AWAKENED  " + key, True, C_ACCENT)
+    # 动态尺寸：文字两行 + 图标，纵向居中排
+    pad = 20
+    text_w = max(label.get_width(), key_im.get_width())
+    bw = icon_r * 2 + 24 + text_w + 40
+    bh = label.get_height() + key_im.get_height() + pad * 2 + 8
+    plate = pygame.Rect(0, 0, bw, bh)
+    plate.center = (cx, cy)
+
+    surf = pygame.Surface((bw, bh), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (10, 16, 26, 220), surf.get_rect(), border_radius=12)
+    pygame.draw.rect(surf, C_PANEL_LINE, surf.get_rect(), 1, border_radius=12)
+    # 图标：左边圆底，垂直居中
+    icx = 14 + icon_r
+    pygame.draw.circle(surf, C_BAG_SLOT, (icx, bh // 2), icon_r + 4)
+    pygame.draw.circle(surf, C_PANEL_LINE, (icx, bh // 2), icon_r + 4, 1)
+    sprites.draw_ability_icon(surf, g.awaken_kind, icx, bh // 2)
+    # 文字：两行居中于图标右侧区域
+    tx = icon_r * 2 + 28
+    label_y = (bh - label.get_height() - key_im.get_height() - 8) // 2
+    surf.blit(label, (tx, label_y))
+    surf.blit(key_im, (tx, label_y + label.get_height() + 8))
+
+    surf.set_alpha(alpha)
+    s.blit(surf, plate)
 
 # ==== 对话框 ====
 

@@ -9,7 +9,8 @@
 """
 
 from src.config import (
-    DIRTY, ERASE_CAST, ERASING, GRID_N, MIRAGE_FADE, MIRAGE_RADIUS, VALID, WHITE
+    BOARD_ADJACENT, BOARDS, DARK_MODULE, DIRTY, ERASE_CAST, ERASING, GRID_N, MERGE_SLIDE,
+    MIRAGE_FADE, MIRAGE_RADIUS, TARGET_OFFSET, VALID, WHITE
 )
 from src.grid import to_target
 
@@ -17,9 +18,15 @@ from src.grid import to_target
 
 
 class Board:
-    def __init__(self, target, must):
+    def __init__(self, target, must, open_boards=None):
         self.target = target                                   # 21×21 的 0/1 真码
         self.must = set(must)                                  # 本轮必涂格（主网格坐标）
+        # 已经接回来的板块（名字见 config.BOARDS）。空/None = 四块全通（第 2~5 幕的常态）
+        self.open_boards = set(BOARDS) if open_boards is None else set(open_boards)
+        # 第二幕起：核心被怪物破坏 → 板块「分离」。它仍在 open_boards（能站、能写，好让玩家
+        # 走过去补核心），但被记进 detached —— 分离中的板块**不计入通关进度**，视觉上被推开一格。
+        self.detached = set()
+        self.slide = {}                                        # 板块名 → 滑回原位的剩余秒（纯表现）
         self.state = [[WHITE] * GRID_N for _ in range(GRID_N)]
         self.erase_t = [[0.0] * GRID_N for _ in range(GRID_N)]
         self.reveal = [[0.0] * GRID_N for _ in range(GRID_N)]   # 异象灰域剩余秒
@@ -28,15 +35,97 @@ class Board:
         self.stains = 0                                        # ⚠️ 本幕**累计**涂错格数，擦掉不返还
 
     # --- 查询 ---
+    def board_of(self, r, c):
+        """这一格属于哪块板块（名字）；在圣坛外返回 None。
+
+        2026-11-14：**裂缝不是格子**。四块板块刚好铺满 441 格，缝是「板块被推开后空出来的
+        额外空间」，只存在于画面上（`config.BOARD_PUSH`），所以这里永远能查到板块。
+        """
+        t = to_target(r, c)
+        if t is None:
+            return None
+        tr, tc = t
+        for name, (r0, c0, r1, c1) in BOARDS.items():
+            if r0 <= tr <= r1 and c0 <= tc <= c1:
+                return name
+        return None
+
     def in_altar(self, r, c):
-        """圣坛 = 中间 21×21；外面叫平地（the plain）。"""
-        return to_target(r, c) is not None
+        """圣坛 = **已经接回来的板块**。没接回来的板子算平地（the plain）。
+
+        2026-11-14：圣坛从「一整块 21×21」改成四块。没接回来的板块站不上去 ——
+        但那条限制在 game 的移动里做（`can_stand`），这里只回答「能不能写/能不能照」。
+        """
+        b = self.board_of(r, c)
+        return b is not None and b in self.open_boards
+
+    def open_board(self, name):
+        """接回一块板块：它从「被推开一格」滑回原位（0.3 秒）。"""
+        self.open_boards.add(name)
+        self.slide[name] = MERGE_SLIDE
+
+    def detach_board(self, name):
+        """核心被怪物破坏 → 这块板块和**相邻的两块**分离（第二幕起）。
+
+        作者 2026-11-15 定的语义：分离不是「这块板自己飘走」，而是「它和左右邻居之间裂开缝」。
+        视觉上它被推开一格（`BOARD_PUSH`），于是和 `BOARD_ADJACENT[name]` 里那两块各裂开一条缝；
+        其余相邻板块之间仍连着。右下角（BR）没有核心，永远不会自己分离，是「不动的锚点」。
+
+        它仍在 open_boards（能站、能写，好让玩家走过去补核心），
+        但被记进 detached —— 分离中的板块**不计入通关进度**，直到玩家补满核心再并回来。
+        """
+        self.detached.add(name)
+        self.slide.pop(name, None)
+
+    def reattach_board(self, name):
+        """补满核心 → 板块滑回原位，和相邻两块之间的缝合上。"""
+        self.detached.discard(name)
+        self.slide[name] = MERGE_SLIDE
+
+    def adjacent_boards(self, name):
+        """这块板块的两个邻居（按 config.BOARD_ADJACENT）。"""
+        return BOARD_ADJACENT.get(name, ())
+
+    def push_frac(self, name):
+        """这块此刻被推开了几成：0 = 已经归位，1 = 还差一整格。"""
+        if name not in self.open_boards or name in self.detached:
+            return 1.0
+        return max(0.0, self.slide.get(name, 0.0)) / MERGE_SLIDE
+
+    def fractured(self):
+        """圣坛还裂着吗（第一幕：还有板块没接回来）。"""
+        return len(self.open_boards) < len(BOARDS)
+
+    def can_stand(self, r, c):
+        """能不能站上去（这格本身是不是可站区域）。
+
+        - **还裂着的时候：只能站在已经接回来的板块上**（2026-11-14 修 bug）。
+          原来坛外的平地一律放行，于是玩家能从自己那块「走」到外面去 ——
+          而石板是被**画**在外面的，脚底下那格逻辑上还是平地，看起来就像踩在裂缝里、或者
+          走到了祭坛框里面。
+        - **分离板块内部能站能走**：分离的板还在 open_boards 里，玩家被困在里面时得能动。
+          「跨缝」的隔离不在这里做，而在 game 的移动判定里（`_can_stand` 按「从哪到哪」判）。
+        - **坛外（圣坛之外，`board_of` 返回 None）永远不能站**（2026-11-16 作者定）：
+          码序者不能走进虚空。老者 / 道具都在坛边，玩家站在圣坛最外沿就能交互，
+          不需要出坛。怪物可以越过，那是它们的领域。
+        """
+        b = self.board_of(r, c)
+        if b is None:                                          # 坛外 / 虚空
+            return False
+        return b in self.open_boards
+
+    def is_seam(self, a, b):
+        """板块 a 和 b 之间此刻是不是「分离缝」（有缝、不能直接跨，得走界丝通道）。"""
+        if a == b or b not in self.adjacent_boards(a):
+            return False
+        return a in self.detached or b in self.detached
 
     def progress(self):
-        """已复原本轮必涂格数。"""
+        """已复原本轮必涂格数。分离中的板块（`detached`）不计入 —— 核心被破坏，
+        那一块就算「暂时丢了」，补满核心才会回来。"""
         n = 0
         for (r, c) in self.must:
-            if self.state[r][c] == VALID:
+            if self.state[r][c] == VALID and self.board_of(r, c) not in self.detached:
                 n += 1
         return n
 
@@ -63,6 +152,9 @@ class Board:
 
         平地（诱饵）→ VALID：那里照不出灰域（`reveal_around` 只在坛内生效），
         但也不参与判定、不计数，所以按老规矩放行。
+
+        分离板块**能涂**（它还在 open_boards，玩家站上去补核心/补格子靠这个）。
+        「隔缝涂」不需要在这里挡 —— 涂只作用于脚下格，移动挡了跨缝，自然就涂不过去。
         """
         if self.state[r][c] != WHITE:
             return None
@@ -129,6 +221,19 @@ class Board:
                 n += 1
         return n
 
+    def clear_area(self, r, c, radius=1, kind="green"):
+        """清以 (r,c) 为中心 (2*radius+1)² 区域里的有效黑域，返回清掉的格子列表。
+
+        绿怪用：radius=1 → 3×3。只清有效黑域，脏格不动（和红怪/紫怪一致）。
+        """
+        wiped = []
+        for rr in range(max(0, r - radius), min(GRID_N, r + radius + 1)):
+            for cc in range(max(0, c - radius), min(GRID_N, c + radius + 1)):
+                if self.state[rr][cc] == VALID:
+                    self.force_white(rr, cc, kind)
+                    wiped.append((rr, cc))
+        return wiped
+
     def clear_column(self, c, kind="red"):
         """把一整列的有效黑域清成白色，返回清掉几格。"""
         n = 0
@@ -171,6 +276,10 @@ class Board:
         return n
 
     def update(self, dt):
+        for k in list(self.slide):
+            self.slide[k] = max(0.0, self.slide[k] - dt)
+            if self.slide[k] <= 0.0:
+                del self.slide[k]
         for r in range(GRID_N):
             srow, erow, vrow = self.state[r], self.erase_t[r], self.reveal[r]
             for c in range(GRID_N):
@@ -188,12 +297,13 @@ class Board:
 
     # --- 检查点快照 ---
     def snapshot(self):
-        """只存「会变」的东西：格子状态、抹除计时、灰域、累计脏格。"""
+        """只存「会变」的东西：格子状态、抹除计时、灰域、累计脏格、分离的板块。"""
         return {
             "state": [row[:] for row in self.state],
             "erase_t": [row[:] for row in self.erase_t],
             "reveal": [row[:] for row in self.reveal],
             "stains": self.stains,
+            "detached": set(self.detached),
         }
 
     def restore(self, snap):
@@ -201,4 +311,38 @@ class Board:
         self.erase_t = [row[:] for row in snap["erase_t"]]
         self.reveal = [row[:] for row in snap["reveal"]]
         self.stains = snap["stains"]
+        self.detached = set(snap.get("detached", ()))
         self.flash.clear()
+
+    # --- 界丝（BOUND-THREAD）与跨缝通道 ---
+    def thread_cell(self):
+        """界丝的固定黑点（主网格坐标）—— 就是暗模块 `DARK_MODULE`，全图唯一。"""
+        return (DARK_MODULE[0] + TARGET_OFFSET[0], DARK_MODULE[1] + TARGET_OFFSET[1])
+
+    def bridge_cells(self, facing, cell):
+        """按朝向 `facing` 从 `cell` 搭一条跨缝通道，返回通道格子列表；搭不了返回 None。
+
+        通道 = [起点格, 对面格]。起点是玩家脚下（必须属于某块板块），对面是沿朝向走一格
+        之后落入的**另一块板块**（或坛外平地）。两块板块之间的「缝」在逻辑坐标里就是板块
+        边界，宽度为 0（推开一格只是画面表现），所以逻辑上起点和对面就是相邻的两格。
+        """
+        r, c = cell
+        dr, dc = _FACING_DELTA[facing]
+        nr, nc = r + dr, c + dc
+        if not (0 <= nr < GRID_N and 0 <= nc < GRID_N):
+            return None
+        here, there = self.board_of(r, c), self.board_of(nr, nc)
+        # 必须真的跨过一条「缝」：起点在板块内，对面在另一块板块或坛外。
+        if here is None:
+            return None
+        if there == here:
+            return None
+        return [(r, c), (nr, nc)]
+
+    def can_bridge(self, facing, cell):
+        """玩家此刻能不能朝 `facing` 搭通道（脚下得是板块格、对面得跨了缝）。"""
+        return self.bridge_cells(facing, cell) is not None
+
+
+# facing 0上 1下 2左 3右 → (dr, dc)，和 input_state.DIR_KEYS 的 (dr, dc) 语义一致
+_FACING_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}

@@ -11,7 +11,7 @@ import pygame
 from _act1_common import auto_mono, check, finish, new_game, paint_ok
 from src import story
 from src.config import (
-    FORMAT_HOLD_TIME, SC_J, SC_M, SCRIBE_PAUSE, VALID, WHITE, YELLOW_SPAWN_PER_MIN
+    FORMAT_HOLD_TIME, SC_J, SCRIBE_PAUSE, VALID, WHITE, YELLOW_SPAWN_PER_MIN
 )
 from src.grid import cell_center
 
@@ -238,22 +238,7 @@ g.input.held.discard(SC_J)
 check("普通格按住两帧就写上了（没有被拖慢）", g.board.state[r][c] == VALID,
       "state %d" % g.board.state[r][c])
 
-# ==================== 7. 地图摊开时不能写（也不留进度）====================
-g = to_act3()
-g.yellow_spawned = 99
-g.oldman.down = True
-r, c = white_format_cell(g)[0]
-stand(g, r, c)
-g.board.reveal_around(r, c)
-g.has_map = True                                                      # 没捡到地图按 M 是没反应的
-g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=SC_M))   # 摊开地图
-check("地图确实摊开了", g.map_open, "map_open=%s" % g.map_open)
-g.input.held.add(SC_J)
-for _ in range(int(1.5 * 60)):
-    auto_mono(g)
-    g.update(1 / 60)
-g.input.held.discard(SC_J)
-check("捧着地图时按住 J 也写不了", g.board.state[r][c] == WHITE, "state %d" % g.board.state[r][c])
-check("...也不会偷偷攒进度", g.fill_t == 0.0, "%.2f" % g.fill_t)
+# 地图已于 2026-11-14 删除（连同「摊图时封写」这条规则）。这一段整个拿掉。
 
 finish(TITLE)
+

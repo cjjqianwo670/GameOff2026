@@ -3,7 +3,7 @@
 
 import pygame
 
-from _act1_common import auto_mono, check, finish, new_game, reveal_once, shot, toast_text
+from _act1_common import go_to_oldman, auto_mono, check, finish, new_game, reveal_once, shot, toast_text
 from src import story
 from src.config import (
     C_BOX,
@@ -47,7 +47,7 @@ run(g, 3.4)
 g.enter_free_roam()
 run(g, 4.0)
 reveal_once(g)                                   # 先照过灰域，才允许喊老者（2026-11-14）
-put(g, (4, 12))
+go_to_oldman(g)
 run(g, 0.1)
 g.handle_event(ev(23))
 run(g, 1.9)
@@ -152,7 +152,7 @@ check("光等不会自己消失（寿命由玩家决定，不是计时器）",
 
 # 每一句心声都必须放得进框（最多 3 行）
 fits = {}
-for name in ("M1", "M2", "M3", "M4", "M5", "A2_M1", "A2_M2", "A2_M3", "A2_M4"):
+for name in ("M1", "M2", "M3", "A2_M1", "A2_M2", "A4_PURPLE", "A4_M2"):
     text = getattr(story, name, None)
     if not text:
         continue

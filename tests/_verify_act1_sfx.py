@@ -16,7 +16,7 @@ import pygame  # noqa: E402
 
 from _act1_common import auto_mono, check, fill_must, finish, new_game, to_battle, to_roam  # noqa: E402
 from src import sfx  # noqa: E402
-from src.config import PLAYER_START_CELL, PROP_DEAD_CELL  # noqa: E402
+from src.config import PLAYER_START_CELL  # noqa: E402
 from src.entities import Monster  # noqa: E402
 from src.grid import cell_center  # noqa: E402
 
@@ -104,8 +104,8 @@ g2.audio = make_audio_with_probe(g2)
 # 找圣坛内一个非必涂格
 fr = fc = None
 for r in range(2, 23):
-    for c in range(2, 23):
-        if (r, c) not in g2.board.must:
+    for c in range(2, 11):                 # 只在 BL（已接回的板块）里找：坛外涂下去是 plain
+        if (r, c) not in g2.board.must and g2.board.in_altar(r, c):
             fr, fc = r, c
             break
     if fr is not None:
@@ -182,8 +182,8 @@ g8.audio = make_audio_with_probe(g8)
 fill_must(g8)
 auto_mono(g8)
 g8.update(1 / 60)
-g8.player.cell = (12, 12)
-g8.player.pos.update(cell_center(12, 12))
+g8.player.cell = (17, 5)                 # 站在**已接回的 BL** 里：清屏的 glow 段要求人在坛内
+g8.player.pos.update(cell_center(17, 5))
 calls.clear()
 from src.config import CLEAR_GLOW_TIME  # noqa: E402
 for _ in range(int(CLEAR_GLOW_TIME * 60) + 2):

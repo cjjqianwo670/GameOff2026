@@ -5,7 +5,8 @@ import time
 
 import pygame
 
-from _act1_common import clear_wave1, auto_mono, check, fill_must, finish, new_game, shot, toast_text
+from _act1_common import (all_boards, auto_mono, check, finish, new_game, shot,
+                          toast_text)
 from src import story
 from src.config import GAP_SECONDS, SC_D, SC_J, SC_K, WHITE
 from src.entities import Monster
@@ -62,8 +63,9 @@ check("按着 Shift 时 J 涂不上去",
 g.input.held.clear()
 
 # --- 涂错 → 脏格 + 提示；K 擦掉但计数不减 ---
+# 只在**已接回的板块**里挑：坛外/没接回的板子涂下去是 plain（不是脏格）
 fr, fc = next((r, c) for r in range(2, 23) for c in range(2, 23)
-              if (r, c) not in g.board.must)
+              if (r, c) not in g.board.must and g.board.in_altar(r, c))
 put(g, (fr, fc))
 g.input.held.add(SC_J)
 run(g, 0.1)
@@ -86,22 +88,13 @@ g.monsters.append(Monster((cx + 20, cy), 200.0))
 run(g, 0.3)
 check("被红怪命中 -5%", g.health == hp0 - 5, "%d" % g.health)
 
-# --- 涂满 → 清屏 → 奖励 ---
-clear_wave1(g)                      # 第一幕第一波（33 格 + 迷你清屏）先过掉
-fill_must(g)
+# --- 四块涂满 → 清屏 → 奖励 ---
+all_boards(g)                       # BL → TL → TR → BR（最后一块 0 格，直接进终局清屏）
 check("100 格全复原", g.board.progress() == 100, "%d" % g.board.progress())
-put(g, (12, 12))
-run(g, 0.2)
-check("进入清屏", g.state == "CLEAR", "%s/%s" % (g.state, g.clear_phase))
-for _ in range(int(6.0 * 60)):                  # 发光 1.2 + 扩散 ~2.4 + 停顿 0.6
-    if g.state == "REWARD":
-        break
-    auto_mono(g)
-    g.update(1 / 60)
-    g.draw()
-check("波扫完 → 奖励阶段", g.state == "REWARD", g.state)
+check("四块拼完 → 收尾清屏 → 奖励阶段", g.state == "REWARD", "%s/%s" % (g.state, g.clear_phase))
 run(g, 1.8)                                     # REWARD_DELAY 之后才浮出
-check("两个道具都浮出", len(g.items) == 2, "%d" % len(g.items))
+check("道具浮出（只剩 BAG 一件，地图已删）", len(g.items) == 1 and g.items[0].kind == "bag",
+      "%d / %s" % (len(g.items), [i.kind for i in g.items]))
 
 # --- 性能 ---
 t0 = time.perf_counter()

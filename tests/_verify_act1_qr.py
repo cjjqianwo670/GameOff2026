@@ -73,7 +73,8 @@ check("必涂格正好 100 个且无重复", len(must) == 100 and len(set(must))
 check("必涂格全是目标矩阵里的黑格",
       all(g.target[r - orr][c - occ] == 1 for (r, c) in must))
 check("required_cells() 与 must_all 一致", required_cells(g.target) == must)
-check("第一波 = 左下定位图案的 33 格", len(g.must) == 33 and g.must <= must, "%d" % len(g.must))
+# 第一块 = 左下 BL：33 个定位图案格 + 暗模块（(13,8) 落在 BL 里）= 34
+check("第一块 = 左下 BL 的 34 格", len(g.must) == 34 and g.must <= must, "%d" % len(g.must))
 
 # 出图：给手机扫的样张（每格 20px + 4 格静区，纯黑白）
 q, content = generate_target(random.Random(7))

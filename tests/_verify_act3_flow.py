@@ -33,7 +33,9 @@ def to_act3(g):
     g.start_act3()
     g.spawn_rate = 0.0
     g.spawn_purple = lambda: None            # 这一幕先不测紫怪（它会清整行，见 M2 平衡）
+    g.spawn_green = lambda: None             # 这一幕也不测绿怪（清 3×3 会干扰老者写格式格）
     g.monsters.clear()
+    g.greens.clear()
     return g
 
 

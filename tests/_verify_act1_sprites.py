@@ -15,9 +15,9 @@ from src import sprites  # noqa: E402
 from src.config import (  # noqa: E402
     C_BG, C_CELL_BLACK, C_CELL_WHITE, C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK, C_MONSTER_RING, C_OLDMAN,
     C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OUTLINE, C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP,
-    C_ITEM, C_ITEM_INK, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK, C_ITEM_MARK, C_ITEM_PAPER,
+    C_ITEM, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK,
     C_PLAYER_LIGHT,
-    C_PROP_DEAD, C_SASH, C_STAFF
+    C_SASH, C_STAFF
 )
 
 
@@ -227,17 +227,6 @@ sprites.draw_red(Rt, 60, 60, 9, t=0.8, phase=0.0)
 check("红怪：会呼吸（两帧不同）",
       pygame.image.tostring(Rp, "RGB") != pygame.image.tostring(Rt, "RGB"))
 
-# 死掉的那只
-D = canvas(120, 120)
-sprites.draw_dead_red(D, 60, 60)
-check("死红怪：还是暗红的一摊（C_PROP_DEAD）",
-      count(D, C_PROP_DEAD, pygame.Rect(50, 55, 20, 12)) > 40,
-      "%d px" % count(D, C_PROP_DEAD, pygame.Rect(50, 55, 20, 12)))
-D2 = canvas(120, 120)
-sprites.draw_dead_red(D2, 60, 60)
-check("死红怪：不动（两帧完全一样）",
-      pygame.image.tostring(D, "RGB") == pygame.image.tostring(D2, "RGB"))
-
 # ==================== 性能 ====================
 import time  # noqa: E402
 
@@ -260,20 +249,10 @@ def item_canvas(kind, glow=True):
 
 
 bag_s = item_canvas("bag")
-map_s = item_canvas("map")
 bag_px = colors_in(bag_s, pygame.Rect(28, 26, 24, 26))
-map_px = colors_in(map_s, pygame.Rect(26, 28, 28, 24))
 
 check("背包用皮革色画（不是一根金棍）", C_ITEM_LEATHER in bag_px, str(sorted(bag_px))[:60])
 check("背包有金属扣（金色高光）", C_ITEM in bag_px)
-check("地图用纸色画", C_ITEM_PAPER in map_px, str(sorted(map_px))[:60])
-check("地图上有墨线", C_ITEM_INK in map_px)
-check("地图上有红点标记", C_ITEM_MARK in map_px)
-
-# 两个图标必须长得不一样（否则玩家分不出哪个是哪个）
-diff = sum(1 for x in range(20, 60) for y in range(20, 60)
-           if bag_s.get_at((x, y))[:3] != map_s.get_at((x, y))[:3])
-check("背包和地图是两个不同的图形", diff > 200, "%d 像素不同" % diff)
 
 # 金环：带光和不带光必须是两张不同的图，而且差别只在脚下
 no_glow = item_canvas("bag", glow=False)
@@ -328,57 +307,6 @@ right_bag = seq_px(3, True)
 check("朝右走：包从左肩后露出来",
       count(right_bag, C_ITEM_LEATHER, pygame.Rect(26, 30, 12, 18)) > 10,
       "%d px" % count(right_bag, C_ITEM_LEATHER, pygame.Rect(26, 30, 12, 18)))
-
-
-# ==================== 捧着地图的姿态（2026-11-12 作者要求） ====================
-# 按 M 看地图时，码序使两只手都占着：胸前捧着一张摊开的纸（纸上有三个定位图案）。
-# 这不是装饰 —— 同一时刻 J / K / Shift 全被封掉，见 _verify_act1_keys.py。
-
-def seq_hold(facing, has_bag=True):
-    s = pygame.Surface((80, 80))
-    s.fill(C_CELL_WHITE)
-    sprites.draw_sequencer(s, 40, 40, facing=facing, t=2.0, has_bag=has_bag, holding_map=True)
-    return s
-
-
-chest = pygame.Rect(32, 36, 18, 12)
-
-hold_front = seq_hold(1)
-idle_front = seq_px(1, True)
-n_hold = count(hold_front, C_ITEM_PAPER, chest)
-check("面向镜头捧图：胸前有一张纸（纸色像素成片）", n_hold > 50, "%d px" % n_hold)
-check("不捧图时胸前没有纸", count(idle_front, C_ITEM_PAPER, chest) == 0,
-      "%d px" % count(idle_front, C_ITEM_PAPER, chest))
-check("纸上画着三个定位图案（墨色块）", count(hold_front, C_CELL_BLACK, chest) >= 20,
-      "%d px" % count(hold_front, C_CELL_BLACK, chest))
-check("两端有皮革卷头（不是一张白纸片）",
-      count(hold_front, C_ITEM_LEATHER_DARK, pygame.Rect(28, 34, 26, 16)) >= 6,
-      "%d px" % count(hold_front, C_ITEM_LEATHER_DARK, pygame.Rect(28, 34, 26, 16)))
-
-# 纸盖住胸口核心：捧图时那块青光应该看不见了
-core = pygame.Rect(35, 39, 10, 6)
-n_core_idle = count(idle_front, C_PLAYER, core)
-n_core_hold = count(hold_front, C_PLAYER, core)
-check("捧图时胸口核心被纸挡住", n_core_idle > 4 and n_core_hold == 0,
-      "idle %d hold %d" % (n_core_idle, n_core_hold))
-
-# 背对镜头：纸在身前，看不见；只有纸边从剪影两侧露出来
-hold_back = seq_hold(0)
-check("背对捧图：胸口看不见纸（纸在身前）", count(hold_back, C_ITEM_PAPER, chest) == 0,
-      "%d px" % count(hold_back, C_ITEM_PAPER, chest))
-check("背对捧图：两侧露着纸边（看得出手里有东西）",
-      count(hold_back, C_ITEM_PAPER, pygame.Rect(25, 38, 6, 12)) > 2
-      and count(hold_back, C_ITEM_PAPER, pygame.Rect(49, 38, 6, 12)) > 2,
-      "%d / %d px" % (count(hold_back, C_ITEM_PAPER, pygame.Rect(25, 38, 6, 12)),
-                      count(hold_back, C_ITEM_PAPER, pygame.Rect(49, 38, 6, 12))))
-
-# 朝左：纸偏在左边（不是画在正中间）
-hold_left = seq_hold(2)
-check("朝左捧图：纸偏在左侧（右半胸是空的）",
-      count(hold_left, C_ITEM_PAPER, pygame.Rect(29, 36, 14, 12)) > 50
-      and count(hold_left, C_ITEM_PAPER, pygame.Rect(44, 36, 12, 12)) == 0,
-      "%d / %d px" % (count(hold_left, C_ITEM_PAPER, pygame.Rect(29, 36, 14, 12)),
-                      count(hold_left, C_ITEM_PAPER, pygame.Rect(44, 36, 12, 12))))
 
 
 # ==================== 第三幕的剑（2026-11-12）====================

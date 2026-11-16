@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """步骤 6 验收：完成判定（100 格 + 脏格 ≤10）+ 清屏（发光 → 进坛 → 圆形波 → 抹脏格）。"""
 
-from _act1_common import (auto_mono, check, clear_wave1, fill_must, finish, new_game,
+from _act1_common import (auto_mono, check, clear_board, fill_must, finish, new_game,
                           paint_ok, shot, to_battle)
-from src.config import CLEAR_GLOW_TIME, CLEAR_WAVE_HOLD, DIRTY, STAIN_LIMIT, VALID
+from src.config import (CLEAR_GLOW_TIME, CLEAR_WAVE_HOLD, DIRTY, PLAYER_START_CELL,
+                        STAIN_LIMIT, VALID)
 from src.entities import Monster
 from src.grid import cell_center
 
@@ -23,10 +24,12 @@ def run_for(g, secs):
 
 g = to_battle(new_game())
 b = g.board
-# 第一幕分两波：这一节测的是**整幕收尾那次清屏**，所以先把第一波（33 格 + 迷你清屏）过掉
-check("第一波清完", clear_wave1(g))
+# 第一幕是四块板块（BL 34 → TL 67 → TR 100 → BR 0）。这一节测的是**整幕收尾那次清屏**，
+# 所以先把前两块写掉（会各触发一次迷你清屏），停在第三块（must = 整张码的 100 格）。
+check("左下清完 → 接回左上", clear_board(g))
+check("左上清完 → 接回右上", clear_board(g))
 must = sorted(b.must)
-check("第二波的必涂格是整张码的 100 格", len(must) == 100, "%d" % len(must))
+check("第三块的必涂格是整张码的 100 格", len(must) == 100, "%d" % len(must))
 
 # --- 1) 99 格 + 1 个脏格 → 不能通关 ---
 # ⚠️ 「留最后一格不涂」不能按排序取 must[-1]：第一波已经涂掉的那 33 格可能就排在最后
@@ -36,11 +39,11 @@ keep = left[-1]
 for (r, c) in must:
     if (r, c) != keep:
         paint_ok(g, r, c)
-# 找一个圣坛内非必涂格做脏格
+# 找一个**已接回板块**上的非必涂格做脏格（坛外/没接回的板子涂下去是 plain，不计数）
 fr, fc = None, None
 for r in range(2, 23):
     for c in range(2, 23):
-        if (r, c) not in b.must:
+        if (r, c) not in b.must and b.in_altar(r, c):
             fr, fc = r, c
             break
     if fr:
@@ -65,24 +68,15 @@ check("脏格累计超过额度不再卡通关（改成扣血）", b2.is_complet
 b2.stains = STAIN_LIMIT
 check("脏格正好等于上限 → 通关", b2.is_complete())
 
-# --- 4) 进 CLEAR：圣坛发光 + 提示走进圣坛 ---
-g.player.cell = (0, 0)                     # 站在平地上
-g.player.pos.update(cell_center(0, 0))
+# --- 4) 进 CLEAR：圣坛发光 ---
+# 2026-11-14：板块制之后玩家**出不了祭坛**（`can_stand` 判 `fractured()`），
+# 「站在坛外 → 提示 STEP INTO THE ALTAR」这条路走不到了。所以这里改成验反向：
+# 通关那一刻不该出现那句提示（人本来就在坛里），发光阶段照常开始。
 auto_mono(g)
 g.update(1 / 60)
 check("通关瞬间进入 CLEAR", g.state == "CLEAR", g.state)
 check("CLEAR 第一阶段是 glow", g.clear_phase == "glow", str(g.clear_phase))
-check("站在坛外：提示走进圣坛", g.hint_text == "STEP INTO THE ALTAR", repr(g.hint_text))
-
-# 已经在坛里的人不该被喊「走进圣坛」—— 这句必须在波扫完之前就消失（2026-11-14 修）
-g.player.cell = (12, 12)
-g.player.pos.update(cell_center(12, 12))
-auto_mono(g)
-g.update(1 / 60)
-check("人已经在坛内：这句提示立刻收掉", g.hint_text == "", repr(g.hint_text))
-
-run_for(g, 1.0)
-check("玩家在坛外时波不启动", g.clear_phase == "glow", str(g.clear_phase))
+check("人在坛内：不会喊「走进圣坛」", g.hint_text != "STEP INTO THE ALTAR", repr(g.hint_text))
 
 # --- 5) 走进圣坛 → 圆形波，扫过的红怪被清除 ---
 for m in g.monsters:
@@ -123,7 +117,7 @@ check("波扫完 → 进奖励阶段", g.state == "REWARD", g.state)
 # --- 6) 涂完最后一格时人就站在坛内：发光不能一帧都没有 ---
 g5 = to_battle(new_game())
 fill_must(g5)
-put(g5, (12, 12))
+put(g5, PLAYER_START_CELL)                  # 站在**已接回的 BL** 里（坛外现在站不上去）
 auto_mono(g5)
 g5.update(1 / 60)
 check("最后一格涂完 → 进清屏", g5.state == "CLEAR", g5.state)

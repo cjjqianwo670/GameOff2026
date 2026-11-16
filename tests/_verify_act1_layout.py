@@ -45,8 +45,13 @@ check("鼠标坐标按 /scale 换算（0.6 缩放 → 680,500）", abs(mx - 680)
 pygame.mouse.get_pos = _real_get_pos
 
 p = shot(g, "01_layout.png")
-col = g.canvas.get_at((GRID_ORIGIN[0] + CELL // 2, GRID_ORIGIN[1] + CELL // 2))[:3]
-check("网格左上格是白底", col == C_CELL_WHITE, str(col))
+# 2026-11-14：石板制之后，**世界左上角 (0,0) 是坛外平地**（不再是白底），
+# 真正该是白的是祭坛内的格子。所以断言改成两条：坛内白、坛外不是白。
+inner = g.canvas.get_at((GRID_ORIGIN[0] + (2 + 5) * CELL + CELL // 2,
+                         GRID_ORIGIN[1] + (2 + 5) * CELL + CELL // 2))[:3]
+outer = g.canvas.get_at((GRID_ORIGIN[0] + CELL // 2, GRID_ORIGIN[1] + CELL // 2))[:3]
+check("祭坛内的格子是白底", inner == C_CELL_WHITE, str(inner))
+check("坛外（世界左上角）不是白底", outer != C_CELL_WHITE, str(outer))
 col_panel = g.canvas.get_at((PANEL_X + PANEL_W // 2, PANEL_Y + PANEL_H - 40))[:3]
 check("右侧面板底色是面板色（空着的区域）", col_panel == C_PANEL, str(col_panel))
 

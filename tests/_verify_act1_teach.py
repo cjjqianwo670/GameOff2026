@@ -11,7 +11,8 @@
 
 import pygame
 
-from _act1_common import auto_mono, check, finish, new_game, reveal_once, shot
+from _act1_common import (auto_mono, check, finish, go_to_oldman, new_game, reveal_once,
+                          shot)
 from src import story
 from src.config import ANOMALY_MISS_LIMIT, PLAYER_START_CELL, SC_J, SC_T
 from src.grid import cell_center
@@ -91,7 +92,7 @@ check("教完之后：站在灰上也不再提示", g.prompt_text != story.PROMP
 g2 = new_game()
 run(g2, 3.4)
 g2.enter_free_roam()
-put(g2, (12, 12))                               # 圣坛正中：第一幕这里没有灰
+put(g2, (14, 4))                                # BL 内非必涂格：这里第一幕没有灰
 g2.input.held.add(SC_J)
 run(g2, 0.1)
 g2.input.held.clear()
@@ -103,7 +104,7 @@ check("盲涂出脏格不算学会", not g2.taught_write and g2.board.stains > 0
 g3 = new_game()
 run(g3, 3.4)
 g3.enter_free_roam()
-put(g3, (4, 12))
+go_to_oldman(g3)
 run(g3, 0.1)
 check("还没照过灰域：不提示 PRESS [T]，改提示 TRY [SHIFT]",
       g3.prompt_text == story.TUTORIAL_SHIFT, repr(g3.prompt_text))
@@ -115,7 +116,7 @@ check("按 T 会回一句 TRY [SHIFT]",
 
 put(g3, PLAYER_START_CELL)                       # 回到出生点那片灰上，真的照一次
 check("（准备）照一次灰域", reveal_once(g3))
-put(g3, (4, 12))
+go_to_oldman(g3)
 run(g3, 0.1)
 check("照过灰域之后：提示变成 PRESS [T] TO CALL OUT",
       g3.prompt_text == story.PROMPT_CALL, repr(g3.prompt_text))
@@ -129,7 +130,7 @@ check("照过灰域之后：按 T 能开对话", g3.state == "DIALOG", g3.state)
 g6 = new_game()
 run(g6, 3.4)
 g6.enter_free_roam()
-put(g6, (4, 12))                                 # 这里第一幕没有活，照不出灰
+put(g6, (13, 4))                                 # BL 顶行：5×5 里没有任何必涂格，照不出灰
 run(g6, 0.1)
 for _ in range(ANOMALY_MISS_LIMIT + 2):
     g6.handle_event(ev(225))

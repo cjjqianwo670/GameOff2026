@@ -13,10 +13,10 @@ TITLE = "STEP 3 · BOARD STATES / MUST-PAINT / STAINS"
 
 g = new_game()
 b = g.board
-must = sorted(b.must)                           # 当前这一波（第一幕第一波 = 左下角 33 格）
+must = sorted(b.must)                           # 当前这一波（第一幕第一块 = 左下 BL，34 格）
 check("必涂格 100 个（整幕合计）", len(g.must_all) == 100, "%d" % len(g.must_all))
-check("第一波只发左下角那 33 格", len(b.must) == 33, "%d" % len(b.must))
-check("两波拼起来就是整幕的必涂格", set(b.must) <= set(g.must_all))
+check("第一块只发左下角那 34 格（33 定位图案 + 暗模块）", len(b.must) == 34, "%d" % len(b.must))
+check("四块拼起来就是整幕的必涂格", set(b.must) <= set(g.must_all))
 check("必涂格都是目标黑格",
       all(g.target[r - 2][c - 2] == 1 for (r, c) in b.must))
 
@@ -63,10 +63,12 @@ check("进度 +1", b.progress() == 1, "%d" % b.progress())
 
 # --- 2) 圣坛内非必涂格涂 → DIRTY，累计 +1 ---
 # 找一个圣坛内、非必涂、真码为白的格子（干净的例子）
+# ⚠️ 必须挑**已经接回来的板块**上的格子（BL）。挑到没接回的板块 = 坛外平地，
+# 涂下去返回 "plain" 而不是 "dirty"（2026-11-14 板块制之后的行为，不是 bug）。
 free = None
-for r in range(2, 23):
-    for c in range(2, 23):
-        if (r, c) not in b.must:
+for r in range(13, 23):                    # BL 的世界行 13..22
+    for c in range(2, 11):                 # BL 的世界列 2..10
+        if (r, c) not in b.must and b.state[r][c] == WHITE:
             free = (r, c)
             break
     if free:
@@ -78,8 +80,8 @@ check("脏格累计 +1", b.stains == 1, "%d" % b.stains)
 
 # 蒙涂也算：一个「该黑但不是本轮必涂」的信息区格子，没照过直接涂
 blind = None
-for r in range(2, 23):
-    for c in range(2, 23):
+for r in range(13, 23):                    # 同样只在 BL 里找（坛外的格涂下去是 plain）
+    for c in range(2, 11):
         tr, tc = r - 2, c - 2
         if (r, c) not in b.must and g.target[tr][tc] == 1 and b.state[r][c] == WHITE:
             blind = (r, c)

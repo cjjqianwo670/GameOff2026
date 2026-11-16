@@ -8,7 +8,7 @@
 
 import pygame
 
-from _act1_common import clear_wave1, reveal_once, auto_mono, check, fill_must, finish, new_game, to_roam, toast_text
+from _act1_common import all_boards, go_to_oldman, reveal_once, auto_mono, check, fill_must, finish, new_game, to_roam, toast_text
 from src import story
 from src.config import (
     SC_A, SC_B, SC_D, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER, SC_R, SC_S, SC_SHIFT,
@@ -58,7 +58,7 @@ def put(g, cell):
 g = to_roam(new_game())
 run(g, 0.2)
 reveal_once(g)                                   # 先照过灰域，才允许喊老者（2026-11-14）
-put(g, (4, 12))
+go_to_oldman(g)
 run(g, 0.1)
 check("走到老者旁边会提示 CALL OUT", g.prompt_text == story.PROMPT_CALL, repr(g.prompt_text))
 
@@ -71,7 +71,7 @@ check("对话内容是坛内支线", len(g.dlg_lines) == 14, str(len(g.dlg_lines
 
 # --- 行为：站在道具上，按 ] 不捡，按 B 才捡 ---
 g2 = to_roam(new_game())
-clear_wave1(g2)          # 第一幕分两波：先过第一波，再写第二波
+all_boards(g2)           # 第一幕是四块板块：一路写到底，才会进 REWARD
 fill_must(g2)
 g2.player.cell = (12, 12)
 g2.player.pos.update(cell_center(12, 12))
@@ -80,16 +80,16 @@ g2.clear_phase = "wave"
 g2.wave_r = 0.0
 run(g2, 3.5)
 run(g2, 1.8)
-check("走到奖励阶段、道具已浮出", g2.state == "REWARD" and len(g2.items) == 2,
+check("走到奖励阶段、道具已浮出（只剩 BAG 一件）", g2.state == "REWARD" and len(g2.items) == 1,
       "%s / %d" % (g2.state, len(g2.items)))
 if g2.items:
     it = g2.items[0]
     put(g2, it.cell)
     run(g2, 0.05)
     g2.handle_event(ev(48))
-    check("按 ]（旧代码里被当成 B）不会拾取", len(g2.items) == 2, "%d" % len(g2.items))
+    check("按 ]（旧代码里被当成 B）不会拾取", len(g2.items) == 1, "%d" % len(g2.items))
     g2.handle_event(ev(SC_B))
-    check("按 B 才拾取", len(g2.items) == 1, "%d" % len(g2.items))
+    check("按 B 才拾取", len(g2.items) == 0, "%d" % len(g2.items))
 
 # ==================== 回车 / J 串键（2026-11-11 修的 bug） ====================
 # 现象：站在格子上按回车，脚下被涂黑。
@@ -187,9 +187,9 @@ check("...涂对时不再弹提示", g5.hint_text == "", repr(g5.hint_text))
 # 涂错地方（坛内非必涂格）仍然是另一句提示
 g6 = to_roam(new_game())
 free6 = None
-for r in range(2, 23):
+for r in range(2, 23):                      # 只在**已接回的板块**里找：坛外涂下去是 plain，不算脏格
     for c in range(2, 23):
-        if (r, c) not in g6.board.must:
+        if (r, c) not in g6.board.must and g6.board.in_altar(r, c):
             free6 = (r, c)
             break
     if free6:
@@ -201,70 +201,7 @@ check("涂错地方 → 嘀咕「好像失败了」（和「没看」分开）",
 check("第一次涂脏格仍教一下 K（按键教学保留）", g6.hint_text == story.HINT_CLEAR, repr(g6.hint_text))
 
 
-# ==================== 地图摊开 = 双手捧着纸（2026-11-12 作者要求） ====================
-# 作者：按 M 看地图时码序使两只手都占着，制造不了黑域；必须再按一次 M 收起来才能涂。
-# 定稿范围（作者选）：J / K / Shift 全封；被挡时给一行提示 + 一声闷响。
-from src.config import ERASING, MAP_OPEN_TIME, SC_M, VALID, WHITE  # noqa: E402
-
-
-g4 = to_roam(new_game())
-g4.has_bag = g4.has_map = True
-cell_j = sorted(g4.board.must)[0]
-put(g4, cell_j)
-tap(g4, SC_M)                                   # 摊开
-run(g4, MAP_OPEN_TIME + 0.1)
-check("按 M 摊开地图", g4.map_open)
-
-tap(g4, SC_J)
-check("地图摊开时按 J 涂不上（双手捧着纸）",
-      g4.board.state[cell_j[0]][cell_j[1]] == WHITE,
-      "%d" % g4.board.state[cell_j[0]][cell_j[1]])
-check("...被挡时给出一行提示", g4.hint_text == story.MAP_IN_HANDS, repr(g4.hint_text))
-
-# K 也挡：先把脚下这格弄成黑，再按 K
-g4.board.state[cell_j[0]][cell_j[1]] = VALID
-tap(g4, SC_K)
-check("地图摊开时按 K 也擦不掉", g4.board.state[cell_j[0]][cell_j[1]] == VALID,
-      "%d" % g4.board.state[cell_j[0]][cell_j[1]])
-
-# Shift 也挡：站着照不出灰域（先把开场自动照出的那 5×5 清掉，免得旧灰域混进来）
-g4.board.state[cell_j[0]][cell_j[1]] = WHITE
-for _r in range(25):
-    for _c in range(25):
-        g4.board.reveal[_r][_c] = 0.0
-before_reveal = sum(1 for r in range(25) for c in range(25) if g4.board.reveal[r][c] > 0)
-tap(g4, SC_SHIFT[0])
-after_reveal = sum(1 for r in range(25) for c in range(25) if g4.board.reveal[r][c] > 0)
-check("地图摊开时按 Shift 照不出灰域", after_reveal == before_reveal,
-      "%d -> %d" % (before_reveal, after_reveal))
-
-# 收起地图：立刻恢复
-tap(g4, SC_M)
-run(g4, MAP_OPEN_TIME + 0.1)
-check("再按一次 M 收起来", not g4.map_open)
-g4.board.reveal_around(*cell_j)                 # 先照出来再涂，才是有效黑域
-tap(g4, SC_J)
-check("收起地图后按 J 立刻能涂（不用等别的）",
-      g4.board.state[cell_j[0]][cell_j[1]] == VALID,
-      "%d" % g4.board.state[cell_j[0]][cell_j[1]])
-
-# 站着的时候能走：捧图不影响移动（只是不能干活）
-tap(g4, SC_M)                                   # 再摊开
-run(g4, MAP_OPEN_TIME + 0.1)
-check("（准备）地图又摊开了", g4.map_open)
-put(g4, (12, 12))
-g4.input.handle_event(ev(SC_W))
-run(g4, 0.4)
-g4.input.handle_event(up(SC_W))
-check("捧图时还能走动（只封暗活，不封腿）", g4.player.cell != (12, 12), str(g4.player.cell))
-
-# 按 R 重开一局：手里必须空出来，否则「捧着纸」会把涂改永久封住（而且没地图时按 M 解不开）
-g4.input.handle_event(ev(SC_R))
-g4.handle_event(ev(SC_R))
-g4.input.handle_event(up(SC_R))
-run(g4, 0.1)
-check("按 R 重开后面板归位（没有地图）", not g4.has_map, str(g4.has_map))
-check("按 R 重开时地图自动收起（否则涂改会被永久封住）", not g4.map_open)
-
+# 地图已于 2026-11-14 删除（作者：越到后面越没用，还占着 J/K/Shift）。这一段整个拿掉。
 
 finish(TITLE)
+

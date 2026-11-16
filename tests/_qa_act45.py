@@ -2,7 +2,7 @@
 """独立 QA：第四、五幕的边角情况（不是断言套件，是找茬）。"""
 import pygame
 from _act1_common import auto_mono, new_game, paint_ok, skip_intro
-from src.config import SC_J, SC_K, SC_M, VALID, WHITE
+from src.config import SC_J, SC_K, VALID, WHITE
 from src.qr import ERROR_TOLERANCE
 from src.grid import cell_center
 
@@ -46,20 +46,12 @@ def tick(g, n):
 
 
 print("=" * 60)
-print("A. 第四幕：地图摊开时按住 J")
+print("B. 第四幕：K 擦掉再扫")
 g = to(4)
-g.has_map = True
 white = sorted(c for c in g.must if g.board.state[c[0]][c[1]] == WHITE)
 g.player.cell = white[0]; g.player.pos.update(cell_center(*white[0]))
 g.board.reveal_around(*white[0], radius=3)
-auto_mono(g)      # 开场那句心声会冻住世界，得先推过去
-g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=SC_M))
-g.input.held.add(SC_J)
-tick(g, 60)
-g.input.held.discard(SC_J)
-print("  map_open=%s 格子=%d（应为0=白）fill_t=%.2f" % (g.map_open, g.board.state[white[0][0]][white[0][1]], g.fill_t))
-
-print("B. 第四幕：K 擦掉再扫")
+g.board.state[white[0][0]][white[0][1]] = VALID
 g.input.held.add(SC_K)
 tick(g, 20)
 g.input.held.discard(SC_K)

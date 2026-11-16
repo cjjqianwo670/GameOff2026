@@ -6,11 +6,11 @@
 
 import pygame
 
-from _act1_common import auto_mono, check, finish, new_game, reveal_once, shot
+from _act1_common import go_to_oldman, auto_mono, check, finish, new_game, reveal_once, shot
 from src.config import (
     PLAYER_START_CELL,
-    CELL, C_CELL_WHITE, C_OLDMAN, C_PROP_DEAD, C_PROP_TOOL, CALL_RANGE_PX, CLOSE_RANGE_PX,
-    DLG_BOX, DLG_LINE_H, GRID_N, PROP_DEAD_CELL, PROP_TOOL_CELL,
+    CELL, C_CELL_WHITE, C_OLDMAN, CALL_RANGE_PX, CLOSE_RANGE_PX,
+    DLG_BOX, DLG_LINE_H, GRID_N,
     DLG_LAST_MIN_SHOW, INTRO_TOTAL, MIRAGE_RADIUS, SC_A, SC_D, SC_ENTER, SC_ESC, SC_J, SC_S,
     SC_T, SC_W,
     TUTORIAL_MOVE_SECONDS,
@@ -61,8 +61,11 @@ check("出生就提示走路键位", g.prompt_text == story.TUTORIAL_MOVE, repr(
 check("醒着的时候不画碎片", not g.debris)
 g.draw()
 pr, pc = g.player.cell
+# ⚠️ 只在**已接回的板块**里取格子：没接回的板块被推开 1 格画在别处，
+# 用它的规范坐标取像素会取到缝里（背景色），测的就不是「格子白不白」了。
 far = [(r, c) for r in range(2, 23) for c in range(2, 23)
-       if max(abs(r - pr), abs(c - pc)) > MIRAGE_RADIUS and g.target[r - 2][c - 2] == 1]
+       if max(abs(r - pr), abs(c - pc)) > MIRAGE_RADIUS and g.target[r - 2][c - 2] == 1
+       and g.board.in_altar(r, c)]
 far = far[len(far) // 2]
 check("5×5 之外的格子是纯白（灰码没有整张淡入）", px(g, *far) == C_CELL_WHITE, str(px(g, *far)))
 shot(g, "12_wake_footprint.png")
@@ -92,22 +95,27 @@ check("第一次照出灰域 → M2", g.mono_text == story.M2, repr(g.mono_text[
 check("照出灰域后进入自由探索", g.state == "FREE_ROAM", g.state)
 
 # ================= 步骤 10 · 老者驱赶红怪 =================
-check("老者站在圣坛外", not g.board.in_altar(*g.oldman.cell), str(g.oldman.cell))
-check("老者一开始背对玩家（朝世界外）", g.oldman.facing == 0, "%d" % g.oldman.facing)
+# 2026-11-14：这一段单独开一局来测。现在老者就站在玩家板块下面，教程几乎一迈步就结束，
+# 于是「进 FREE_ROAM 0.4 秒后红怪落下」这场戏会在很早的时候自己播完 ——
+# 挂在长流程那一局上测，只会测到「已经播完了」。
+gS = new_game()
+run(gS, 3.4)
+gS.enter_free_roam()
+check("老者站在圣坛外（不在任何一块石板上）", not gS.board.in_altar(*gS.oldman.cell),
+      str(gS.oldman.cell))
+check("老者一开始朝上（背对玩家，面朝圣坛）", gS.oldman.facing == 0, "%d" % gS.oldman.facing)
 
-run(g, 0.6)
-check("开场 0.6 秒：两只红怪进场", len(g.scene_reds) == 2, "%d" % len(g.scene_reds))
-run(g, 1.2)
-check("老者挥起拐杖", g.oldman.staff_t > 0, "%.2f" % g.oldman.staff_t)
-check("红怪放狠话", g.threat_t > 0, "%.2f" % g.threat_t)
-shot(g, "13_threat.png")
+run(gS, 0.6)
+check("开场 0.6 秒：两只红怪进场", len(gS.scene_reds) == 2, "%d" % len(gS.scene_reds))
+run(gS, 1.2)
+check("老者挥起拐杖", gS.oldman.staff_t > 0, "%.2f" % gS.oldman.staff_t)
+check("红怪放狠话", gS.threat_t > 0, "%.2f" % gS.threat_t)
+shot(gS, "13_threat.png")
 
-run(g, 3.0)
-check("红怪逃走并消失", len(g.scene_reds) == 0, "%d" % len(g.scene_reds))
-# ⚠️ 2026-11-12 起心声会停住世界、按回车才走；run 里的 auto_mono 会把它关掉并清空 mono_text。
-# 所以这里看 mono_last（说过的最后一句），而不是看还在不在屏幕上。
-check("逃走之后显示 M3", g.mono_last == story.M3, repr(g.mono_last))
-check("老者转回身朝向圣坛", g.oldman.facing == 1, "%d" % g.oldman.facing)
+run(gS, 3.0)
+check("红怪逃走并消失", len(gS.scene_reds) == 0, "%d" % len(gS.scene_reds))
+check("逃走之后显示 M3", gS.mono_last == story.M3, repr(gS.mono_last))
+check("老者转回身朝向圣坛", gS.oldman.facing == 1, "%d" % gS.oldman.facing)
 
 # ================= 步骤 11 · 对话 =================
 # --- 太远：不显示提示 ---
@@ -116,14 +124,15 @@ run(g, 0.1)
 check("离得远时不显示呼喊提示", g.prompt_text == "", repr(g.prompt_text))
 
 # --- 坛内呼喊 ---
-put(g, (4, 12))
+go_to_oldman(g)
 run(g, 0.1)
 check("进呼喊范围 → PRESS [T] TO CALL OUT", g.prompt_text == story.PROMPT_CALL, repr(g.prompt_text))
 check("距离在呼喊范围内", g.oldman_dist() <= CALL_RANGE_PX, "%.0f" % g.oldman_dist())
 g.handle_event(ev(SC_T))
 check("坛内按 T 开始对话", g.state == "DIALOG" and g.dlg_lines is not None)
 check("坛内支线 13 句 + 最后一句 = 14", len(g.dlg_lines) == 14, "%d" % len(g.dlg_lines))
-check("老者先跑过来（run 相位）", g.dlg_phase == "run", g.dlg_phase)
+# 2026-11-14：第一幕圣坛还裂着，他**不跑上来**（跑上来＝站到码上）。就地转身说话。
+check("圣坛还裂着：老者就地开口（不跑过来）", g.dlg_phase == "talk", g.dlg_phase)
 run(g, 2.0)
 check("跑到位后开始说话", g.dlg_phase == "talk", g.dlg_phase)
 check("第一句是 OLD MAN", g.dlg_lines[0][0] == story.OLD_MAN)
@@ -156,49 +165,19 @@ shot(g, "14_dialog_one.png")
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=SC_ESC))
 check("对话中按 Esc 不会卡死", g.state == "FREE_ROAM" and g.dlg_lines is None, g.state)
 
-# --- 坛外呼喊：先转身，再走近（另起一局，保证老者还在原位）---
+# --- 坛外呼喊（对话二）在第一幕已经走不到了（2026-11-14 板块制）---
+# 圣坛还裂着的时候玩家**只能站在自己那块板块上**（`can_stand` 判 `fractured()`）：
+# 坛外平地和没接回的板子都站不上去。所以「站在坛外喊他 → 他先转身 → 走近再说」这条支线
+# 在第一幕不可达（代码留着，第 3~5 幕的坛外站位还要用）。
+# 这里锁死那个前提：**能走的地方只有已接回的板块**。
 g2 = new_game()
 run(g2, 3.4)
 g2.enter_free_roam()
-run(g2, 0.2)
-reveal_once(g2)                                  # 先照过灰域，才允许喊老者（2026-11-14）
-put(g2, (1, 8))
-run(g2, 0.1)
-check("坛外远处：在呼喊范围内（%.0f ≤ %.0f）" % (g2.oldman_dist(), CALL_RANGE_PX),
-      g2.oldman_dist() <= CALL_RANGE_PX and g2.oldman_dist() > CLOSE_RANGE_PX,
-      "%.0f" % g2.oldman_dist())
-g2.handle_event(ev(SC_T))
-check("坛外第一次呼喊：老者只是转身，不开对话",
-      g2.oldman_turned and g2.state == "FREE_ROAM",
-      "%s turned=%s" % (g2.state, g2.oldman_turned))
-run(g2, 0.05)                                       # 提示每帧重算，等一帧再断言
-check("转身之后不再显示呼喊提示（要再走近）", g2.prompt_text == "", repr(g2.prompt_text))
-g2.handle_event(ev(SC_T))
-check("原地再按 T 也不开（还没走近）", g2.state == "FREE_ROAM", g2.state)
-put(g2, (1, 11))
-run(g2, 0.1)
-check("走近之后重新出现 CALL OUT", g2.prompt_text == story.PROMPT_CALL, repr(g2.prompt_text))
-g2.handle_event(ev(SC_T))
-check("坛外再按一次 T 开始对话二", g2.state == "DIALOG" and g2.dlg_phase == "talk",
-      "%s %s" % (g2.state, g2.dlg_phase))
-check("坛外支线 8 + 9 + 1 = 18 句", g2.dlg_lines is not None and len(g2.dlg_lines) == 18,
-      "%s" % (len(g2.dlg_lines) if g2.dlg_lines else None))
-check("前 8 句是对话二", [t for _, t in g2.dlg_lines[:8]] == [t for _, t in story.DIALOG_TWO])
-check("第 9 句汇合到「I didn't either, at first」",
-      g2.dlg_lines[8][1].startswith("I didn't either, at first"), g2.dlg_lines[8][1][:30])
-shot(g2, "15_dialog_two.png")
-
-# 坛外这条支线也走完，确认能正常收尾
-for _ in range(40):
-    g2.handle_event(ev(SC_ENTER))
-    auto_mono(g2)
-    g2.update(1 / 60)
-run(g2, DLG_LAST_MIN_SHOW + 0.3)               # 最后一句必须停留够才认回车
-g2.handle_event(ev(SC_ENTER))
-run(g2, 0.2)
-check("坛外支线走完 → 老者离开", g2.oldman.leaving, str(g2.oldman.leaving))
-run(g2, 3.0)
-check("坛外支线走完 → 进空档", g2.state == "GAP", g2.state)
+open_cells = {(r, c) for r in range(25) for c in range(25) if g2.board.in_altar(r, c)}
+leak = [(r, c) for r in range(25) for c in range(25)
+        if g2.board.can_stand(r, c) and (r, c) not in open_cells]
+check("第一幕：坛外平地 / 没接回的板子都不能站（能走的只有已接回的板块）",
+      not leak, str(leak[:4]))
 
 # --- 最后一句：必须再按一次回车，老者才走（2026-11-11 改）---
 # 原来是 `dlg_hold = 1.0` 自动离开，玩家还在看 `If I can.` 人就没了。
@@ -206,7 +185,7 @@ g4 = new_game()
 run(g4, 3.4)
 g4.enter_free_roam()
 reveal_once(g4)                                  # 先照过灰域，才允许喊老者（2026-11-14）
-put(g4, (4, 12))
+go_to_oldman(g4)
 run(g4, 0.1)
 g4.handle_event(ev(SC_T))
 run(g4, 1.8)                                   # 等他跑过来、进 talk
@@ -239,7 +218,7 @@ g5 = new_game()
 run(g5, 3.4)
 g5.enter_free_roam()
 reveal_once(g5)                                  # 先照过灰域，才允许喊老者（2026-11-14）
-put(g5, (4, 12))
+go_to_oldman(g5)
 run(g5, 0.1)
 g5.handle_event(ev(SC_T))
 run(g5, 1.8)
@@ -275,7 +254,7 @@ run(g, DLG_LAST_MIN_SHOW + 0.3)
 g.handle_event(ev(SC_ENTER))
 run(g, 0.2)
 check("最后一句之后老者开始离开", g.state == "FREE_ROAM" and g.oldman.leaving, g.state)
-run(g, 3.0)
+run(g, 4.6)                                     # 他现在走的是板块**左侧**那条路，出画面要 ~3.7s
 check("老者走后进入 10 秒空档", g.state == "GAP", g.state)
 check("检查点打在「老者离开那一刻」", g.checkpoint is not None)
 
@@ -290,13 +269,19 @@ check("醒来在教程相位", g3.state == "TUTORIAL", g3.state)
 g3.input.held.add(SC_W)
 run(g3, 6.0)
 g3.input.held.clear()
-check("一路往上会走出圣坛（站在平地上）", not g3.board.in_altar(*g3.player.cell),
+# 2026-11-14：圣坛还裂着的时候**走不出自己那块板子**（`can_stand` 判 `fractured()`）——
+# 往上会被 BL 的顶沿挡住，站在板子的最上一行，而不是跑到坛外去。
+check("一路往上会被板块边界挡住（留在 BL 里）", g3.board.in_altar(*g3.player.cell),
       str(g3.player.cell))
-# 出生点改成左下定位图案 (19,5) 之后，往上是一整段路 —— 再往右才靠近老者（他在 (1,12)）
+check("…而且停在 BL 的顶沿（走不动了）", g3.player.cell[0] == 13, str(g3.player.cell))
+check("走到老者附近 → 自动进入自由探索（不卡在教程）", g3.state == "FREE_ROAM", g3.state)
+# 往右走一段，确认在板块内是能自由移动的
+before = g3.player.cell
 g3.input.held.add(SC_D)
-run(g3, 4.0)
+run(g3, 1.0)
 g3.input.held.clear()
-check("走到老者跟前 → 自动进入自由探索（不卡在教程）", g3.state == "FREE_ROAM", g3.state)
+check("在板块内能正常走（往右挪了几格）", g3.player.cell[1] > before[1],
+      "%s → %s" % (before, g3.player.cell))
 
 # 2) 在坛外连按 Shift：前两次没反应，第三次放行
 g4 = new_game()
@@ -310,7 +295,7 @@ for _ in range(3):
     run(g4, 0.05)
 check("坛外连按三次 → 放行，不再卡在教程", g4.state == "FREE_ROAM", g4.state)
 
-# ================= 老者 / 道具 / 死红怪：必须从第一帧就在画布上 =================
+# ================= 老者：必须从第一帧就在画布上 =================
 def has_color(g, pos, color, r=12):
     cx, cy = int(pos[0]), int(pos[1])
     return any(g.canvas.get_at((cx + dx, cy + dy))[:3] == color
@@ -321,16 +306,10 @@ g5 = new_game()
 g5.draw()
 check("开场第 0 帧：老者已经在画布上",
       has_color(g5, g5.oldman.pos, C_OLDMAN))
-check("开场第 0 帧：地上那只死红怪已经在",
-      has_color(g5, cell_center(*PROP_DEAD_CELL), C_PROP_DEAD))
-check("开场第 0 帧：用过的道具已经在",
-      has_color(g5, cell_center(*PROP_TOOL_CELL), C_PROP_TOOL))
 
 run(g5, 3.4)                                   # 进教程
-check("教程阶段三样都还在（不是某个相位才画出来）",
+check("教程阶段老者还在（不是某个相位才画出来）",
       g5.state == "TUTORIAL"
-      and has_color(g5, g5.oldman.pos, C_OLDMAN)
-      and has_color(g5, cell_center(*PROP_DEAD_CELL), C_PROP_DEAD)
-      and has_color(g5, cell_center(*PROP_TOOL_CELL), C_PROP_TOOL), g5.state)
+      and has_color(g5, g5.oldman.pos, C_OLDMAN), g5.state)
 
 finish(TITLE)

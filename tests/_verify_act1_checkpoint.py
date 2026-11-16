@@ -54,7 +54,8 @@ check("棋盘回到全白", b.progress() == 0 and
 check("脏格累计清零", b.stains == 0, "%d" % b.stains)
 check("红怪全部清空", len(g.monsters) == 0, "%d" % len(g.monsters))
 check("claims 清空", g.claims == {}, str(g.claims))
-check("刷怪加速复位（速率回到开局值）", abs(g.spawn_rate - RED_SPAWN_PER_MIN) < 1e-9,
+# 2026-11-14：第一幕改成不放怪，开局速率是 0；复位就是回到 0。
+check("刷怪加速复位（第一幕速率回到 0）", abs(g.spawn_rate - 0.0) < 1e-9,
       "%.3f" % g.spawn_rate)
 check("战斗计时复位", g.elapsed == 0.0, "%.2f" % g.elapsed)
 check("玩家回到出生点", g.player.cell == PLAYER_START_CELL, str(g.player.cell))
@@ -70,14 +71,14 @@ check("Enter 也能从 DEAD 回到检查点", g.state == "GAP" and g.health == H
 p = shot(g, "07_after_checkpoint.png")
 print("  shot ->", p)
 
-# ================= 第二波的检查点（2026-11-14 双波改造）=================
-# 第一波写完会**重打一次检查点**：死在第二波不该被踢回「什么都没写」的开场。
+# ================= 第二块的检查点（2026-11-14 板块制）=================
+# 每接回一块都会**重打一次检查点**：死在后一块不该被踢回「什么都没写」的开场。
 g2 = to_battle(new_game())
 b2 = g2.board
 ok = clear_wave1(g2)
-check("第一波清完 → 进入第二波（must 换成整张码 100 格）",
-      ok and g2.act1_wave == 2 and len(g2.must) == 100, "%s %d" % (g2.state, len(g2.must)))
-check("第二波开局：第一波那 33 格还在", b2.progress() == 33, "%d" % b2.progress())
+check("左下清完 → 接回左上（must 从 34 变成 67）",
+      ok and g2.act1_wave == 2 and len(g2.must) == 67, "%s %d" % (g2.state, len(g2.must)))
+check("第二块开局：左下那 34 格还在", b2.progress() == 34, "%d" % b2.progress())
 for (r, c) in sorted(g2.must)[-10:]:
     paint_ok(g2, r, c)
 g2.health = 0
@@ -86,10 +87,10 @@ g2.update(1 / 60)
 check("第二波里血归零 → DEAD", g2.state == "DEAD", g2.state)
 g2.on_click(600, 500)
 check("死在第二波 → 回到第二波起点（不是整幕开头）", g2.state == "BATTLE", g2.state)
-check("棋盘保留第一波的 33 格", b2.progress() == 33, "%d" % b2.progress())
+check("棋盘保留第一块的 34 格", b2.progress() == 34, "%d" % b2.progress())
 check("血量回满、怪清空", g2.health == HEALTH_MAX and not g2.monsters,
       "%d %d" % (g2.health, len(g2.monsters)))
-check("第二波的 must 仍是整张码（不会缩回 33）", len(g2.must) == 100 and g2.act1_wave == 2,
+check("第二块的 must 仍是 67（不会缩回第一块的 34）", len(g2.must) == 67 and g2.act1_wave == 2,
       "%d / wave %d" % (len(g2.must), g2.act1_wave))
 
 finish(TITLE)

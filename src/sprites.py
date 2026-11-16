@@ -16,10 +16,10 @@ import math
 import pygame
 
 from src.config import (
-    C_CELL_BLACK, C_ITEM, C_ITEM_INK, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK, C_ITEM_MARK,
-    C_ITEM_PAPER, C_ITEM_PAPER_DARK, C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK,
+    C_CELL_BLACK, C_ITEM, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK,
+    C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK,
     C_MONSTER_RING, C_OLDMAN, C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OLDMAN_SKIN, C_OUTLINE,
-    C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP, C_PLAYER_LIGHT, C_PROP_DEAD, C_PROP_TOOL, C_SASH, C_STAFF
+    C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP, C_PLAYER_LIGHT, C_PROP_TOOL, C_SASH, C_STAFF
 )
 
 # 影子按尺寸缓存：每帧新建 Surface 会掉帧
@@ -57,14 +57,11 @@ def _blob(cx, cy, r, n, t, phase, wob):
 # ==== 码序使（玩家）====
 
 def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=False,
-                   holding_map=False, has_sword=False, swing=0.0):
+                   has_sword=False, swing=0.0):
     """读码的人：深色斗篷 + 一条发光面罩 + 头上一块闪烁的光标。
 
     他不是「一个方块」，而是「正在被输入的那一行」—— 光标才是身份标识。
     朝向：0 上（背对）1 下 2 左 3 右。
-
-    `holding_map`：按 M 看地图时的姿态 —— 两只手往胸前收，捧着一张摊开的纸。
-    这不是纯装饰：手占着了就不能写（`Game` 在地图摊开时封掉 J / K / Shift）。
 
     `has_sword` / `swing`：第三幕的剑。`swing` 是**挥砍剩余比例**（1 → 0，0 = 没在挥），
     刃会从一侧扫到另一侧 —— 只看一道弧线是不够的，人要跟着动。
@@ -95,13 +92,9 @@ def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=
     # 下摆一道暗边 + 中缝（不然就是一个桶）
     s.fill(C_PLAYER_DEEP, pygame.Rect(px - 10, py + 10, 20, 2))
     pygame.draw.line(s, C_OUTLINE, (px, py + 12), (px, py + 6), 1)
-    # 两只手：平时是短袖子 + 一点亮色袖口，看得出他有胳膊；
-    # 捧着地图时改成「往胸前收」的两条，胳膊一弯，姿态就不一样了
-    if not holding_map:
-        for ax in (-11, 8):
-            s.fill(C_PLAYER_DEEP, pygame.Rect(px + ax, py - 6, 3, 12))
-    else:
-        _draw_held_arms(s, px, py, facing)
+    # 两只手：短袖子 + 一点亮色袖口，看得出他有胳膊
+    for ax in (-11, 8):
+        s.fill(C_PLAYER_DEEP, pygame.Rect(px + ax, py - 6, 3, 12))
     # 两侧亮边：轮廓在任何底色上都咬得住
     pygame.draw.line(s, C_PLAYER, (px - 8, py - 7), (px - 10, py + 10), 1)
     pygame.draw.line(s, C_PLAYER, (px + 8, py - 7), (px + 10, py + 10), 1)
@@ -117,19 +110,15 @@ def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=
     pygame.draw.polygon(s, C_OUTLINE, hood, 1)
 
     # 第三幕的剑：平时斜垂在身侧，挥砍时整条刃扫过去
-    if has_sword and not holding_map:
+    if has_sword:
         _draw_sword_arm(s, px, py, facing, swing)
 
     # 胸口核心：一块会呼吸的方块（那是他的「码」）
-    # 背对时看不见正面 —— 否则它会从背包上透出来；捧着地图时被纸挡住，也不用画
-    if facing != 0 and not holding_map:
+    # 背对时看不见正面 —— 否则它会从背包上透出来
+    if facing != 0:
         k = (math.sin(t * 3.4) + 1.0) * 0.5
         s.fill(C_PLAYER, pygame.Rect(px - 3, py, 7, 3))
         s.fill(_mix(C_PLAYER, C_PLAYER_LIGHT, 0.30 + 0.55 * k), pygame.Rect(px - 2, py - 1, 5, 4))
-
-    # 摊开的地图：只在按 M 时出现，压在胸口
-    if holding_map:
-        _draw_held_map(s, px, py, facing)
 
     # 头：方的，像一小块终端，缩在兜帽里
     head = pygame.Rect(px - 5, py - 21, 10, 10)
@@ -155,55 +144,6 @@ def draw_sequencer(s, cx, cy, facing=1, t=0.0, moving=False, glow=None, has_bag=
         gy = py - 28 + int(math.sin(t * 1.7))
         s.fill(C_OUTLINE, pygame.Rect(gx, gy, 5, 11))           # 描边：白格上也看得见
         s.fill(C_PLAYER_LIGHT, pygame.Rect(gx + 1, gy + 1, 3, 9))
-
-
-def _held_map_rect(px, py, facing):
-    """捧在胸前那张小纸的矩形。背对时返回 None —— 纸在身体前面，被自己挡住。
-
-    单独拿出来是因为手臂和纸要落在同一个位置上，两边各写一套迟早错开。
-    """
-    if facing == 0:
-        return None
-    if facing == 1:
-        return pygame.Rect(px - 7, py - 2, 15, 9)
-    if facing == 2:                                  # 朝左：纸偏左，露出侧面
-        return pygame.Rect(px - 9, py - 2, 11, 9)
-    return pygame.Rect(px - 1, py - 2, 11, 9)        # 朝右
-
-
-def _draw_held_arms(s, px, py, facing):
-    """捧图时的手臂：从肩膀往胸前收，袖口落在纸的两端（平时是两条垂直的短袖子）。"""
-    r = _held_map_rect(px, py, facing)
-    if r is None:                                    # 背对：胳膊在身前，看不见
-        return
-    for sx, hx in ((px - 8, r.left + 1), (px + 8, r.right - 1)):
-        pygame.draw.line(s, C_PLAYER_DEEP, (sx, py - 6), (hx, r.centery), 3)
-
-
-def _draw_held_map(s, px, py, facing):
-    """摊开的地图（缩小版）：纸 + 两端卷头 + 三个定位图案的墨点 + 两只手。
-
-    一眼就认得出来「他在看地图」，而不是「他站着不动」。
-    """
-    r = _held_map_rect(px, py, facing)
-    if r is None:
-        # 背对镜头：纸被自己挡住，只让纸边从剪影两侧露出来
-        for sx in (-12, 10):
-            s.fill(C_OUTLINE, pygame.Rect(px + sx, py, 2, 7))
-            s.fill(C_ITEM_PAPER, pygame.Rect(px + sx, py + 1, 2, 5))
-        return
-
-    pygame.draw.rect(s, C_OUTLINE, r.inflate(2, 2))
-    pygame.draw.rect(s, C_ITEM_PAPER, r)
-    for ex in (r.left - 1, r.right):                 # 两端卷头
-        s.fill(C_ITEM_LEATHER_DARK, pygame.Rect(ex, r.top - 1, 2, r.height + 2))
-        s.fill(C_OUTLINE, pygame.Rect(ex, r.top - 1, 2, 1))
-    for ox, oy in ((1, 1), (r.w - 4, 1), (1, r.h - 4)):   # 三个定位图案：这是那张码
-        s.fill(C_CELL_BLACK, pygame.Rect(r.left + ox, r.top + oy, 3, 3))
-        s.fill(C_ITEM_PAPER, pygame.Rect(r.left + ox + 1, r.top + oy + 1, 1, 1))
-    for hx in (r.left - 2, r.right):                 # 双手：袖口压在纸的两个下角
-        s.fill(C_OUTLINE, pygame.Rect(hx, r.bottom - 4, 4, 4))
-        s.fill(C_PLAYER_LIGHT, pygame.Rect(hx + 1, r.bottom - 3, 2, 2))
 
 
 def _draw_sword_arm(s, px, py, facing, swing=0.0):
@@ -428,22 +368,9 @@ def draw_oldman_down(s, om, t=0.0):
     pygame.draw.line(s, C_PROP_TOOL, (px + 9, py + 9), (px + 24, py + 3), 1)
 
 
-def draw_dead_red(s, cx, cy):
-    """地上那只已经死掉的红怪：瘪下去、X 眼、渗出来的一小道。"""
-    px, py = int(round(cx)), int(round(cy))
-    shadow(s, px, py + 3, 22, 6, 66)
-    body = pygame.Rect(px - 9, py - 3, 18, 9)
-    pygame.draw.ellipse(s, C_PROP_DEAD, body)
-    pygame.draw.ellipse(s, C_CELL_BLACK, body, 1)
-    for dx in (-5, 1):
-        pygame.draw.line(s, C_CELL_BLACK, (px + dx, py - 1), (px + dx + 3, py + 2), 1)
-        pygame.draw.line(s, C_CELL_BLACK, (px + dx, py + 2), (px + dx + 3, py - 1), 1)
-    pygame.draw.line(s, C_PROP_DEAD, (px + 7, py + 4), (px + 11, py + 7), 2)
-
-
-# ==== 道具（清屏后浮出的 BAG / MAP）====
+# ==== 道具（清屏后浮出的 BAG）====
 # 28px 的格子，所以只画「一眼能认出来」的特征：
-#   背包 = 翻盖 + 金属扣 + 两条肩带；地图 = 斜放的纸 + 折痕 + 路线 + 红点。
+#   背包 = 翻盖 + 金属扣 + 两条肩带。
 # 都垫一圈 C_OUTLINE，白格和褐底上都咬得住。
 
 ITEM_W, ITEM_H = 22, 24
@@ -473,9 +400,7 @@ def draw_item(s, kind, cx, cy, t=0.0, rise=0, glow=True):
     px, py = int(round(cx)), int(round(cy + rise))
     if glow:
         _item_glow(s, px, py + 9)
-    if kind == "map":
-        _draw_map_item(s, px, py, t, glow)
-    elif kind == "sword":
+    if kind == "sword":
         _draw_sword_item(s, px, py, t, glow)
     else:
         _draw_bag_item(s, px, py, t, glow)
@@ -549,32 +474,75 @@ def _draw_bag_item(s, px, py, t, ground=True):
     pygame.draw.polygon(s, C_OUTLINE, body, 1)
 
 
-def _draw_map_item(s, px, py, t, ground=True):
-    """地图：**左边卷成筒、右边展开**的纸 —— 半卷的才像地图，平摊的像便签。"""
-    py = int(py + math.sin(t * 2.6 + 1.0) * 0.8)
-    if ground:
-        shadow(s, px, py + 10, 24, 6, 72)
+# ==== 技能图标（2026-11-16 道具系统）====
+# 每个技能一个小图标：按名字画成一眼能认的像素符号，放在物品栏下方。
+# kind: "timeslow" 时停 / "dash" 冲刺 / "decoy" 诱饵 / "scroll" 卷轴
 
-    # 展开的纸：右半，右上角微微掀起
-    paper = [(px - 5, py - 6), (px + 8, py - 8), (px + 10, py + 5),
-             (px + 7, py + 8), (px - 5, py + 8)]
-    pygame.draw.polygon(s, C_ITEM_PAPER, paper)
-    pygame.draw.polygon(s, C_ITEM_PAPER_DARK, [(px + 7, py + 8), (px + 10, py + 5), (px + 8, py + 1)])
+def draw_ability_icon(s, kind, cx, cy):
+    """技能图标：cx/cy 是中心，40px 见方。"""
+    if kind == "timeslow":
+        _icon_timeslow(s, cx, cy)
+    elif kind == "dash":
+        _icon_dash(s, cx, cy)
+    elif kind == "decoy":
+        _icon_decoy(s, cx, cy)
+    elif kind == "scroll":
+        _icon_scroll(s, cx, cy)
 
-    # 折痕一道（只有一道，多了解不出是折痕，只是脏）
-    pygame.draw.line(s, C_ITEM_PAPER_DARK, (px + 2, py - 7), (px + 2, py + 8), 1)
 
-    # 路线 + 红点：地图的读法全靠这条折线和那一点红
-    pygame.draw.line(s, C_ITEM_INK, (px - 3, py + 5), (px + 1, py - 2), 1)
-    pygame.draw.line(s, C_ITEM_INK, (px + 1, py - 2), (px + 7, py + 2), 1)
-    s.fill(C_ITEM_MARK, pygame.Rect(px + 6, py, 3, 3))   # 纸色底上够清楚，不用描边
+def _icon_timeslow(s, cx, cy):
+    """时停：沙漏（上三角 + 下三角 + 腰），冻结感用淡青。"""
+    ice = (140, 220, 240)
+    # 沙漏外框
+    pygame.draw.line(s, C_OUTLINE, (cx - 10, cy - 13), (cx - 10, cy - 5), 2)
+    pygame.draw.line(s, C_OUTLINE, (cx + 10, cy - 13), (cx + 10, cy - 5), 2)
+    pygame.draw.line(s, C_OUTLINE, (cx - 10, cy + 13), (cx - 10, cy + 5), 2)
+    pygame.draw.line(s, C_OUTLINE, (cx + 10, cy + 13), (cx + 10, cy + 5), 2)
+    # 上玻璃（满沙）+ 下玻璃（空）
+    pygame.draw.polygon(s, ice, [(cx - 9, cy - 12), (cx + 9, cy - 12), (cx, cy), (cx - 3, cy)])
+    pygame.draw.polygon(s, C_OUTLINE, [(cx - 9, cy - 12), (cx + 9, cy - 12), (cx, cy)], 1)
+    pygame.draw.polygon(s, (90, 140, 160), [(cx + 9, cy + 12), (cx - 9, cy + 12), (cx, cy)])
+    pygame.draw.polygon(s, C_OUTLINE, [(cx + 9, cy + 12), (cx - 9, cy + 12), (cx, cy)], 1)
+    # 中间两道横梁
+    pygame.draw.line(s, C_OUTLINE, (cx - 11, cy - 13), (cx + 11, cy - 13), 2)
+    pygame.draw.line(s, C_OUTLINE, (cx - 11, cy + 13), (cx + 11, cy + 13), 2)
 
-    pygame.draw.polygon(s, C_OUTLINE, paper, 1)
 
-    # 左边的卷筒：压在纸边上，两道横纹表示卷了几层
-    tube = pygame.Rect(px - 11, py - 7, 7, 16)
-    pygame.draw.rect(s, C_ITEM_PAPER_DARK, tube, border_radius=3)
-    s.fill(C_ITEM_PAPER, pygame.Rect(tube.x + 2, tube.y + 1, 2, tube.h - 2))
-    for dy in (4, 11):
-        pygame.draw.line(s, C_ITEM_INK, (tube.x + 1, tube.y + dy), (tube.right - 2, tube.y + dy), 1)
-    pygame.draw.rect(s, C_OUTLINE, tube, 1, border_radius=3)
+def _icon_dash(s, cx, cy):
+    """冲刺：向右的三道速度线 + 一个箭头。"""
+    bright = (255, 220, 120)
+    # 箭头主体（朝右）
+    pygame.draw.polygon(s, C_OUTLINE, [(cx - 9, cy - 7), (cx - 1, cy - 7), (cx + 9, cy), (cx - 1, cy + 7), (cx - 9, cy + 7)])
+    pygame.draw.polygon(s, bright, [(cx - 7, cy - 5), (cx - 1, cy - 5), (cx + 7, cy), (cx - 1, cy + 5), (cx - 7, cy + 5)])
+    # 尾部三道速度线
+    for dy in (-9, 0, 9):
+        pygame.draw.line(s, bright, (cx - 14, cy + dy), (cx - 8, cy + dy), 2)
+
+
+def _icon_decoy(s, cx, cy):
+    """诱饵：一个假黑格 + 顶上一个问号（伪装成「该写的格」）。"""
+    # 底座：一个黑格（诱饵假装是 the Dark）
+    pygame.draw.rect(s, C_OUTLINE, pygame.Rect(cx - 11, cy - 1, 22, 15), border_radius=2)
+    pygame.draw.rect(s, (70, 80, 96), pygame.Rect(cx - 9, cy + 1, 18, 11), border_radius=1)
+    # 顶上漂浮的问号：这不是真的黑格
+    q = (90, 220, 140)
+    pygame.draw.arc(s, q, pygame.Rect(cx - 6, cy - 13, 12, 9), 0, 3.14, 2)
+    pygame.draw.line(s, q, (cx + 5, cy - 10), (cx + 5, cy - 7), 2)
+    pygame.draw.circle(s, q, (cx + 5, cy - 4), 1)
+
+
+def _icon_scroll(s, cx, cy):
+    """卷轴：横着的纸卷 + 两端卷起的轴。"""
+    paper = (235, 226, 200)
+    rod = (160, 120, 70)
+    # 两端的轴
+    pygame.draw.rect(s, C_OUTLINE, pygame.Rect(cx - 14, cy - 8, 5, 16), border_radius=2)
+    pygame.draw.rect(s, rod, pygame.Rect(cx - 13, cy - 7, 3, 14))
+    pygame.draw.rect(s, C_OUTLINE, pygame.Rect(cx + 9, cy - 8, 5, 16), border_radius=2)
+    pygame.draw.rect(s, rod, pygame.Rect(cx + 10, cy - 7, 3, 14))
+    # 中间的纸
+    pygame.draw.rect(s, C_OUTLINE, pygame.Rect(cx - 10, cy - 6, 20, 12), border_radius=2)
+    pygame.draw.rect(s, paper, pygame.Rect(cx - 9, cy - 5, 18, 10))
+    # 纸上两道字迹
+    pygame.draw.line(s, C_OUTLINE, (cx - 7, cy - 2), (cx + 7, cy - 2), 1)
+    pygame.draw.line(s, C_OUTLINE, (cx - 7, cy + 2), (cx + 5, cy + 2), 1)

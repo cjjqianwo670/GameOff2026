@@ -11,10 +11,14 @@ import random
 import pygame
 
 from src.config import (
-    C_MONSTER, C_PURPLE, C_YELLOW, GRID_N, MOVE_REPEAT, OLDMAN_HP, OLDMAN_STAGGER, PLAYER_START_CELL,
+    C_GREEN, C_GREEN_DARK, C_GREEN_CORE, C_MONSTER, C_PURPLE, C_YELLOW, GRID_N, MOVE_REPEAT,
+    OLDMAN_HP, OLDMAN_STAGGER, PLAYER_START_CELL,
+    GREEN_EAT_DIST, GREEN_HIT_DIST, GREEN_RADIUS, GREEN_SPEED,
     PURPLE_EAT_DIST, PURPLE_HIT_DIST, PURPLE_RADIUS, PURPLE_SPEED, RED_EAT_DIST, RED_HIT_DIST,
-    RED_RADIUS, VALID, YELLOW_AGGRO_TIME, YELLOW_BITE_CD, YELLOW_BITE_DIST, YELLOW_HP,
-    YELLOW_RADIUS, YELLOW_SPEED
+    RED_RADIUS, SWORD_KNOCKBACK_SPEED, SWORD_KNOCKBACK_TIME, VALID, YELLOW_AGGRO_TIME,
+    YELLOW_BITE_CD, YELLOW_BITE_DIST, YELLOW_HP,
+    YELLOW_RADIUS, YELLOW_SPEED,
+    DECOY_HP, DECOY_LIFE
 )
 from src.grid import altar_center, cell_center
 
@@ -36,7 +40,7 @@ class Player:
         self.facing = 1
         self.repeat = 0.0
 
-    def update(self, dt, d, frozen=False):
+    def update(self, dt, d, frozen=False, can_stand=None):
         if frozen or d is None:
             self.repeat = 0.0               # 松手/禁止移动时归零，下次按下瞬间就走一格
             return
@@ -47,6 +51,8 @@ class Player:
         nr, nc = self.cell[0] + d[0], self.cell[1] + d[1]
         if not (0 <= nr < GRID_N and 0 <= nc < GRID_N):
             return                          # 撞墙：原地不动
+        if can_stand is not None and not can_stand(self.cell, (nr, nc)):
+            return                          # 裂缝 / 分离板块 / 还没接回来的板块：过不去
         self.cell = (nr, nc)
         self.pos.update(cell_center(nr, nc))
         self.facing = (1 if d[0] > 0 else 0) if d[0] else (3 if d[1] > 0 else 2)
@@ -80,12 +86,29 @@ class Monster:
                 claims.pop(self.target, None)
             self.target = None
 
-    def retarget(self, board, claims):
+    def retarget(self, board, claims, decoys=None):
         """扫全网格找最近的有效黑域：优先没人锁的，全被锁了就允许重复，绝不卡死。
 
         脏格不吸引怪（它不是 the Dark）。一格黑域都没有时返回 False → 转追玩家。
+        2026-11-16：优先锁诱饵（`decoys` 里的实体）——诱饵是「强吸引」，有它在就先打它。
         """
         self.claim(claims)
+        # 1) 优先：找最近的诱饵
+        if decoys:
+            best_dc, best_d = None, None
+            for dc in decoys:
+                if dc.dead:
+                    continue
+                cx, cy = cell_center(*dc.cell)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if best_d is None or d < best_d:
+                    best_dc, best_d = dc, d
+            if best_dc is not None:
+                self.target = best_dc.cell
+                self.mode = "dark"
+                claims[self.target] = claims.get(self.target, 0) + 1
+                return True
+        # 2) 没有诱饵：扫网格找最近黑域
         free, free_d = None, None
         any_cell, any_d = None, None
         for r in range(GRID_N):
@@ -108,23 +131,30 @@ class Monster:
         self.mode = "dark"
         return True
 
-    def update(self, dt, board, claims, player):
-        """返回 "alive" / "eat" / "hit"。"""
+    def update(self, dt, board, claims, player, decoys=None):
+        """返回 "alive" / "eat" / "hit" / ("decoy", decoy)。"""
         # 目标黑域被别人吃了/被玩家抹了 → 立刻重选
         if self.target is not None and board.state[self.target[0]][self.target[1]] != VALID:
-            self.retarget(board, claims)
+            self.retarget(board, claims, decoys)
 
         if self.mode == "hunt" or self.target is None:
-            if self.retarget(board, claims):
-                return self._step_to_dark(dt, board, claims)
+            if self.retarget(board, claims, decoys):
+                return self._step_to_dark(dt, board, claims, decoys)
             return self._hunt(dt, player)
 
-        return self._step_to_dark(dt, board, claims)
+        return self._step_to_dark(dt, board, claims, decoys)
 
-    def _step_to_dark(self, dt, board, claims):
+    def _step_to_dark(self, dt, board, claims, decoys=None):
         cx, cy = cell_center(*self.target)
         d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
         if d.length() <= RED_EAT_DIST:
+            # 先看是不是在咬诱饵：咬诱饵只扣血，不把格子吃掉
+            if decoys:
+                for dc in decoys:
+                    if not dc.dead and dc.cell == self.target:
+                        dc.hit()
+                        self.claim(claims)
+                        return ("decoy", dc)
             board.force_white(*self.target)     # 吃掉这一格
             self.claim(claims)
             return "eat"
@@ -138,6 +168,118 @@ class Monster:
         if d.length_squared() > 1.0:
             self.pos += d.normalize() * self.speed * dt
         return "alive"
+
+# ==== 绿怪（the green one，第二幕起）====
+
+
+class GreenOne:
+    """绿怪：锁最近的有效黑域走过去，到点后以该格为中心清 3×3（最多 9 格）。
+
+    是红怪的「面扩展版」：破坏从单格升级成一片。规则对齐红怪——
+      · 锁最近的有效黑域（脏格不算，也不清）
+      · 清 3×3 只清有效黑域，擦到定位图案核心同样触发板块分离（由 game 判定）
+      · 一生只生效一次，清完自毁
+      · 场上没黑域 → 追玩家，撞到扣血
+    """
+
+    def __init__(self, pos, speed=None):
+        self.phase = random.random() * 6.283
+        self.pos = pygame.Vector2(pos)
+        self.speed = GREEN_SPEED if speed is None else speed
+        self.radius = GREEN_RADIUS
+        self.color = C_GREEN
+        self.target = None                  # (r, c) 或 None（None = 追玩家）
+        self.mode = "dark"                  # "dark" 吃黑域 / "hunt" 追玩家
+        self.done = False
+
+    def claim(self, claims):
+        """接口对齐 Monster：绿怪占一格（锁的是目标格）。"""
+        if self.target is not None:
+            n = claims.get(self.target, 0) - 1
+            if n > 0:
+                claims[self.target] = n
+            else:
+                claims.pop(self.target, None)
+            self.target = None
+
+    def retarget(self, board, claims, decoys=None):
+        """扫全网格找最近的有效黑域（脏格不算）。找不到返回 False → 追玩家。
+        2026-11-16：优先锁诱饵（强吸引）。
+        """
+        self.claim(claims)
+        if decoys:
+            best_dc, best_d = None, None
+            for dc in decoys:
+                if dc.dead:
+                    continue
+                cx, cy = cell_center(*dc.cell)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if best_d is None or d < best_d:
+                    best_dc, best_d = dc, d
+            if best_dc is not None:
+                self.target = best_dc.cell
+                self.mode = "dark"
+                claims[self.target] = claims.get(self.target, 0) + 1
+                return True
+        best, best_d = None, None
+        for r in range(GRID_N):
+            row = board.state[r]
+            for c in range(GRID_N):
+                if row[c] != VALID:
+                    continue
+                cx, cy = cell_center(r, c)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if best_d is None or d < best_d:
+                    best, best_d = (r, c), d
+        if best is None:
+            self.mode = "hunt"
+            self.target = None
+            return False
+        claims[best] = claims.get(best, 0) + 1
+        self.target = best
+        self.mode = "dark"
+        return True
+
+    def update(self, dt, board, claims, player, decoys=None):
+        """返回 "alive" / ("wipe", cells) / ("hit",) / ("decoy", decoy)。"""
+        if self.done:
+            return "alive"
+        if self.target is not None and board.state[self.target[0]][self.target[1]] != VALID:
+            self.retarget(board, claims, decoys)
+        if self.mode == "hunt" or self.target is None:
+            if self.retarget(board, claims, decoys):
+                return self._step_to_dark(dt, board, claims, decoys)
+            return self._hunt(dt, player)
+        return self._step_to_dark(dt, board, claims, decoys)
+
+    def _step_to_dark(self, dt, board, claims, decoys=None):
+        cx, cy = cell_center(*self.target)
+        d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
+        if d.length() <= GREEN_EAT_DIST:
+            # 咬诱饵：只扣血，不清 3×3
+            if decoys:
+                for dc in decoys:
+                    if not dc.dead and dc.cell == self.target:
+                        dc.hit()
+                        self.claim(claims)
+                        self.done = True
+                        return ("decoy", dc)
+            wiped = board.clear_area(*self.target)   # 以目标格为中心清 3×3
+            self.claim(claims)
+            self.done = True
+            return ("wipe", wiped)
+        self.pos += d.normalize() * self.speed * dt
+        return "alive"
+
+    def _hunt(self, dt, player):
+        d = player.pos - self.pos
+        if d.length() <= GREEN_HIT_DIST:
+            self.done = True
+            return ("hit",)
+        if d.length_squared() > 1.0:
+            self.pos += d.normalize() * self.speed * dt
+        return "alive"
+
 
 # ==== 第二幕的紫怪（the purple one）====
 
@@ -166,8 +308,22 @@ class PurpleOne:
         self.last_wipe = None
         self.done = False                      # 撞过一次就置 True，防止同一只连清两条
 
-    def retarget(self, board):
-        """最近的有效黑域，**且必须在圣坛内**。找不到返回 False。"""
+    def retarget(self, board, decoys=None):
+        """最近的有效黑域，**且必须在圣坛内**。找不到返回 False。
+        2026-11-16：优先锁诱饵（强吸引）。
+        """
+        if decoys:
+            best_dc, best_d = None, None
+            for dc in decoys:
+                if dc.dead or not board.in_altar(*dc.cell):
+                    continue
+                cx, cy = cell_center(*dc.cell)
+                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
+                if best_d is None or d < best_d:
+                    best_dc, best_d = dc, d
+            if best_dc is not None:
+                self.target = best_dc.cell
+                return True
         best, best_d = None, None
         for r in range(GRID_N):
             row = board.state[r]
@@ -194,20 +350,28 @@ class PurpleOne:
         # 玩家离线越远越安全：比较「玩家到这条行/列中线的距离」
         return ("row", r) if abs(player_pos.y - cy) >= abs(player_pos.x - cx) else ("col", c)
 
-    def update(self, dt, board, player=None):
+    def update(self, dt, board, player=None, decoys=None):
         if self.done:                          # 已经清过一条：等 game 把自己移除
             return "alive"
         if self.target is not None:
             r, c = self.target
             if board.state[r][c] != VALID:      # 被玩家抹了 / 被别的怪吃了 → 重选
                 self.target = None
-        if self.target is None and not self.retarget(board):
+        if self.target is None and not self.retarget(board, decoys):
             # 圣坛内一格黑域都没有：不再干等，转去扑码序使（P10，作者 2026-11-12）
             return self._chase_player(dt, player)
 
         cx, cy = cell_center(*self.target)
         d = pygame.Vector2(cx - self.pos.x, cy - self.pos.y)
         if d.length() <= PURPLE_EAT_DIST:
+            # 咬诱饵：只扣血，不清整条线
+            if decoys:
+                for dc in decoys:
+                    if not dc.dead and dc.cell == self.target:
+                        dc.hit()
+                        self.target = None
+                        self.done = True
+                        return ("decoy", dc)
             axis, idx = self.pick_line(board, self.target, player.pos if player else None)
             cleared = board.clear_line(axis, idx)
             self.last_wipe = (axis, idx, cleared)
@@ -330,6 +494,28 @@ class SceneRed:
             self.vel.update(0, 0)
 
 
+class Decoy:
+    """诱饵（第四幕，2026-11-16 升级为独立实体）：一个假黑域方块，**强吸引**所有怪物来攻击。
+
+    有血量（`DECOY_HP`）：怪物攻击一次扣 1，耗尽才消失 —— 所以它能真正「扛火力」几秒，
+    而不是像原来那样一口被吃掉。它在 board 上仍占一个 VALID 格（怪物索敌天然能看见它），
+    但血量由这个实体自己记，格子被吃只扣血、不立即消失。
+    """
+
+    def __init__(self, cell):
+        self.cell = cell                      # (r, c)
+        self.pos = pygame.Vector2(cell_center(*cell))
+        self.hp = DECOY_HP
+        self.max_hp = DECOY_HP
+        self.t = DECOY_LIFE                   # 存在时长，到期消失
+        self.dead = False
+
+    def hit(self, dmg=1):
+        """怪物攻击一次：扣血。返回 True = 血量耗尽，该消失了。"""
+        self.hp -= dmg
+        return self.hp <= 0
+
+
 # ==== 第三幕的黄怪（the yellow ones）====
 
 
@@ -354,17 +540,25 @@ class YellowOne:
         self.aggro_t = 0.0              # >0 = 正在盯玩家（被打之后）
         self.bite_cd = 0.0
         self.flash = 0.0                # 被打中那一下的白闪
+        self.kb_t = 0.0                 # >0 = 正在被击退（挥剑命中）
+        self.kb_dir = pygame.Vector2(0, 0)   # 击退方向（单位向量）
 
     @property
     def hunting(self):
         """贴图用：像红怪的「追人」状态那样套一圈环。"""
         return self.aggro_t > 0
 
-    def hurt(self, damage=1):
-        """挨一剑。返回 True = 死了。**挨打必然转火玩家**（作者的规则）。"""
+    def hurt(self, damage=1, knock_dir=None):
+        """挨一剑。返回 True = 死了。**挨打必然转火玩家**（作者的规则）。
+
+        `knock_dir`：挥剑传来的击退方向（单位向量），有就进入击退状态。
+        """
         self.hp -= damage
         self.flash = 0.12
         self.aggro_t = YELLOW_AGGRO_TIME
+        if knock_dir is not None and knock_dir.length_squared() > 0:
+            self.kb_t = SWORD_KNOCKBACK_TIME
+            self.kb_dir = knock_dir.normalize()
         return self.hp <= 0
 
     def update(self, dt, oldman, player):
@@ -382,6 +576,12 @@ class YellowOne:
         self.flash = max(0.0, self.flash - dt)
         if self.aggro_t > 0:
             self.aggro_t = max(0.0, self.aggro_t - dt)
+
+        # 被挥剑击退：整段时间沿击退方向滑出去，不索敌、不咬人。
+        if self.kb_t > 0:
+            self.kb_t = max(0.0, self.kb_t - dt)
+            self.pos += self.kb_dir * SWORD_KNOCKBACK_SPEED * dt
+            return "alive"
 
         if self.aggro_t <= 0 and oldman is not None and not oldman.gone and oldman.down:
             return "alive"          # 他倒了：停手，给玩家时间去扶他起来
@@ -411,14 +611,14 @@ class YellowOne:
         return "alive"
 
 
-# ==== 道具（BAG / MAP / SWORD）====
+# ==== 道具（BAG / SWORD）====
 
 
 class Item:
     """清屏之后从已复原的黑格上浮出来的道具。t 是浮起进度 0→1。"""
 
     def __init__(self, kind, cell):
-        self.kind = kind                # "bag" / "map"
+        self.kind = kind                # "bag" / "sword"
         self.cell = cell
         self.pos = pygame.Vector2(cell_center(*cell))
         self.t = 0.0

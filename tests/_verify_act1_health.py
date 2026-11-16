@@ -76,9 +76,18 @@ check("连扣 20 次触发阵亡", hits == 20 and g.health == 0 and g.state == "
       "hits %d hp %d state %s" % (hits, g.health, g.state))
 
 # --- 6) 每 30 秒刷怪提速 5% ---
+# 2026-11-14：第一幕改成**不放怪**（四块板块是纯解谜），所以速率断言换成两条：
+# 第一幕必须是 0，提速逻辑挪到第二幕去测。
 g = to_battle(new_game())
+check("第一幕不刷怪（速率 = 0）", g.spawn_rate == 0.0, "%.3f" % g.spawn_rate)
+g.start_act2()
+for _ in range(900):
+    auto_mono(g)
+    g.update(1 / 60)
+    if g.state == "BATTLE":
+        break
 rate0 = g.spawn_rate
-check("开局生成速率 = %.1f/分" % RED_SPAWN_PER_MIN, abs(rate0 - RED_SPAWN_PER_MIN) < 1e-9, "%.3f" % rate0)
+check("第二幕开局生成速率 = %.1f/分" % RED_SPAWN_PER_MIN, abs(rate0 - RED_SPAWN_PER_MIN) < 1e-9, "%.3f" % rate0)
 g.elapsed = RED_SPAWN_ACCEL_PERIOD - 0.05
 for _ in range(20):
     auto_mono(g)

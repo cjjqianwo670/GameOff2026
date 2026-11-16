@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""第二幕 · 流程验收（第一幕 → 第二幕 → 紫怪 → 清屏 → 结束 / 阵亡回检查点）。
+"""第二幕 · 流程验收（第一幕 → 第二幕 → 清屏 → 结束 / 阵亡回检查点）。
 
 这一份测的是「串起来之后还对不对」，所以只用 game 的公开动作（start_act2 / update / handle_event），
 不直接改内部状态；只有为了跳过长流程才手动摆位（put / fill）。
+
+2026-11-16：紫怪从第二幕延后到第四幕，所以这一幕**不刷紫怪**（只红怪咬核心→分离）。
+紫怪的清线行为由 `_verify_act2_purple.py`（纯单元）和 `_verify_act4_flow.py` 覆盖。
 """
 
 import sys
@@ -13,8 +16,8 @@ import pygame  # noqa: E402
 from _act1_common import auto_mono, check, finish, new_game, paint_ok, skip_intro, toast_text  # noqa: E402
 from src import story  # noqa: E402
 from src.config import (  # noqa: E402
-    A2_OPEN_SECONDS, HEALTH_MAX, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE, PURPLE_SPAWN_PER_MIN,
-    REWARD_DELAY, SC_ENTER, VALID, WHITE
+    A2_OPEN_SECONDS, GREEN_FIRST_DELAY, HEALTH_MAX, PURPLE_FIRST_DELAY, REWARD_DELAY,
+    SC_ENTER, VALID, WHITE
 )
 from src.grid import cell_center  # noqa: E402
 
@@ -77,51 +80,29 @@ run(g, A2_OPEN_SECONDS * 0.6)
 check("开场没到时不进战斗", g.state == "A2_OPEN", g.state)
 run(g, A2_OPEN_SECONDS * 0.6)
 check("开场结束自动进战斗", g.state == "BATTLE", g.state)
-check("第二幕开战：紫怪那句走飘字（不冻世界）", toast_text(g) == story.MONO_PURPLE_IN, repr(toast_text(g)))
 
-# ==================== 3. 首只紫怪 = 8 秒 ====================
-run(g, PURPLE_FIRST_DELAY - 1.2)
-check("7 秒内没有紫怪（作者定 8 秒）", len(g.purples) == 0, "purple_t=%.1f" % g.purple_t)
-run(g, 1.6)
-check("8 秒后紫怪到场", len(g.purples) == 1, "purple_t=%.1f" % g.purple_t)
-check("紫怪第一次来放 A2_M3", g.mono_last == story.A2_M3, repr(g.mono_last[:20]))
+# ==================== 3. 第二幕不刷紫怪（2026-11-16 延后到第四幕）====================
+# 跑满「原首只紫怪 8 秒 + 一个生成间隔」的时间，场上应该一只紫怪都没有。
+run(g, PURPLE_FIRST_DELAY + 11.0)
+check("第二幕跑满 19 秒也**没有紫怪**（紫怪延后到第四幕）", len(g.purples) == 0, "%d 只" % len(g.purples))
+check("第二幕开战不喊紫怪心声（MONO_PURPLE_IN 已撤）",
+      toast_text(g) != story.MONO_PURPLE_IN, repr(toast_text(g)[:24]))
 
-# ==================== 4. 清行：第一次独白 + 之后短嘀咕 ====================
-g.purples.clear()
-row_idx = 8
-for c in range(25):
-    g.board.state[row_idx][c] = 1          # 造一条满行，保证「行比列多」
-g.wipe_warned = False
-g.on_line_wiped("row", row_idx, 25)
-check("第一次被清 → 一句嘀咕 A2_M4（飘字）", toast_text(g) == story.A2_M4, repr(toast_text(g)[:24]))
-g.mono_text = ""
-g.on_line_wiped("col", 4, 3)
-check("之后再被清 → 不再弹心声（作者：每次都说会影响体验）",
-      g.mono_text == "", repr(g.mono_text[:24]))
-check("...但仍然有系统提示吗？没有（连 ROW n WIPED 也去掉了，只靠画面 + 音效）",
-      g.hint_text == "", repr(g.hint_text[:24]))
+# ==================== 3b. 第二幕低频刷绿怪（首只 12 秒）====================
+g_green = new_game()
+skip_intro(g_green)
+g_green.start_act2()
+g_green.state = "BATTLE"
+g_green.spawn_rate = 0.0            # 关掉红怪，只看绿怪
+g_green.monsters.clear()
+run(g_green, GREEN_FIRST_DELAY - 1.0)
+check("第二幕 11 秒内没有绿怪（首只 12 秒）", len(g_green.greens) == 0, "%d 只" % len(g_green.greens))
+run(g_green, 2.0)
+check("12 秒后第一只绿怪到场", len(g_green.greens) == 1, "%d 只" % len(g_green.greens))
+check("绿怪第一次进场放 A2_GREEN", g_green.mono_last == story.A2_GREEN,
+      repr(g_green.mono_last[:24]) if g_green.mono_last else "None")
 
-# ==================== 5. 紫怪真的会清线（跑起来） ====================
-g2 = new_game()
-skip_intro(g2)
-g2.start_act2()
-run(g2, A2_OPEN_SECONDS + 0.2)
-check("（准备）已进战斗", g2.state == "BATTLE", g2.state)
-# 涂满 12 格让紫怪有得吃，并把紫怪直接放到那一格旁边
-cells = sorted(g2.must)[:12]
-for (r, c) in cells:
-    g2.board.state[r][c] = 1
-from src.entities import PurpleOne  # noqa: E402
-target_cell = cells[0]
-g2.purples = [PurpleOne(cell_center(*target_cell))]
-before_total = sum(1 for r in range(25) for c in range(25) if g2.board.state[r][c] == 1)
-run(g2, 2.5)
-after_total = sum(1 for r in range(25) for c in range(25) if g2.board.state[r][c] == 1)
-check("紫怪撞到后清掉了一整条（总黑格数下降）", after_total < before_total,
-      "%d → %d" % (before_total, after_total))
-check("紫怪清完自毁（场上没了）", len(g2.purples) == 0, "%d" % len(g2.purples))
-
-# ==================== 6. 第二幕通关：106 格 → 清屏 ====================
+# ==================== 4. 第二幕通关：106 格 → 清屏 ====================
 g3 = new_game()
 skip_intro(g3)
 g3.start_act2()
@@ -178,17 +159,15 @@ check("回来时血量满", g6.health == HEALTH_MAX, "%d" % g6.health)
 check("第二幕没有对话常量（story 里没有 A2_DIALOG）", not hasattr(story, "A2_DIALOG"))
 check("紫怪零台词（story 里没有 PURPLE_TALK）", not hasattr(story, "PURPLE_TALK"))
 
-# ==================== 10. 背包 / 地图：第一幕拿到，之后一直带着 ====================
-# 这两件是第一幕的奖励。第二幕**不能再浮出来一次**，也不能在转场或回检查点时被收走。
+# ==================== 10. 背包：第一幕拿到，之后一直带着（地图已删 2026-11-14）====================
 g7 = new_game()
 skip_intro(g7)
-g7.has_bag = g7.has_map = True                    # 相当于第一幕已经捡完了
+g7.has_bag = True                                # 相当于第一幕已经捡完了
 g7.start_act2()
 check("进第二幕：背包还在", g7.has_bag)
-check("进第二幕：地图还在", g7.has_map)
 
 run(g7, A2_OPEN_SECONDS + 0.3)
-check("第二幕战斗中道具仍带着", g7.has_bag and g7.has_map)
+check("第二幕战斗中道具仍带着", g7.has_bag)
 
 # 阵亡回检查点：道具不能丢
 g7.health = 0
@@ -196,7 +175,6 @@ auto_mono(g7)
 g7.update(1 / 60)
 g7.handle_event(ev(SC_ENTER))
 check("第二幕阵亡回检查点后：背包还在", g7.has_bag, "act=%d" % g7.act)
-check("第二幕阵亡回检查点后：地图还在", g7.has_map)
 
 # 清屏 → 奖励阶段：第二幕不该浮出 BAG / MAP（回检查点后在 A2_OPEN，先走完开场）
 run(g7, A2_OPEN_SECONDS + 0.3)
@@ -223,7 +201,8 @@ for (r, c) in sorted(g8.must)[:12]:                # 道具要落在已复原的
     g8.board.state[r][c] = 1
 g8.enter_reward()
 run(g8, REWARD_DELAY + 0.3)
-check("第一幕照旧浮出 BAG + MAP 两件", len(g8.items) == 2, "%d 件" % len(g8.items))
+check("第一幕照旧浮出 BAG 一件（地图已删）", len(g8.items) == 1 and g8.items[0].kind == "bag",
+      "%d 件 / %s" % (len(g8.items), [i.kind for i in g8.items]))
 
 
 # ==================== 8. 作者报的 bug：紫怪清掉定位图案后，不照就能补涂 ====================
@@ -253,43 +232,6 @@ g9.board.stains -= 1                              # 把这次试探的账抹掉�
 paint_ok(g9, mr, mc)                              # 重新照一下再补
 check("重新照之后补回来 → 有效黑域", g9.board.state[mr][mc] == VALID, "%d" % g9.board.state[mr][mc])
 check("进度跟着回来", g9.board.progress() >= 1, "%d" % g9.board.progress())
-
-
-# ==================== 9. 坛内没黑域 → 紫怪扑人，扣 10% 血（2026-11-12）====================
-from src.entities import PurpleOne  # noqa: E402
-
-g10 = new_game()
-skip_intro(g10)
-g10.start_act2()
-g10.state = "BATTLE"
-run(g10, A2_OPEN_SECONDS + 0.3)
-for r in range(25):                                # 清空棋盘：坛内一格黑域都没有
-    for c in range(25):
-        g10.board.state[r][c] = WHITE
-g10.monsters.clear()
-g10.purples = [PurpleOne(cell_center(*g10.player.cell))]   # 直接贴到玩家身上
-hp0 = g10.health
-auto_mono(g10)
-g10.update(1 / 60)
-check("贴脸的紫怪 → 坛内没黑域时扑人成功", g10.health == hp0 - PURPLE_HIT_DAMAGE,
-      "%d → %d" % (hp0, g10.health))
-check("...扣的是 10%（不是红怪的 5%）", hp0 - g10.health == 10, "%d" % (hp0 - g10.health))
-check("...撞完自己消失（一生一次）", len(g10.purples) == 0, "%d" % len(g10.purples))
-check("...并且嘀咕一句（飘字）", toast_text(g10) == story.MONO_PURPLE_HIT, repr(toast_text(g10)))
-
-# 有黑域时不会扑人（仍然清行，血量不动）
-g11 = new_game()
-skip_intro(g11)
-g11.start_act2()
-g11.state = "BATTLE"
-run(g11, A2_OPEN_SECONDS + 0.3)
-g11.monsters.clear()
-mr, mc = sorted(g11.board.must)[0]
-g11.board.state[mr][mc] = VALID
-g11.purples = [PurpleOne(cell_center(mr, mc))]
-hp1 = g11.health
-run(g11, 1.0)
-check("坛内有黑域时紫怪不会扑人（血量不变）", g11.health == hp1, "%d → %d" % (hp1, g11.health))
 
 
 finish("第二幕 · 流程")

@@ -16,6 +16,10 @@ def dump_stain_cells(g, n):
         for c in range(2, 23):
             if len(used) >= n:
                 return used
+            # 只挑**已经接回来的板块**上的格子：裂开的第一幕里，坛外和没接回的板子算平地，
+            # 涂下去是 "plain"（不计数），拿它们数脏格会永远数不满（2026-11-14）。
+            if not g.board.in_altar(r, c):
+                continue
             if (r, c) in g.board.must or g.board.state[r][c] != 0:
                 continue
             g.player.cell = (r, c)
@@ -54,7 +58,7 @@ check("第 20 格脏格：血量 = %d" % (HEALTH_MAX - 10 * STAIN_DAMAGE),
 g2 = to_roam(new_game())
 fill_must(g2)
 g2.board.stains = STAIN_LIMIT + 5
-check("脏格超额度依然算通关", g2.board.is_complete(), "stains %d" % g2.board.stains)
+check("脏格超额度依然算通关（当前这一块写满就算）", g2.board.is_complete(), "stains %d" % g2.board.stains)
 
 # --- 涂到血量归零：进 DEAD，再回检查点 ---
 g3 = to_battle(new_game())

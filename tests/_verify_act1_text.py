@@ -39,7 +39,7 @@ check("对话 %d 句全部与文案文件逐字一致" % len(lines), not bad, "�
 singles = [
     ("M1 第一行", story.M1.split("\n")[0]),
     ("M1 第二行", story.M1.split("\n")[1]),
-    ("M2", story.M2), ("M3", story.M3), ("M4", story.M4), ("M5", story.M5),
+    ("M2", story.M2), ("M3", story.M3),
     ("红怪狠话", story.THREAT),
     ("学走路提示", story.TUTORIAL_MOVE),
     ("学异象提示", story.TUTORIAL_SHIFT),
@@ -50,7 +50,6 @@ singles = [
     ("脏格扣血嘀咕", story.MONO_STAIN_HURT),
     ("拾取提示", story.PROMPT_PICK),
     ("背包说明", story.ITEM_BAG),
-    ("地图说明", story.ITEM_MAP),
     ("幕结束", story.ACT_TITLE),
 ]
 bad2 = [name for name, text in singles if not found(text)]

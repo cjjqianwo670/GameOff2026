@@ -79,6 +79,38 @@ def format_dark_cells(target):
     return {(orr + r, occ + c) for r, c in format_cells() if target[r][c]}
 
 
+# 定位图案的「核心」：每个 7×7 定位图案中心那个 3×3 黑色实心块（9 格）。
+# 三个定位图案的左上角 QR 坐标分别 (0,0) / (0,14) / (14,0)。
+_FINDER_ORIGINS = ((0, 0), (0, 14), (14, 0))
+
+
+def finder_cores():
+    """三块定位图案的核心（主网格坐标），按板块名分组。
+
+    2026-11-14 作者定：定位图案中心的 9 格叫「核心」。第二幕起，怪物破坏核心（哪怕 1 格），
+    对应板块就分离。这里返回 `{板块名: 9 个主网格坐标}` —— TL / TR / BL 各一块，右下角
+    没有定位图案，所以没有核心、也不会有 `"BR"` 这个键。
+    """
+    orr, occ = TARGET_OFFSET
+    out = {}
+    for i, (r0, c0) in enumerate(_FINDER_ORIGINS):
+        name = ("TL", "TR", "BL")[i]
+        cells = set()
+        for dr in range(2, 5):            # 核心 = 7×7 里第 2..4 行/列（中心 3×3）
+            for dc in range(2, 5):
+                cells.add((orr + r0 + dr, occ + c0 + dc))
+        out[name] = cells
+    return out
+
+
+def core_board_of(cell):
+    """这一格是哪个板块的核心格；不是核心格返回 None。"""
+    for name, cells in finder_cores().items():
+        if cell in cells:
+            return name
+    return None
+
+
 def required_cells(target=None, act=1):
     """本轮必涂格（主网格坐标）。
 

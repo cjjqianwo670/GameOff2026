@@ -1,10 +1,24 @@
 # -*- coding: utf-8 -*-
-"""冒烟：从标题一路推到 ACT 4 — END（三幕用「直接涂满」，第四幕用扫）。"""
+"""冒烟：从标题一路推到 ACT 5 — END（前四幕「直接涂满」，第五幕修错 + 扫描）。
+
+2026-11-14 改：第一幕现在是**四块板块**（BL → TL → TR → BR），所以「涂满一次就收工」
+不成立了 —— 必须一块一块写，每写完一块等它合并。原来的 `finish_wave1()` 只等一次合并，
+于是卡在第二块，而脚本末尾无条件打印 `FULL RUN OK` —— 又一次「假绿」。
+现在每一步都断言，任何一步不对就 `sys.exit(1)`。
+"""
+import sys
+
 import pygame
 from _act1_common import auto_mono, new_game, paint_ok, skip_intro
 from src.config import VALID, WHITE
 
 ENTER = 40
+_steps = []          # [(这一步叫什么, 实际状态, 期望状态)]
+
+
+def check(name, got, want):
+    _steps.append((name, got, want))
+    return got == want
 
 
 def fill_all(g):
@@ -13,15 +27,18 @@ def fill_all(g):
             paint_ok(g, r, c)
 
 
-def finish_wave1(g):
-    """第一幕分两波：第一波（33 格）清一次屏，回来再写第二波（100 格）。"""
-    fill_all(g)
-    for _ in range(900):
-        auto_mono(g)
-        g.update(1 / 60)
-        if getattr(g, "act1_wave", 2) == 2:
-            return True
-    return False
+def finish_act1(g):
+    """第一幕：四块板块逐块写满，每块写完等它合并（右下那块 0 格，直接进终局清屏）。"""
+    for _ in range(6):
+        fill_all(g)
+        for _ in range(1200):
+            auto_mono(g)
+            g.update(1 / 60)
+            if g.state in ("REWARD", "END"):
+                return g.state
+        if g.state == "BATTLE" and not [x for x in g.must if g.board.state[x[0]][x[1]] == WHITE]:
+            return g.state        # 写满了却没动静：交给下面的断言去报
+    return g.state
 
 
 def in_altar(g):
@@ -39,8 +56,6 @@ def finish(g):
     g.reward_phase = "wait2"
     g.reward_t = 0.0
     tick(g, 2400, "END")
-    if g.state != "END":
-        print("  !! 卡在", g.state, "phase", g.reward_phase)
 
 
 def tick(g, n, stop=None):
@@ -58,23 +73,27 @@ skip_intro(g)
 g.enter_free_roam()
 g.start_gap()
 tick(g, 900, "BATTLE")
-print("act1", g.act, g.state)
 g.spawn_rate = 0.0
-print("wave1", finish_wave1(g), "must", len(g.must))
-fill_all(g)
+check("第一幕进战斗", g.state, "BATTLE")
+
+finish_act1(g)
+check("第一幕四块拼完", g.state, "REWARD")
+check("第一幕四块全部接回", "".join(sorted(g.board.open_boards)), "BLBRTLTR")
+check("第一幕 100/100", g.board.progress(), 100)
 finish(g)
-print("act1 end", g.state, g.banner_text)
+check("第一幕收尾", g.state, "END")
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-print("act2", g.act, g.state)
+check("进第二幕", g.act, 2)
 
 tick(g, 300, "BATTLE")
 g.spawn_rate = 0.0
 g.monsters.clear(); g.purples.clear(); g.spawn_purple = lambda: None
 fill_all(g)
 finish(g)
-print("act2 end", g.state, g.banner_text)
+check("第二幕收尾", g.state, "END")
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-print("act3", g.act, g.state)
+check("进第三幕", g.act, 3)
+
 # 第三幕：老者写，玩家补 — 直接涂满，让老头那套逻辑不参与
 for _ in range(600):
     auto_mono(g)
@@ -89,21 +108,22 @@ g.update_yellows = lambda dt: None
 g.yellows.clear(); g.monsters.clear(); g.purples.clear(); g.spawn_purple = lambda: None
 fill_all(g)
 finish(g)
-print("act3 end", g.state, g.banner_text)
+check("第三幕收尾", g.state, "END")
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-print("act4", g.act, g.state, "must", len(g.must))
+check("进第四幕", g.act, 4)
+
 g.spawn_rate = 0.0
 g.monsters.clear(); g.purples.clear(); g.spawn_purple = lambda: None
 g.update_yellows = lambda dt: None
 fill_all(g)
 finish(g)
-print("act4 end", g.state, g.banner_text)
+check("第四幕收尾", g.state, "END")
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-print("act5", g.act, g.state, "errors", g.act5_errors())
+check("进第五幕", g.act, 5)
 
 # 第五幕：把错误修到容量以内 → 扫描 → 结局
 from src.qr import ERROR_TOLERANCE
-for _ in range(g.act5_errors() - ERROR_TOLERANCE):
+for _ in range(max(0, g.act5_errors() - ERROR_TOLERANCE)):
     for k, mods in g.cw_modules.items():
         if any(g.board.state[r][c] != (VALID if dark else 0) for (r, c, dark) in mods):
             for (r, c, dark) in mods:
@@ -112,7 +132,17 @@ for _ in range(g.act5_errors() - ERROR_TOLERANCE):
             break
 in_altar(g)
 tick(g, 2400, "END")
-print("act5 end", g.state, g.banner_text, "|", g.end_line)
+check("第五幕收尾", g.state, "END")
+check("终幕那句话", g.end_line.endswith("YOU WERE HERE"), True)
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-print("after end", g.state)
+check("回车回标题", g.state, "TITLE")
+
+bad = [s for s in _steps if s[1] != s[2]]
+for name, got, want in _steps:
+    if got != want:
+        print("  FAIL  %s：期望 %r，实际 %r" % (name, want, got))
+if bad:
+    print("FAILED %d / %d 步" % (len(bad), len(_steps)))
+    sys.exit(1)
+print("%d / %d 步全过" % (len(_steps), len(_steps)))
 print("FULL RUN OK")

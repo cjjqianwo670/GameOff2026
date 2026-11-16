@@ -87,17 +87,11 @@ check("平地按 Shift 全盘无灰域",
 # --- 4) 照过之后涂黑：异象不消失（只是那格变黑了）---
 g3 = to_roam(new_game()); clear_reveal(g3)
 b3 = g3.board
-# 暗模块在第二波才轮得到（第一幕分两波），先补完第一波那 33 格
-g3.player.cell = (15, 12)
-g3.player.pos.update(cell_center(15, 12))
-b3.reveal_around(15, 12)
-check("第一波：暗模块还不在清单里，照不出来", not b3.revealed(15, 10))
-clear_wave1(g3)
-clear_reveal(g3)
-g3.state = "FREE_ROAM"
-g3.player.cell = (15, 12)                      # 暗模块 (15,10) 落在 5×5 里
-g3.player.pos.update(cell_center(15, 12))
-b3.reveal_around(15, 12)
+# 暗模块 QR (13,8) 落在**左下 BL** 里 → 第一块就轮到它（2026-11-14 板块制）
+check("暗模块在第一块的必涂清单里", (15, 10) in b3.must)
+g3.player.cell = (17, 10)                      # BL 内，(15,10) 落在 5×5 里
+g3.player.pos.update(cell_center(17, 10))
+b3.reveal_around(17, 10)
 check("暗模块被照出来（本轮必涂格）", b3.revealed(15, 10))
 b3.paint(15, 10)
 check("涂黑之后那格是有效黑域", b3.state[15][10] == 1)
@@ -121,15 +115,14 @@ check("右 Shift（scancode 229）也能触发", any(g4.board.reveal[r][c] > 0 f
 # --- 6) 出图：照出来的灰域 + 绿框 ---
 g5 = to_roam(new_game()); clear_reveal(g5)
 b5 = g5.board
-clear_wave1(g5)                        # 暗模块的第二波，绿框才在它上面
 clear_reveal(g5)
 g5.state = "FREE_ROAM"
-g5.player.cell = (15, 12)
-g5.player.pos.update(cell_center(15, 12))
-b5.reveal_around(15, 12)
+g5.player.cell = (17, 10)              # BL 内：暗模块和左下定位图案都在 5×5 里
+g5.player.pos.update(cell_center(17, 10))
+b5.reveal_around(17, 10)
 # 顺手涂几格、留一格脏黑，给用户看「灰域 / 绿框 / 有效黑域 / 脏黑」四种样子
 b5.paint(16, 2)           # 左下定位图案的一格 → 有效黑域（纯黑）
-b5.paint(14, 12)          # 圣坛内非必涂 → 脏黑
+b5.paint(14, 4)           # BL 内非必涂 → 脏黑（坛外/没接回的板子只会是 plain）
 for _ in range(int(1.2 * 60)):
     b5.update(1 / 60)
 g5.draw()

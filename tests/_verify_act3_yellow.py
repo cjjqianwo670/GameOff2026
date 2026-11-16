@@ -13,10 +13,10 @@ from _act1_common import WIN, auto_mono, check, finish, new_game, paint_ok
 from src import story
 from src.config import (  # noqa: E402
     OLDMAN_HP, OLDMAN_REVIVE_HP, OLDMAN_REVIVE_RANGE, OLDMAN_REVIVE_TIME, SC_H, SC_U, SWORD_CD,
-    PURPLE_SPAWN_PER_MIN, PURPLE_SPAWN_PER_MIN_ACT3, SWORD_RANGE, VALID, YELLOW_AGGRO_TIME,
+    SWORD_RANGE, VALID, YELLOW_AGGRO_TIME,
     YELLOW_BITE_DAMAGE, YELLOW_BITE_DIST, YELLOW_HP, YELLOW_PLAYER_DAMAGE, YELLOW_SPEED
 )
-from src.entities import Monster, PurpleOne, YellowOne
+from src.entities import GreenOne, Monster, PurpleOne, YellowOne
 from src.grid import cell_center
 
 TITLE = "STEP 16 · ACT 3 (THE YELLOW ONES / RESCUE / SWORD)"
@@ -210,8 +210,21 @@ g2.handle_event(key(UKEY))
 check("按 Q 挥剑 → 黄怪掉 1 点血", y2.hp == YELLOW_HP - 1, "%d" % y2.hp)
 check("...而且**立刻转火玩家**（作者定的规则）", y2.hunting and y2.aggro_t > 0,
       "aggro=%.1f" % y2.aggro_t)
+check("...挥剑命中 → 黄怪被**击退**（沿玩家→怪方向推开，进入 kb 状态）", y2.kb_t > 0,
+      "kb_t=%.2f dir=(%.1f,%.1f)" % (y2.kb_t, y2.kb_dir.x, y2.kb_dir.y))
 check("...转火是按时间算的（YELLOW_AGGRO_TIME）", YELLOW_AGGRO_TIME > 3, "%.1f" % YELLOW_AGGRO_TIME)
 check("...挥砍有 CD（不是按住连点就能秒）", g2.sword_cd > 0, "%.2f" % g2.sword_cd)
+
+# 击退期间：怪确实被往外推（离玩家越来越远），而不是立刻又扑回来
+kb0 = (y2.pos - g2.player.pos).length()
+for _ in range(int(0.12 * 60)):          # 0.12s < SWORD_KNOCKBACK_TIME，仍在击退中
+    auto_mono(g2)
+    g2.update(1 / 60)
+kb1 = (y2.pos - g2.player.pos).length()
+check("击退期间它离玩家**更远**了（被推出去，不是又咬上来）", kb1 > kb0,
+      "%.0f → %.0f px" % (kb0, kb1))
+check("击退沿「玩家 → 怪」方向（方向向量与玩家指向一致）",
+      (y2.pos - g2.player.pos).dot(y2.kb_dir) > 0)
 
 g2.yellows = [YellowOne((g2.player.pos.x + 100, g2.player.pos.y))]
 far = g2.yellows[0]
@@ -286,6 +299,11 @@ g8.sword_cd = 0.0
 g8.handle_event(key(UKEY))
 check("紫怪也是一剑就死", g8.purples == [], "%d 只" % len(g8.purples))
 
+g8.greens = [GreenOne((g8.player.pos.x + 22, g8.player.pos.y + 6))]
+g8.sword_cd = 0.0
+g8.handle_event(key(UKEY))
+check("绿怪也是一剑就死（2026-11-16 补上）", g8.greens == [], "%d 只" % len(g8.greens))
+
 # 取最近的那一只（不是随机/第一只）
 g8.yellows = [YellowOne((g8.player.pos.x + 30, g8.player.pos.y)),
               YellowOne((g8.player.pos.x + 14, g8.player.pos.y))]
@@ -295,37 +313,16 @@ g8.handle_event(key(UKEY))
 check("砍的是**最近**那一只", near_one.hp == YELLOW_HP - 1 and g8.yellows[0].hp == YELLOW_HP,
       "%d / %d" % (near_one.hp, g8.yellows[0].hp))
 
-# ==================== 6.6 第三幕的紫怪慢下来了 ====================
-check("第三幕的紫怪频率单独配了一个更小的值",
-      PURPLE_SPAWN_PER_MIN_ACT3 < PURPLE_SPAWN_PER_MIN,
-      "%.1f/分 vs 第二幕 %.1f/分" % (PURPLE_SPAWN_PER_MIN_ACT3, PURPLE_SPAWN_PER_MIN))
-# 直接量「再等多久会来下一只」：第三幕 30s，第二幕 10s
-def next_purple_gap(act):
-    gx = to_act3() if act >= 3 else new_game()
-    if act < 3:
-        for (r, c) in sorted(gx.board.must):
-            paint_ok(gx, r, c)
-        gx.start_act2()
-        gx.state = "BATTLE"
-    gx.purples.clear()
-    gx.format_cells = set()               # 别让老者写完就清屏（2026-11-12：他挑格看的是 format_cells）
-    gx.yellow_spawned = 1                 # 也别让黄怪来捣乱
-    gx.update_yellows = lambda dt: None   # 索敌改成「谁近咬谁」之后，站桩的玩家会被咬死
-    gx.spawn_purple = lambda: gx.purples.append(PurpleOne((0, 0)))
-    gx.purple_spawned = 1                 # 跳过首只的固定延迟，量「之后」的间隔
-    t = 0.0
-    gx.purple_t = 0.0
-    while not gx.purples and t < 45:
-        auto_mono(gx)
-        gx.update(1 / 60)
-        t += 1 / 60
-    return t
-
-
-gap3 = next_purple_gap(3)
-gap2 = next_purple_gap(2)
-check("第三幕里紫怪要等 30 秒才来一只", 29.5 <= gap3 <= 30.5, "%.1fs" % gap3)
-check("...第二幕还是 10 秒一只（只改了第三幕）", 9.5 <= gap2 <= 10.5, "%.1fs" % gap2)
+# ==================== 6.6 第三幕不刷紫怪（2026-11-16 延后到第四幕）====================
+g_act3 = to_act3()
+g_act3.purple_spawned = 0
+g_act3.purple_t = 0.0
+g_act3.update_yellows = lambda dt: None   # 别让黄怪来捣乱
+g_act3.spawn_rate = 0.0
+for _ in range(int(20 * 60)):             # 跑 20 秒（超过原首只 8 秒 + 一个间隔）
+    auto_mono(g_act3)
+    g_act3.update(1 / 60)
+check("第三幕不刷紫怪（紫怪延后到第四幕）", len(g_act3.purples) == 0, "%d 只" % len(g_act3.purples))
 
 # ==================== 7. 画面上：他头顶有血条（只有第三幕）====================
 g6 = to_act3()

@@ -9,10 +9,10 @@
 
 import pygame
 
-from _act1_common import auto_mono, check, finish, new_game, paint_ok, skip_intro
+from _act1_common import auto_mono, check, finish, new_game, paint_ok, skip_intro, toast_text
 from src import story
 from src.config import (
-    MIRAGE_RADIUS, MIRAGE_RADIUS_ACT4, PURPLE_SPAWN_PER_MIN, PURPLE_SPAWN_PER_MIN_ACT3,
+    MIRAGE_RADIUS, MIRAGE_RADIUS_ACT4, PURPLE_FIRST_DELAY, PURPLE_HIT_DAMAGE,
     PURPLE_SPAWN_PER_MIN_ACT4, SC_J, VALID, WHITE
 )
 from src.qr import required_cells
@@ -147,11 +147,8 @@ check("...照出来的范围比前三幕大",
       g3.board.reveal_around(12, 12, radius=g3.mirage_radius()) >= 0 and n4 > 0,
       "照到 %d 格" % n4)
 
-# ==================== 5. 紫怪回潮 ====================
-check("第四幕紫怪 4 只/分（第三幕 2、第二幕 6）",
-      PURPLE_SPAWN_PER_MIN_ACT4 == 4.0 and PURPLE_SPAWN_PER_MIN_ACT3 == 2.0
-      and PURPLE_SPAWN_PER_MIN == 6.0,
-      "%.1f / %.1f / %.1f" % (PURPLE_SPAWN_PER_MIN_ACT4, PURPLE_SPAWN_PER_MIN_ACT3, PURPLE_SPAWN_PER_MIN))
+# ==================== 5. 紫怪登场（2026-11-16 从第二幕延后到这里）====================
+check("第四幕紫怪 4 只/分", PURPLE_SPAWN_PER_MIN_ACT4 == 4.0, "%.1f" % PURPLE_SPAWN_PER_MIN_ACT4)
 
 g4 = to_act4()
 g4.spawn_rate = 0.0
@@ -163,6 +160,54 @@ while not g4.purples and t < 20:
     g4.update(1 / 60)
     t += 1 / 60
 check("第四幕 15 秒来一只紫怪（4 只/分）", abs(t - 15.0) < 0.3, "%.1fs" % t)
+
+# ==================== 5b. 坛内没黑域 → 紫怪扑人，扣 10% 血 ====================
+from src.entities import PurpleOne  # noqa: E402
+
+g4b = to_act4()
+g4b.spawn_rate = 0.0
+g4b.state = "BATTLE"
+for r in range(25):                                # 清空棋盘：坛内一格黑域都没有
+    for c in range(25):
+        g4b.board.state[r][c] = WHITE
+g4b.monsters.clear()
+g4b.purples = [PurpleOne(cell_center(*g4b.player.cell))]   # 直接贴到玩家身上
+hp0 = g4b.health
+auto_mono(g4b)
+g4b.update(1 / 60)
+check("贴脸的紫怪 → 坛内没黑域时扑人成功", g4b.health == hp0 - PURPLE_HIT_DAMAGE,
+      "%d → %d" % (hp0, g4b.health))
+check("...扣的是 10%（不是红怪的 5%）", hp0 - g4b.health == 10, "%d" % (hp0 - g4b.health))
+check("...撞完自己消失（一生一次）", len(g4b.purples) == 0, "%d" % len(g4b.purples))
+check("...并且嘀咕一句（飘字）", toast_text(g4b) == story.MONO_PURPLE_HIT, repr(toast_text(g4b)))
+
+# 有黑域时不会扑人（仍然清行，血量不动）
+g4c = to_act4()
+g4c.spawn_rate = 0.0
+g4c.state = "BATTLE"
+g4c.monsters.clear()
+mr, mc = sorted(g4c.must)[0]
+g4c.board.state[mr][mc] = VALID
+g4c.purples = [PurpleOne(cell_center(mr, mc))]
+hp1 = g4c.health
+for _ in range(60):
+    auto_mono(g4c)
+    g4c.update(1 / 60)
+check("坛内有黑域时紫怪不会扑人（血量不变）", g4c.health == hp1, "%d → %d" % (hp1, g4c.health))
+
+# 紫怪第一次进场放 A4_PURPLE（登场介绍）
+g4d = to_act4()
+g4d.spawn_rate = 0.0
+g4d.purple_spawned = 0
+g4d.purple_t = 0.0
+g4d.mono_hold = False
+t = 0.0
+while g4d.purple_spawned == 0 and t < PURPLE_FIRST_DELAY + 2:
+    auto_mono(g4d)
+    g4d.update(1 / 60)
+    t += 1 / 60
+check("紫怪首次进场放 A4_PURPLE（登场介绍）", g4d.mono_last == story.A4_PURPLE,
+      repr(g4d.mono_last[:24]))
 
 # ==================== 6. 通关 → 清屏 → END（ACT 4 — END）====================
 g5 = to_act4()

@@ -25,15 +25,26 @@ PROMPT_CALL = "PRESS [T] TO CALL OUT"
 PROMPT_WRITE = "PRESS [J] TO WRITE HERE"   # 第一次站在灰域上：J 从来没被教过（2026-11-14 补）
 PROMPT_PICK = "PRESS [B] TO PICK UP"
 HINT_CLEAR = "[K] TO CLEAR IT."            # 第一次涂脏格时教 K（从旧 STAIN_WARNING 拆出，按键相关保留）
-HINT_WAVE2 = "%d LEFT.  TWO CORNERS."      # 第一幕第一波清完：还剩两个角
+HINT_WAVE2 = "%d LEFT.  TWO CORNERS."      # （旧文案，第一幕改板块制后不再用）
+HINT_BOARD = "%d LEFT.  ANOTHER SLAB."     # 合并一块板块后：还剩多少格
 STEP_INTO_ALTAR = "STEP INTO THE ALTAR"
-MAP_IN_HANDS = "FOLD THE MAP FIRST   [M]"  # 地图摊开时想涂：双手捧着纸（2026-11-12 作者要求）
 HINT_FORMAT_BROKEN = "A LINE IS BROKEN.  [J] TO PUT IT BACK"   # 第三幕：老者写的格式格被吃掉
 HINT_HELP_OLDMAN = "[H] TO HELP HIM"                     # 第三幕：老者倒下，按住 H 四秒救他
 HINT_FILL_REST = "%d LEFT.  FILL THEM."                      # 第三幕：格式写完但整张码还差格
 HINT_FORMAT_HOLD = "FORMAT CELLS:  HOLD [J]"                 # 第三幕：格式格要按住才写得动（2026-11-13）
+# 界丝（第二幕起，贯穿始终）
+HINT_THREAD_PICK = "PRESS [B] TO TAKE THE THREAD"            # 站到固定黑点旁：拾取界丝
+HINT_THREAD_FULL = "BAG FULL.  NO ROOM FOR THE THREAD."      # 背包满：放不下
+HINT_THREAD_EMPTY = "NO THREAD.  WAIT FOR THE ALTAR."        # 没界丝：等圣坛生产
+HINT_THREAD_CAST = "[I] TO SPAN THE GAP"                     # 站在裂缝旁：搭通道
 HINT_SWEEP = "HOLD [J] TO SWEEP \u2014 THE GREY, NOT THE BLIND"   # 第四幕：按住 J 扫灰域，盲格不写
 HINT_TOLERANCE = "ERRORS %d / %d \u2014 IT ONLY NEEDS TO READ"      # 第五幕：错误压进容量就能被读出来
+
+# ==== 道具（2026-11-16 作者定：每幕一个新，固定字母键）====
+HINT_TIME_SLOW = "[E] TO HOLD THEM STILL"                          # 第二幕：时停
+HINT_DASH = "[Q] TO DASH"                                          # 第三幕：冲刺
+HINT_DECOY = "[F] TO LAY A DECOY"                                  # 第四幕：诱饵
+HINT_SCROLL = "[G] TO PULL A SLAB BACK"                            # 第五幕：修复卷轴
 
 # ==== 2. 内心独白（不打断操作）====
 # 2026-11-12：原「叙事型系统提示」都搬到这里，变成码序使的嘀咕（增强代入感）。
@@ -42,10 +53,9 @@ HINT_TOLERANCE = "ERRORS %d / %d \u2014 IT ONLY NEEDS TO READ"      # 第五幕�
 M1 = "Who am I?\nWhere is this?"
 M2 = "Why do I feel the pattern under the floor... moving?"
 M3 = "Why you two?"
-M4 = "What is this? It looks like the things the old man drove off. It's not moving."
-M5 = "These tools are dead. What were they for?"
 # 第一幕第一波清完之后的一句（2026-11-14 拆两波）：老者交代过「每写完一部分，圣坛会护你一会儿」
 A1_WAVE = "One corner holds.\nIt pushed them back."
+A1_MERGE = "The edge is whole again."      # 合并一句（飘字，不冻世界）
 
 # 这些是「从系统提示改成心声」的嘀咕（2026-11-12 作者要求），正常大小写：
 MONO_STAIN = "That one failed. It's just a stain."          # 涂错成脏格
@@ -84,7 +94,8 @@ DIALOG_ONE = [
               "Dark on the Altar, and when there's no Dark left, they come for whoever can still make it."),
     (SEQUENCER, "Will that happen to us? What do we do?"),
     (OLD_MAN, "Finish the rite. That's all I know. I never managed it. I meant to do it with you \u2014 "
-              "but I can barely call the Anomaly anymore. I don't know why."),
+              "but I can barely call the Anomaly anymore. The writing I still remember, but I can't see "
+              "what to write. I don't know why."),
     (OLD_MAN, "Anyway. I chased them off. They'll be back. It's yours now \u2014 you've got something in "
               "you. I'll go look outside, see if there's anything left that can help us."),
     (SEQUENCER, "Me?"),
@@ -119,7 +130,6 @@ LEAVE_LINE = (OLD_MAN,
 # ==== 5. 道具说明（拾取后显示）====
 
 ITEM_BAG = "BAG \u2014 you can carry what you find."
-ITEM_MAP = "MAP \u2014 everything you have looked at stays on it."
 ITEM_SWORD = "SWORD \u2014 it was waiting in the light."   # 第二幕结束的奖励（来源待作者定）
 
 
@@ -131,18 +141,44 @@ def branch(on_altar):
 
 
 # ==== 第二幕（2026-11-11 新增，草稿见 DATA_SHIFT_第二幕英文文案.md）====
-# 第二幕没有对话：老者没回来，场上没有第二个人。紫怪也不说话。
+# 第二幕没有对话：老者没回来，场上没有第二个人。
+# 2026-11-16：紫怪从第二幕延后到第四幕，所以这一幕只剩红怪（咬核心→板块分离），
+# 紫怪的登场介绍（A4_PURPLE / A4_M2）挪到第四幕去了。绿怪（清 3×3）在第二幕低频登场。
 
 A2_M1 = ("The old man hasn't come back.\nThe three corners are still here.\n"
          "Something between them is missing.")
 A2_M2 = "Two lines.\nThey run between the corners.\nI never looked there."
-A2_M3 = "That's not one of the red ones.\nIt's slower. It's looking at the lines."
-A2_M4 = "It didn't take one cell.\nIt took the whole line."
+A2_GREEN = "That one's green.\nIt eats a whole patch."        # 绿怪第一次进场（清 3×3）
+
+# 道具解锁（2026-11-16 作者定：每幕一个新）
+A2_TIMESLOW = "I can make the pattern hold them still."       # 第二幕：时停
+A3_DASH = "I can cross the lines in one step."                # 第三幕：冲刺
+A4_DECOY = "A false cell. Let them chase it."                 # 第四幕：诱饵
+A5_SCROLL = "One loose slab. I can pull it back."             # 第五幕：修复卷轴
+
+# 天赋觉醒横幅（2026-11-16：屏幕中央大横幅，比飘字更醒目，不冻世界）
+AWAKEN = {
+    "timeslow": ("TIME SLOW", "[E]"),
+    "dash": ("DASH", "[Q]"),
+    "decoy": ("DECOY", "[F]"),
+    "scroll": ("PULL BACK", "[G]"),
+}
+
+# 核心被破坏 / 修复（2026-11-15 作者定的「核心」机制）
+CORE_BROKEN = "The core broke.\nThat slab is loose."          # 板块分离（飘字）
+CORE_FIXED = "The core holds.\nThe slab is whole again."      # 补满核心、板块合回（飘字）
 
 
 
 # ==== 第三幕（2026-11-12 新增，草稿见 DATA_SHIFT_第三幕英文文案.md）====
 # 老者回来了，带回「怎么读这张码」，替码序使写格式信息；追兵（黄怪，M2）随后就到。
+#
+# 能力设定（2026-11-15 作者定，解决「他没能力了为什么还能写」的矛盾）：
+#   · 「召唤异象（照灰域）」是码序者独有的天赋，也是唯一在衰退的能力
+#   · 「写黑域」是照着灰域落笔的机械活，谁都能做
+#   · 老者写了几十年，把「召唤异象」的感知力烧到几乎没了 —— 还能写，但看不见该写哪
+#   · 所以第三幕他只能写「背得下来的」格式信息（固定、异象照不出来、按顺序记），
+#     数据区要现照现写，那是码序使（玩家）的活。第一幕台词已按此埋下伏笔。
 
 DIALOG_THREE = [
     (OLD_MAN, "I found another Altar. Out past the edge. Fallen in \u2014 but the code on it still reads."),
@@ -181,8 +217,10 @@ A3_READ = "That\u2019s the reading. The rest is yours."             # 格式信�
 # 骨架齐了，剩下的是「内容」：数据区没有结构可讲，只能一格一格填。
 # 所以这一幕不引入新角色、不引入新图案 —— 它换的是**动词**（按住 J 扫），
 # 文案只负责把「他走了，读法留下来了」和「它不想让我把句子写完」这两句交代清楚。
+# 2026-11-16：紫怪从第二幕**延后到这里**首次登场（A4_PURPLE 介绍它），清行的痛感由 A4_M2 接。
 
 A4_M1 = ("He came back.\nHe keeps the frame. I keep the words.")
+A4_PURPLE = "That's not one of the red ones.\nIt's slower. It's looking at the lines."  # 紫怪首次进场
 A4_M2 = "It didn't take one cell.\nIt took the whole line."        # 第一次被紫怪清行
 A4_M3 = "Almost.\nDon't stop now."                                 # 剩下不到 15 格
 
