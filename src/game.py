@@ -41,7 +41,7 @@ from src.config import (
     GREEN_FIRST_DELAY, GREEN_HIT_DAMAGE, GREEN_SPAWN_PER_MIN, GREEN_SPEED,
     TIME_SLOW_DURATION, TIME_SLOW_FACTOR, TIME_SLOW_CD, DASH_DIST, DASH_CD, DECOY_LIFE, DECOY_HP,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
-    SC_H, SC_I, SC_Q, SC_E, SC_F, SC_G, SC_R, SC_SHIFT, SC_SPACE, SC_T, SC_U, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
+    SC_H, SC_I, SC_Q, SC_E, SC_F, SC_G, SC_SHIFT, SC_SPACE, SC_T, SC_U, SC_UP, SC_DOWN, SC_W, SC_S, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
     SPAWN_PX,
     SCRIBE_FLASH, SCRIBE_PAUSE, SCRIBE_WALK_SPEED, FORMAT_HOLD_TIME, SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT,
     SWORD_CD, SWORD_KNOCKBACK_SPEED, SWORD_KNOCKBACK_TIME, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N,
@@ -60,7 +60,7 @@ from src.grid import altar_center, cell_center
 from src.input_state import InputState
 from src.qr import (ERROR_TOLERANCE, core_board_of, finder_cores, format_dark_cells, generate_target,
                     module_table, required_cells, structural_black_cells)
-from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_title, draw_world,
+from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_pause, draw_title, draw_world,
                     make_stain_tile)
 
 # 可移动 / 可涂的相位
@@ -151,6 +151,8 @@ class Game:
         # --- 状态 ---
         self.state = "TITLE"
         self.menu_t = 0.0
+        self.pause_sel = 0                     # 暂停菜单：当前高亮项 0继续/1重开本幕/2退出
+        self.pause_prev = ""                   # 暂停菜单：进菜单前的状态（继续时回去）
         self.rng = random.Random()
         self.target = []
         self.qr_content = ""
@@ -1151,14 +1153,26 @@ class Game:
             return
 
         st = self.state
+
+        # ---- 暂停菜单：世界冻结，只认上下/回车/ESC ----
+        if st == "PAUSE":
+            if sc in (SC_W, SC_UP):
+                self.pause_sel = (self.pause_sel - 1) % 3
+                self.audio.play("ui")
+            elif sc in (SC_S, SC_DOWN):
+                self.pause_sel = (self.pause_sel + 1) % 3
+                self.audio.play("ui")
+            elif sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
+                self._pause_confirm()
+            elif sc == SC_ESC:
+                self._pause_resume()
+            return
+
         if sc == SC_ESC:
             if st == "TITLE":
-                self.running = False
-            elif st == "DIALOG":
-                self.close_dialog()                      # 中途退出不卡死
+                self.running = False                 # 主菜单：ESC 退出程序
             else:
-                self.state = "TITLE"
-                self.input.held.clear()
+                self._pause_open()                   # 游戏进行中：ESC 弹暂停菜单
             return
 
         if st == "TITLE":
@@ -1166,11 +1180,11 @@ class Game:
                 self.start_act()
             return
         if st == "DEAD":
-            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE, SC_R):
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
                 self.restore_checkpoint()
             return
         if st == "END":
-            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE, SC_R):
+            if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
                 self.next_act()
             return
         if st == "DIALOG":
@@ -1178,20 +1192,16 @@ class Game:
                 self.advance_dialog()
             return
 
-        # 心声暂停中：世界停着，只认回车（继续）和 R（重开一局）
+        # 心声暂停中：世界停着，只认回车（继续）
         if self.mono_hold:
             if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
                 self.advance_monologue()
-            elif sc == SC_R:
-                self.start_act()
             return
         if st == "INTRO":
             return
 
         # ---- 以下都是可动相位 ----
-        if sc == SC_R:
-            self.start_act()
-        elif sc == SC_U and self.has_sword and self.act >= 3 and st in PAINT_STATES:
+        if sc == SC_U and self.has_sword and self.act >= 3 and st in PAINT_STATES:
             self.swing_sword()
         elif sc == SC_I and self.act >= 2 and st in PAINT_STATES:
             self.try_cast_bridge()          # 界丝：按 I 朝前方搭跨缝通道
@@ -1212,6 +1222,35 @@ class Game:
         elif sc == SC_G and self.scroll_count > 0 and st in PAINT_STATES:
             self.try_scroll()               # 道具：修复卷轴
 
+    # ---------- 暂停菜单（ESC） ----------
+    def _pause_open(self):
+        """ESC：弹出暂停菜单，世界冻结。记下进来前的状态，「继续」时原样回去。"""
+        self.pause_prev = self.state
+        self.pause_sel = 0
+        self.state = "PAUSE"
+        self.input.held.clear()
+
+    def _pause_resume(self):
+        """继续游戏：回到暂停前的状态。"""
+        self.state = self.pause_prev
+        self.pause_prev = ""
+        self.input.held.clear()
+
+    def _pause_confirm(self):
+        """暂停菜单按回车：执行当前高亮项。"""
+        if self.pause_sel == 0:                    # 继续游戏
+            self._pause_resume()
+        elif self.pause_sel == 1:                  # 重新开始本幕
+            self.pause_prev = ""
+            if self.checkpoint is None:            # 还没到检查点（第一幕开场）→ 重开第一幕
+                self.start_act()
+            else:
+                self.restore_checkpoint()
+        else:                                      # 退出游戏 → 回标题页
+            self.pause_prev = ""
+            self.state = "TITLE"
+            self.input.held.clear()
+
     def on_click(self, x, y):
         if self.state == "TITLE":
             self.start_act()
@@ -1230,6 +1269,10 @@ class Game:
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt
+        # 暂停菜单：世界彻底冻结（怪物、计时、贴图动画都不走），只走菜单自己的时基。
+        if self.state == "PAUSE":
+            self.menu_t += dt
+            return
         # 心声暂停：整个世界静止（连贴图动画、怪物、碎屑都停），只走打字机。
         # 必须放在最前面 —— 放后面的话怪还在这一帧里打过你（作者 2026-11-12）。
         if self.mono_hold:
@@ -2481,6 +2524,8 @@ class Game:
             draw_dead(self)
         elif self.state == "END":
             draw_end(self)
+        if self.state == "PAUSE":
+            draw_pause(self)                 # 暂停菜单盖在最上层
         self.apply_shake()                 # 开场碎码那一下的屏幕抖动（0,0 时是空操作）
         self.present()
 

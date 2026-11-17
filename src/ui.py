@@ -1036,7 +1036,7 @@ def draw_hud(g: "Game"):
     if g.state in ("BATTLE", "CLEAR", "REWARD", "DEAD"):
         txt(g, "TIME %02d:%02d" % (int(g.elapsed) // 60, int(g.elapsed) % 60),
             (PLAY_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
-    txt(g, "[ESC] TITLE", (WINDOW_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
+    txt(g, "[ESC] MENU", (WINDOW_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
 
     # ---- 右侧面板 ----
     panel = pygame.Rect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
@@ -1577,6 +1577,32 @@ def draw_end(g: "Game"):
         center_txt(g, g.end_line, (PLAY_W // 2, WINDOW_H // 2 + 30), g.f_mid, C_ACCENT)
     if int(g.menu_t * 2.0) % 2 == 0:
         center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
+
+
+PAUSE_OPTIONS = ("CONTINUE", "RESTART ACT", "QUIT TO TITLE")
+
+
+def draw_pause(g: "Game"):
+    """ESC 暂停菜单：半透明遮罩盖住世界，中央三选项，W/S 或方向键切换、回车确认。"""
+    s = g.screen
+    veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+    veil.fill((0, 0, 0, 180))
+    s.blit(veil, (0, 0))
+
+    cx = WINDOW_W // 2
+    center_txt(g, "PAUSED", (cx, 350), g.f_big, C_TEXT)
+
+    for i, label in enumerate(PAUSE_OPTIONS):
+        y = 470 + i * 70
+        sel = (i == g.pause_sel)
+        col = C_ACCENT if sel else C_DIM
+        # 选中项：左侧一个指示箭头 + 高亮文字
+        if sel:
+            pygame.draw.polygon(s, C_ACCENT, [(cx - 150, y - 8), (cx - 138, y), (cx - 150, y + 8)])
+        center_txt(g, label, (cx, y), g.f_mid, col)
+
+    center_txt(g, "[W/S] SELECT    [ENTER] CONFIRM    [ESC] RESUME",
+               (cx, 720), g.f_small, C_DIM)
 
 
 END_CODE_MODULE = 12           # 终幕那张码每格多少像素（≥6 才好扫，12 是整屏的观感上限）

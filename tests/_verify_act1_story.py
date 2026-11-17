@@ -161,9 +161,11 @@ check("每句台词折行后都放得进对话框（≤%d 行）" % box_lines, n
 g.dlg_i = 0
 shot(g, "14_dialog_one.png")
 
-# Esc 不卡死
+# Esc 不再直接关对话，而是弹暂停菜单（2026-11-17）；再按 Esc 继续回到对话，不会卡死
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=SC_ESC))
-check("对话中按 Esc 不会卡死", g.state == "FREE_ROAM" and g.dlg_lines is None, g.state)
+check("对话中按 Esc 弹出暂停菜单（不会卡死）", g.state == "PAUSE" and g.pause_prev == "DIALOG", g.state)
+g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=SC_ESC))
+check("暂停菜单里再按 Esc 继续 → 回到对话", g.state == "DIALOG", g.state)
 
 # --- 坛外呼喊（对话二）在第一幕已经走不到了（2026-11-14 板块制）---
 # 圣坛还裂着的时候玩家**只能站在自己那块板块上**（`can_stand` 判 `fractured()`）：
@@ -242,9 +244,8 @@ g5.handle_event(ev(SC_ENTER))
 check("停留够之后再按 → 老者离开", g5.oldman.leaving, "%s leaving=%s" % (g5.state, g5.oldman.leaving))
 
 # --- 回到 g：坛内支线走完整段对话 → 老者离开 → GAP ---
-g.handle_event(ev(SC_T))          # Esc 之后重新喊一次（他还在坛上）
-run(g, 1.0)
-check("Esc 之后可以重新开始对话", g.state == "DIALOG", g.state)
+# 2026-11-17：ESC 不再打断对话（改弹暂停菜单，上面已验），g 仍停在 DIALOG，直接走完即可
+check("暂停后仍在对话中", g.state == "DIALOG", g.state)
 # --- 走完整段对话 → 老者离开 → GAP ---
 for _ in range(40):
     g.handle_event(ev(SC_ENTER))

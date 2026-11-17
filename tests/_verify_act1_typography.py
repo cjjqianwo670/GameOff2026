@@ -10,7 +10,7 @@ from src.config import (
     TOAST_MAX, TOAST_TIME,
     C_ACCENT, C_OLDMAN, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H, DLG_NAME_FONT, DLG_PAD,
     C_TEXT, DLG_MIN_ROWS, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_REPEAT_GAP, PLAYER_GLOW_R,
-    PROMPT_FONT, SC_ENTER, SC_R, WINDOW_W
+    PROMPT_FONT, SC_ENTER, SC_ESC, WINDOW_W
 )
 from src.grid import cell_center
 from src.ui import dlg_box_lines, dialog_char_total, dialog_lines, mono_box, mono_lines
@@ -226,10 +226,14 @@ check("换一句立刻冻住（冷却只管同一句）", g3.mono_hold and g3.mo
 check("冷却常量合理（足够盖住连续涂错，又不至于让玩家以为坏了）",
       1.0 <= MONO_REPEAT_GAP <= 8.0, "%.1fs" % MONO_REPEAT_GAP)
 
-# --- 暂停时按 R 能重开，不会卡死 ---
-g3.handle_event(ev(SC_R))
-check("暂停中按 R 能重开一局（不会卡在暂停里出不来）",
-      g3.act == 1 and not g3.mono_hold, "act=%d hold=%s" % (g3.act, g3.mono_hold))
+# --- 暂停时（心声冻屏）按 Esc 能弹暂停菜单，不会卡死 ---
+# 2026-11-17：R 键重开已移除，改成 ESC 弹暂停菜单（里面有「重新开始本幕」「退出游戏」能脱身）
+g3.handle_event(ev(SC_ESC))
+check("暂停中按 Esc 能弹出暂停菜单（不会卡在暂停里出不来）",
+      g3.state == "PAUSE" and g3.pause_prev != "", g3.state)
+g3.handle_event(ev(SC_ESC))                       # 再按 Esc 继续，回到心声暂停
+check("暂停菜单里按 Esc 继续 → 回到心声暂停（没丢状态）",
+      g3.mono_hold and g3.mono_text == story.MONO_BLIND, "hold=%s" % g3.mono_hold)
 
 # ==================== 嘀咕（飘字）：反馈类不冻世界 ====================
 # 作者 2026-11-14：一天要出现十几次的东西不能每次都停车读。
