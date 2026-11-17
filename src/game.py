@@ -435,7 +435,7 @@ class Game:
         self.hint_alpha = 0
 
         self.state = "INTRO"
-        self.input.held.clear()
+        self.input.clear()
 
     def board_cells(self, name):
         """某一块板块里**这一局该涂的格**（整幕必涂格 ∩ 这块板子）。
@@ -493,7 +493,7 @@ class Game:
         else:
             self.state = "TITLE"
             self.menu_t = 0.0
-            self.input.held.clear()
+            self.input.clear()
 
     def _begin_act(self, act):
         # 第一幕结束之后圣坛是完整的：第 2~5 幕四块全通（第一幕是四块分裂的，见 start_act）
@@ -1045,7 +1045,7 @@ class Game:
         self.state = cp.get("state", "GAP")
         self.gap_t = 0.0
         self.open_t = 0.0
-        self.input.held.clear()
+        self.input.clear()
 
     # ---------- 文本通道 ----------
     def reset_mono(self):
@@ -1228,13 +1228,13 @@ class Game:
         self.pause_prev = self.state
         self.pause_sel = 0
         self.state = "PAUSE"
-        self.input.held.clear()
+        self.input.clear()
 
     def _pause_resume(self):
         """继续游戏：回到暂停前的状态。"""
         self.state = self.pause_prev
         self.pause_prev = ""
-        self.input.held.clear()
+        self.input.clear()
 
     def _pause_confirm(self):
         """暂停菜单按回车：执行当前高亮项。"""
@@ -1249,7 +1249,7 @@ class Game:
         else:                                      # 退出游戏 → 回标题页
             self.pause_prev = ""
             self.state = "TITLE"
-            self.input.held.clear()
+            self.input.clear()
 
     def on_click(self, x, y):
         if self.state == "TITLE":
@@ -1298,7 +1298,8 @@ class Game:
 
         # 走动（CLEAR / REWARD 也要走：要走进圣坛、要走到道具旁）
         if st in MOVE_STATES:
-            self.player.update(dt, self.input.dir4(), can_stand=self._can_stand)
+            self.player.update(dt, self.input.dir4(), can_stand=self._can_stand,
+                               buffered=self.input.pop_buffered_dir())
             self.note_move(dt)
 
         # 脚下涂改：按着 Shift 时涂不上去（异象和涂不能同时）

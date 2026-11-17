@@ -40,22 +40,31 @@ class Player:
         self.facing = 1
         self.repeat = 0.0
 
-    def update(self, dt, d, frozen=False, can_stand=None):
-        if frozen or d is None:
+    def update(self, dt, d, frozen=False, can_stand=None, buffered=None):
+        if frozen:
+            self.repeat = 0.0
+            return
+        if d is None and buffered is None:
             self.repeat = 0.0               # 松手/禁止移动时归零，下次按下瞬间就走一格
             return
-        self.repeat -= dt
-        if self.repeat > 0:
-            return
-        self.repeat = MOVE_REPEAT
-        nr, nc = self.cell[0] + d[0], self.cell[1] + d[1]
+        # 缓冲的新按键优先（输入缓冲/反向急停），否则用持续按住的方向（长按连走）
+        move_dir = buffered if buffered is not None else d
+        # 朝向先更新：贴墙/贴缝时移动被挡，但面向要跟上（转身朝来怪的方向，作者 2026-11-18）
+        self.facing = (1 if move_dir[0] > 0 else 0) if move_dir[0] else (3 if move_dir[1] > 0 else 2)
+        if buffered is not None:
+            self.repeat = MOVE_REPEAT       # 新按键：立即走一格，再进入正常长按间隔
+        else:
+            self.repeat -= dt
+            if self.repeat > 0:
+                return
+            self.repeat = MOVE_REPEAT
+        nr, nc = self.cell[0] + move_dir[0], self.cell[1] + move_dir[1]
         if not (0 <= nr < GRID_N and 0 <= nc < GRID_N):
             return                          # 撞墙：原地不动
         if can_stand is not None and not can_stand(self.cell, (nr, nc)):
             return                          # 裂缝 / 分离板块 / 还没接回来的板块：过不去
         self.cell = (nr, nc)
         self.pos.update(cell_center(nr, nc))
-        self.facing = (1 if d[0] > 0 else 0) if d[0] else (3 if d[1] > 0 else 2)
 
 # ==== 怪物 ====
 

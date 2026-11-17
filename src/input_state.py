@@ -2,9 +2,11 @@
 """键盘状态：只用 scancode，保证输入法 / CapsLock / Shift 下都能走。
 """
 
+from collections import deque
+
 import pygame
 
-from src.config import DIR_KEYS
+from src.config import DIR_KEYS, MOVE_BUFFER_MAX, MOVE_BUFFER_TIME
 
 # ==== 键盘状态 ====
 
@@ -23,21 +25,49 @@ class InputState:
             pass
         self.held = set()                  # 存 scancode
         self.last_dir = None               # 最后按下的方向键，斜向时优先听它的
+        self.dir_buffer = deque()          # 方向输入缓冲：(dr, dc, press_ms)，供移动逐帧消费
 
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN:
             self.held.add(e.scancode)
             if e.scancode in DIR_KEYS:
                 self.last_dir = e.scancode
+                self._push_dir(DIR_KEYS[e.scancode])
         elif e.type == pygame.KEYUP:
             self.held.discard(e.scancode)
-        elif e.type == pygame.WINDOWFOCUSLOST:
-            self.held.clear()              # 防 Alt+Tab 后按键卡死
-            self.last_dir = None
-        elif e.type == pygame.WINDOWFOCUSGAINED:
-            # 失焦期间可能漏掉 KEYUP，回来时不要相信旧状态（防「回来就一直走」）
-            self.held.clear()
-            self.last_dir = None
+        elif e.type in (pygame.WINDOWFOCUSLOST, pygame.WINDOWFOCUSGAINED):
+            # 防 Alt+Tab 后按键卡死 / 失焦期间漏掉 KEYUP，回来时不要相信旧状态
+            self.clear()
+
+    def _push_dir(self, d):
+        """方向键按下的瞬间进缓冲队列（FIFO，带过期时间）。
+
+        反向急停打断：新方向若与队尾相反，先清空队列——反向立即生效，不等前面还没走的方向。
+        """
+        now = pygame.time.get_ticks()
+        if self.dir_buffer and d[0] == -self.dir_buffer[-1][0] and d[1] == -self.dir_buffer[-1][1]:
+            self.dir_buffer.clear()
+        self.dir_buffer.append((d[0], d[1], now))
+        while len(self.dir_buffer) > MOVE_BUFFER_MAX:
+            self.dir_buffer.popleft()
+
+    def pop_buffered_dir(self):
+        """取出队首仍没过期的方向（消费掉）；为空或全过期返回 None。每帧最多消费一个。"""
+        now = pygame.time.get_ticks()
+        while self.dir_buffer:
+            dr, dc, ts = self.dir_buffer[0]
+            if now - ts > MOVE_BUFFER_TIME * 1000:
+                self.dir_buffer.popleft()
+                continue
+            self.dir_buffer.popleft()
+            return (dr, dc)
+        return None
+
+    def clear(self):
+        """清空全部输入状态（重开 / 换幕 / 回检查点 / 暂停 / 失焦时调用）。"""
+        self.held.clear()
+        self.last_dir = None
+        self.dir_buffer.clear()
 
     def down(self, sc):
         """只看事件集合。

@@ -979,7 +979,9 @@ def _draw_swing(g: "Game", s):
     """挥砍的弧：朝面向那边甩出去，随 swing_t 变淡。"""
     p = g.player
     k = g.swing_t / SWORD_SWING_TIME if SWORD_SWING_TIME > 0 else 0.0
-    ang = {0: -90, 1: 90, 2: 180, 3: 0}[p.facing]
+    # pygame.draw.arc 是数学角（0 右 / 90 上 / -90 下 / 180 左），
+    # 与 sprites._draw_sword_arm 里 cos/sin 直接算屏幕坐标（90=下）相反，上下别写反。
+    ang = {0: 90, 1: -90, 2: 180, 3: 0}[p.facing]
     r = SWORD_RANGE * (0.7 + 0.3 * (1.0 - k))
     cx, cy = _cell_screen_center(g.board, *p.cell)
     a0 = math.radians(ang - 42)
