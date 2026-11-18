@@ -33,37 +33,38 @@ check("暗模块 (13,8) 恒为黑（v1 规范位置）", dark_mod_ok)
 check("同一内容重生成得到同一张码（segno 确定性）", roundtrip_ok)
 check("内容是固定的（%r）" % QR_CONTENT, contents == {QR_CONTENT},
       "%d 种：%s" % (len(contents), sorted(contents)[:3]))
-check("...全大写 + 空格（走字母数字模式，v1-L 能放 25 个）",
-      QR_CONTENT.isupper() and QR_CONTENT.replace(" ", "").isalnum(),
-      "%d 字符" % len(QR_CONTENT))
+check("...小写 + 符号 → 8 位字节模式（v1-L 最多 17 字节）",
+      not QR_CONTENT.isupper() and len(QR_CONTENT.encode("utf-8")) <= 17,
+      "%d 字节" % len(QR_CONTENT.encode("utf-8")))
 check("...所以每一局的棋盘都一模一样（确定性）",
       all(m == make_qr(QR_CONTENT) for m in [generate_target(rng)[0] for _ in range(3)]), "")
 
-# segno 默认会给短内容**偷偷升纠错等级**（L → Q），那样「7 个纠错码字 / 只能废 3 块」就不成立了
+# segno 默认会给短内容**偷偷升纠错等级**（L → Q/H），那样「7 个纠错码字 / 只能废 3 块」就不成立了。
+# 用一段短内容演示这个坑（URL 17 字节已顶满 L 容量，boost 升不上去，所以这里不能拿 QR_CONTENT 演示）。
 import segno
-q_boost = segno.make(QR_CONTENT, version=1, error="l")
-q_plain = segno.make(QR_CONTENT, version=1, error="l", boost_error=False)
-check("纠错等级恒为 L（boost_error=False 真的关掉了）", q_plain.error == "l".upper() or q_plain.error == "L",
-      "boost 开=%s / 关=%s" % (q_boost.error, q_plain.error))
-check("...而默认行为确实会升到 L 以上（这个坑是真的）", q_boost.error != q_plain.error,
-      "%s vs %s" % (q_boost.error, q_plain.error))
+_q_boost = segno.make("DATA SHIFT", version=1, error="l")
+_q_plain = segno.make("DATA SHIFT", version=1, error="l", boost_error=False)
+check("纠错等级恒为 L（boost_error=False 真的关掉了）", _q_plain.error in ("L", "l"),
+      "boost 开=%s / 关=%s" % (_q_boost.error, _q_plain.error))
+check("...而默认行为确实会升到 L 以上（这个坑是真的）", _q_boost.error != _q_plain.error,
+      "%s vs %s" % (_q_boost.error, _q_plain.error))
 
-# 容量：v1-L 字母数字 25 字符；一旦有小写就掉到字节模式（17）
-n = len(QR_CONTENT)
-check("...内容没超过 v1-L 的字母数字上限（25）", n <= 25, "%d 字符" % n)
+# 容量：URL 有小写 → 8 位字节模式，v1-L 上限 17 字节（不是字母数字的 25 字符）
+nbytes = len(QR_CONTENT.encode("utf-8"))
+check("...内容没超过 v1-L 的字节上限（17）", nbytes <= 17, "%d 字节" % nbytes)
 import segno as _s
 try:
-    _s.make("A" * 25, version=1, error="l", boost_error=False)
-    cap_ok = True
+    _s.make("a" * 17, version=1, error="l", boost_error=False)
+    byte_cap_ok = True
 except Exception:
-    cap_ok = False
+    byte_cap_ok = False
 try:
-    _s.make("A" * 26, version=1, error="l", boost_error=False)
-    over_ok = False
+    _s.make("a" * 18, version=1, error="l", boost_error=False)
+    byte_over_ok = False
 except Exception:
-    over_ok = True
-check("...实测上限正好是 25（26 个就溢出版本 1）", cap_ok and over_ok,
-      "25 通过=%s / 26 溢出=%s" % (cap_ok, over_ok))
+    byte_over_ok = True
+check("...实测字节上限正好是 17（18 就溢出版本 1）", byte_cap_ok and byte_over_ok,
+      "17 通过=%s / 18 溢出=%s" % (byte_cap_ok, byte_over_ok))
 
 # 必涂格集合：三个定位图案 + 暗模块 = 100，且全在真码的黑格上
 g = new_game()

@@ -130,7 +130,7 @@ LEAVE_LINE = (OLD_MAN,
 # ==== 5. 道具说明（拾取后显示）====
 
 ITEM_BAG = "BAG \u2014 you can carry what you find."
-ITEM_SWORD = "SWORD \u2014 it was waiting in the light."   # 第二幕结束的奖励（来源待作者定）
+ITEM_SWORD = "SWORD \u2014 the last Sequencer left it. He never finished."   # 第二幕结束的奖励：前任码序使留下（2026-11-18 定）
 
 
 def branch(on_altar):
@@ -193,8 +193,8 @@ DIALOG_THREE = [
     (OLD_MAN, "Keep them off me. And keep what you've already written \u2014 they'll take that too."),
     (SEQUENCER, "Who?"),
     (OLD_MAN, "Behind me."),
-    (OLD_MAN, "Yellow ones. They were on the old Altar when I got there. They think we stole it. "
-              "Maybe we did."),
+    (OLD_MAN, "Yellow ones. They guard what's left of the old Altar. I read the half-sentence off it "
+              "before it fell \u2014 they've been after me since."),
     (SEQUENCER, "They're coming."),
     (OLD_MAN, "They're already here. Don't let them reach the lines."),
 ]
@@ -219,7 +219,8 @@ A3_READ = "That\u2019s the reading. The rest is yours."             # 格式信�
 # 文案只负责把「他走了，读法留下来了」和「它不想让我把句子写完」这两句交代清楚。
 # 2026-11-16：紫怪从第二幕**延后到这里**首次登场（A4_PURPLE 介绍它），清行的痛感由 A4_M2 接。
 
-A4_M1 = ("He came back.\nHe keeps the frame. I keep the words.")
+A4_M1 = ("He came back.\nHe keeps the frame. I keep the words.\n"
+         "The frame is everyone's. The words are only mine.")   # 末行 2026-11-18 补：数据区=专属、骨架=通用
 A4_PURPLE = "That's not one of the red ones.\nIt's slower. It's looking at the lines."  # 紫怪首次进场
 A4_M2 = "It didn't take one cell.\nIt took the whole line."        # 第一次被紫怪清行
 A4_M3 = "Almost.\nDon't stop now."                                 # 剩下不到 15 格
@@ -229,11 +230,27 @@ A4_M3 = "Almost.\nDon't stop now."                                 # 剩下不�
 # 码被侵蚀掉几块。玩家第一次知道「这张码允许你错」—— 不是补完，是**够用**。
 
 A5_M1 = ("It's not eating the cells.\nIt's eating what they say.\n"
-         "Not all of it. Never all of it.")
+         "Not all of it. Never all of it.\n"
+         "If I don't remember in time... it's gone.")   # 2026-11-18：末行补「侵蚀=我自己的遗忘」
 A5_M2 = "Three blocks.\nThat's all it needs."                     # 第一次错误数 ≤ 容量（备用）
 A5_M3 = "Enough.\nLet it read."                                   # 进入扫描
 A5_FRAME = "The frame.\nLet him have it."                           # 骨架第一次被清坏：他管这一头（只一次）
 END_LINE = "IT READS:  %s"                                         # 结局页副标题：把这张码的内容念出来
+
+# ==== 第五幕尾声 · 老者消失（2026-11-18 新增）====
+# 码读出来了，记录的是码序者。老者记不住自己的数据区，于是「这张码里没有他」——
+# 他会消失，但不会变成怪物，因为还有人记得他。这是他最后一段话，逐句推进。
+EPILOGUE = [
+    "You finished it.\nYou won't be forgotten.",
+    "Me \u2014 I couldn't keep my own data.\nI'll be forgotten.\nBut not like them. Not one of them.",
+    "And you'll remember me.\nSo it's all right.",
+    "Goodbye, child.",
+]
+# 老者消失后，码序使的收尾独白：回应「你还记得我」，也为「把他也写下来」埋下彩蛋伏笔。
+EPILOGUE_LAST = "I'll remember.\nI'll write it down somewhere."
+# 全游戏最后一句：这张码 / 这一切，记的是「你来过」—— 主角失忆，码替它记住了它存在过。
+# 原主角码内容「YOU WERE HERE」（2026-11-19 已改成 URL），这句情感落点移到独白收尾。
+EPILOGUE_FINAL = "You were here."
 
 
 def act_title(act):

@@ -37,7 +37,7 @@ from src.config import (
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
     OLDMAN_HP, OLDMAN_REVIVE_TIME, SPAWN_ORIGIN,
     SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
-    TARGET_OFFSET, THREAT_Y, TIME_SLOW_CD, DASH_CD, VALID, WHITE, WINDOW_H, WINDOW_W
+    TARGET_OFFSET, THREAT_Y, TIME_SLOW_CD, DASH_CD, DECOY_CD, VALID, WHITE, WINDOW_H, WINDOW_W
 )
 from src.grid import cell_center, cell_to_rect, target_rect
 from src.qr import ERROR_TOLERANCE, finder_cores
@@ -1152,7 +1152,7 @@ def _draw_bottom(g, s):
             keys += "   [E] HOLD"
         if g.has_dash:
             keys += "   [Q] DASH"
-        if g.decoy_count > 0:
+        if g.has_decoy:
             keys += "   [F] DECOY"
         if g.scroll_count > 0:
             keys += "   [G] PULL"
@@ -1230,7 +1230,7 @@ def _draw_thread_icon(g, s, rect, count):
 def _draw_abilities(g, s, x, y):
     """技能区（物品栏下方）：4 个技能图标 + CD 遮罩 + 一次性道具数量。
 
-    常驻能力（时停/冲刺）显示冷却遮罩；一次性（诱饵/卷轴）显示剩余数量。
+    常驻能力（时停/冲刺/诱饵）显示冷却遮罩；一次性（卷轴）显示剩余数量。
     未解锁的格子显示暗占位。
     """
     txt(g, "ABILITIES", (x, y), g.f_small, C_DIM)
@@ -1242,7 +1242,7 @@ def _draw_abilities(g, s, x, y):
     abilities = [
         ("timeslow", g.has_time_slow, _cd_frac(g.time_slow_cd, TIME_SLOW_CD), None),
         ("dash", g.has_dash, _cd_frac(g.dash_cd, DASH_CD), None),
-        ("decoy", g.decoy_count > 0, None, g.decoy_count),
+        ("decoy", g.has_decoy, _cd_frac(g.decoy_cd, DECOY_CD), None),
         ("scroll", g.scroll_count > 0, None, g.scroll_count),
     ]
     for i, (kind, unlocked, cd, count) in enumerate(abilities):

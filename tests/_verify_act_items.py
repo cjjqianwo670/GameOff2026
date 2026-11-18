@@ -10,7 +10,7 @@ import pygame
 from _act1_common import auto_mono, check, finish, new_game, paint_ok, skip_intro
 from src import story
 from src.config import (
-    DASH_DIST, DECOY_HP, DECOY_LIFE, SC_E, SC_F, SC_G, SC_Q, TIME_SLOW_CD, TIME_SLOW_DURATION,
+    DASH_DIST, DECOY_HP, DECOY_LIFE, DECOY_CD, SC_E, SC_F, SC_G, SC_Q, TIME_SLOW_CD, TIME_SLOW_DURATION,
     TIME_SLOW_FACTOR, VALID, WHITE
 )
 from src.entities import Decoy, Monster
@@ -37,7 +37,7 @@ g = new_game()
 skip_intro(g)
 g.start_act2()
 check("第二幕：时停解锁、冲刺/诱饵/卷轴未解锁",
-      g.has_time_slow and not g.has_dash and g.decoy_count == 0 and g.scroll_count == 0)
+      g.has_time_slow and not g.has_dash and not g.has_decoy and g.scroll_count == 0)
 
 g3 = new_game()
 for (r, c) in sorted(g3.board.must):
@@ -61,7 +61,7 @@ for (r, c) in sorted(g4.must):
     if g4.board.state[r][c] != VALID:
         paint_ok(g4, r, c)
 g4.start_act4()
-check("第四幕：诱饵补 1 个", g4.decoy_count == 1 and g4.scroll_count == 0)
+check("第四幕：诱饵解锁", g4.has_decoy and g4.scroll_count == 0)
 
 g5 = new_game()
 for (r, c) in sorted(g5.board.must):
@@ -139,14 +139,13 @@ g4b.start_act3()
 g4b.start_act4()
 g4b.state = "BATTLE"
 g4b.mono_hold = False          # 关掉 A4_M1 独白
-g4b.decoy_count = 1
 # 找个坛内白格
 cell = next((r, c) for r in range(2, 23) for c in range(2, 23)
             if g4b.board.state[r][c] == WHITE and g4b.board.in_altar(r, c))
 put(g4b, cell)
 g4b.handle_event(ev(SC_F))
 check("按 F 在脚下放假黑域", g4b.board.state[cell[0]][cell[1]] == VALID, "%d" % g4b.board.state[cell[0]][cell[1]])
-check("诱饵计数 -1", g4b.decoy_count == 0, "%d" % g4b.decoy_count)
+check("诱饵进入冷却", g4b.decoy_cd > 0, "%.1f" % g4b.decoy_cd)
 check("诱饵进了清单", len(g4b.decoys) == 1, "%d" % len(g4b.decoys))
 # 到期自动消失
 run(g4b, DECOY_LIFE + 0.2)
@@ -162,7 +161,6 @@ g4d.start_act3()
 g4d.start_act4()
 g4d.state = "BATTLE"
 g4d.mono_hold = False
-g4d.decoy_count = 1
 cell3 = next((r, c) for r in range(2, 23) for c in range(2, 23)
              if g4d.board.state[r][c] == WHITE and g4d.board.in_altar(r, c))
 put(g4d, cell3)
@@ -197,7 +195,7 @@ check("诱饵血量耗尽 → 格子变白、实体摘掉",
       g4d.board.state[cell3[0]][cell3[1]] == WHITE and len(g4d.decoys) == 0,
       "%d / %d" % (g4d.board.state[cell3[0]][cell3[1]], len(g4d.decoys)))
 
-# 用完不能再放
+# 冷却中不能再放
 g4c = new_game()
 skip_intro(g4c)
 g4c.start_act2()
@@ -205,12 +203,12 @@ g4c.start_act3()
 g4c.start_act4()
 g4c.state = "BATTLE"
 g4c.mono_hold = False
-g4c.decoy_count = 0
+g4c.decoy_cd = 5.0              # 模拟冷却中
 cell2 = next((r, c) for r in range(2, 23) for c in range(2, 23)
              if g4c.board.state[r][c] == WHITE and g4c.board.in_altar(r, c))
 put(g4c, cell2)
 g4c.handle_event(ev(SC_F))
-check("没诱饵按 F 不放", g4c.board.state[cell2[0]][cell2[1]] == WHITE)
+check("冷却中按 F 不放", g4c.board.state[cell2[0]][cell2[1]] == WHITE)
 
 # ==================== 5. 修复卷轴 ====================
 g5b = new_game()

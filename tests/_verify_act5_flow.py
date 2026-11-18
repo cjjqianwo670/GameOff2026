@@ -139,7 +139,7 @@ for _ in range(int(SCAN_TIME * 60) + 120):
 check("扫描结束 → END", g4.state == "END", g4.state)
 check("...字幕是 ACT 5 — END", g4.banner_text == "ACT 5 — END", repr(g4.banner_text))
 check("...结局把这张码的内容念出来",
-      g4.end_line == "IT READS:  %s" % g4.qr_content.upper(), repr(g4.end_line))
+      g4.end_line == "IT READS:  %s" % g4.qr_content, repr(g4.end_line))
 check("...act_title(5) 也对", story.act_title(5) == "ACT 5 — END", story.act_title(5))
 g4.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
 check("...END 按回车回标题（全剧终）", g4.state == "TITLE", g4.state)
@@ -303,7 +303,7 @@ from src.config import QR_CONTENT, C_PAPER  # noqa: E402
 from src.qr import make_qr  # noqa: E402
 from src import ui as _ui  # noqa: E402
 
-check("这张码的内容是固定的那句话", QR_CONTENT == "YOU WERE HERE", repr(QR_CONTENT))
+check("这张码的内容是固定的那个网址", QR_CONTENT == "https://he-r.link", repr(QR_CONTENT))
 
 gE = new_game()
 gE.act = 5

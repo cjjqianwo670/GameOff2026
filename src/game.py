@@ -39,7 +39,7 @@ from src.config import (
     RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
     RED_SPD_JITTER,
     GREEN_FIRST_DELAY, GREEN_HIT_DAMAGE, GREEN_SPAWN_PER_MIN, GREEN_SPEED,
-    TIME_SLOW_DURATION, TIME_SLOW_FACTOR, TIME_SLOW_CD, DASH_DIST, DASH_CD, DECOY_LIFE, DECOY_HP,
+    TIME_SLOW_DURATION, TIME_SLOW_FACTOR, TIME_SLOW_CD, DASH_DIST, DASH_CD, DECOY_LIFE, DECOY_HP, DECOY_CD,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
     SC_H, SC_I, SC_Q, SC_E, SC_F, SC_G, SC_SHIFT, SC_SPACE, SC_T, SC_U, SC_UP, SC_DOWN, SC_W, SC_S, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
     SPAWN_PX,
@@ -153,6 +153,7 @@ class Game:
         self.menu_t = 0.0
         self.pause_sel = 0                     # 暂停菜单：当前高亮项 0继续/1重开本幕/2退出
         self.pause_prev = ""                   # 暂停菜单：进菜单前的状态（继续时回去）
+        self.epilogue_i = 0                    # 第五幕尾声：老者告别说到第几句
         self.rng = random.Random()
         self.target = []
         self.qr_content = ""
@@ -170,11 +171,12 @@ class Game:
         # 道具（2026-11-16 作者定：每幕一个新，固定字母键）
         self.has_time_slow = False                    # 时停(E)：第二幕解锁
         self.has_dash = False                         # 冲刺(Q)：第三幕解锁
-        self.decoy_count = 0                          # 诱饵(F)：一次性，每幕补 1
+        self.has_decoy = False                        # 诱饵(F)：第四幕解锁（CD 技能，2026-11-19）
         self.scroll_count = 0                         # 修复卷轴(G)：一次性，每幕补 1
         self.time_slow_t = 0.0                        # 时停剩余时长（>0 正在生效）
         self.time_slow_cd = 0.0                       # 时停冷却
         self.dash_cd = 0.0                            # 冲刺冷却
+        self.decoy_cd = 0.0                           # 诱饵冷却
         self.decoys = []                              # 场上还活着的诱饵
         self.dlg_after = None                         # 对话结束之后去哪（第三幕说完就开打）
         # 第三幕：老者替你写格式信息
@@ -379,10 +381,10 @@ class Game:
         self.mini_wave = False                       # 第一幕第一波那种「只放波、不放道具」的清屏
         self.items = []
         self.has_bag = self.has_sword = False
-        self.has_time_slow = self.has_dash = False
-        self.decoy_count = self.scroll_count = 0
+        self.has_time_slow = self.has_dash = self.has_decoy = False
+        self.scroll_count = 0
         self.time_slow_t = self.time_slow_cd = 0.0
-        self.dash_cd = 0.0
+        self.dash_cd = self.decoy_cd = 0.0
         self.decoys = []
         self.format_cells = set()
         self.format_seen = set()
@@ -573,12 +575,14 @@ class Game:
         self.time_slow_t = 0.0
         self.time_slow_cd = 0.0
         self.dash_cd = 0.0
+        self.decoy_cd = 0.0
         self.decoys = []
         if act >= 2:
             self.has_time_slow = True                 # 第二幕：时停(E)
         if act >= 3:
             self.has_dash = True                      # 第三幕：冲刺(Q)
-        self.decoy_count = 1 if act >= 4 else 0       # 第四幕：诱饵(F)，每幕 1 个
+        if act >= 4:
+            self.has_decoy = True                     # 第四幕：诱饵(F)，CD 技能
         self.scroll_count = 1 if act >= 5 else 0      # 第五幕：修复卷轴(G)，每幕 1 个
 
     def start_act2(self):
@@ -770,7 +774,7 @@ class Game:
         self.say(story.A5_M3)
 
     def update_scan(self, dt):
-        """扫描束从上往下走一遍：走完就进结局。
+        """扫描束从上往下走一遍：走完就进尾声（老者消失），之后才是结局页。
 
         ⚠️ 扫描期间**侵蚀暂停**（`tick_erode` 只在 `update_battle` 里走）。
         理由是公平：玩家看不见「还有几秒被侵蚀」，拿一个看不见的计时器去断他最后 2.6 秒，
@@ -779,10 +783,41 @@ class Game:
         self.scan_t += dt
         if self.scan_t < SCAN_TIME:
             return
-        self.state = "END"
+        # 码读出来了，记录的是码序者。老者记不住自己的数据区 → 尾声：他告别、消失。
+        self.state = "EPILOGUE"
+        self.epilogue_i = 1                       # 第一句已说，下一句是 EPILOGUE[1]
         self.menu_t = 0.0
-        self.show_banner(story.ACT5_TITLE, 999.0)
-        self.end_line = story.END_LINE % self.qr_content.upper()
+        self.claims.clear()
+        self.say(story.EPILOGUE[0], who=story.OLD_MAN)
+
+    def advance_epilogue(self):
+        """尾声推进：老者逐句告别 → 说完消失 → 主角收尾独白 → 「你来过」→ 进结局页。
+
+        epilogue_i 的语义 = 「下一句该说第几句」：
+          0~3 → 老者告别（EPILOGUE[0..3]）
+          4   → 主角收尾独白（EPILOGUE_LAST）
+          5   → 最后一句「You were here.」（EPILOGUE_FINAL）
+          6   → 尾声结束，进结局页（END）
+        """
+        if self.epilogue_i < len(story.EPILOGUE):
+            self.say(story.EPILOGUE[self.epilogue_i], who=story.OLD_MAN)
+            self.epilogue_i += 1
+        elif self.epilogue_i == len(story.EPILOGUE):
+            # 告别说完：老者消失（这张码里没有他）
+            if self.oldman is not None:
+                self.oldman.gone = True
+            self.epilogue_i += 1
+            self.say(story.EPILOGUE_LAST)
+        elif self.epilogue_i == len(story.EPILOGUE) + 1:
+            # 主角收尾独白也说完：最后落点是「你来过」
+            self.epilogue_i += 1
+            self.say(story.EPILOGUE_FINAL)
+        else:
+            # 「你来过」也说完：进结局页
+            self.state = "END"
+            self.menu_t = 0.0
+            self.show_banner(story.ACT5_TITLE, 999.0)
+            self.end_line = story.END_LINE % self.qr_content
 
     def pick_repair_target(self):
         """挑下一个要补的结构格：离他最近的、该黑却是白的。全好了就返回 None。"""
@@ -970,7 +1005,7 @@ class Game:
             "thread": self.thread_count,  # 界丝数量：第二幕起贯穿始终，回检查点不能丢
             "time_slow": self.has_time_slow,   # 道具：跨检查点保留解锁状态
             "dash": self.has_dash,
-            "decoy": self.decoy_count,          # 一次性消耗品：数量也要回检查点不丢
+            "decoy": self.has_decoy,          # 道具：跨检查点保留解锁状态
             "scroll": self.scroll_count,
         }
 
@@ -1004,11 +1039,12 @@ class Game:
         self.thread_count = cp.get("thread", 0)
         self.has_time_slow = cp.get("time_slow", False)
         self.has_dash = cp.get("dash", False)
-        self.decoy_count = cp.get("decoy", 0)
+        self.has_decoy = cp.get("decoy", False)
         self.scroll_count = cp.get("scroll", 0)
         self.time_slow_t = 0.0
         self.time_slow_cd = 0.0
         self.dash_cd = 0.0
+        self.decoy_cd = 0.0
         self.decoys = []
         self.thread_bridge = None
         self.thread_cast_t = 0.0
@@ -1195,7 +1231,12 @@ class Game:
         # 心声暂停中：世界停着，只认回车（继续）
         if self.mono_hold:
             if sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
-                self.advance_monologue()
+                # 尾声（EPILOGUE）：第一下补完字，第二下推进到下一句/收尾
+                if st == "EPILOGUE" and self.mono_elapsed >= self.mono_type_time:
+                    self.mono_hold = False
+                    self.advance_epilogue()
+                else:
+                    self.advance_monologue()
             return
         if st == "INTRO":
             return
@@ -1217,8 +1258,8 @@ class Game:
             self.try_time_slow()            # 道具：时停
         elif sc == SC_Q and self.has_dash and st in PAINT_STATES:
             self.try_dash()                 # 道具：冲刺
-        elif sc == SC_F and self.decoy_count > 0 and st in PAINT_STATES:
-            self.try_decoy()                # 道具：诱饵
+        elif sc == SC_F and self.has_decoy and st in PAINT_STATES:
+            self.try_decoy()                # 道具：诱饵（CD 技能）
         elif sc == SC_G and self.scroll_count > 0 and st in PAINT_STATES:
             self.try_scroll()               # 道具：修复卷轴
 
@@ -1280,7 +1321,7 @@ class Game:
             return
         self.anim_t += dt                            # 贴图动画的时基：所有相位都在走
         st = self.state
-        if st in ("TITLE", "DEAD", "END"):
+        if st in ("TITLE", "DEAD", "END", "EPILOGUE"):
             self.menu_t += dt
             return
 
@@ -1374,6 +1415,8 @@ class Game:
             self.time_slow_cd = max(0.0, self.time_slow_cd - dt)
         if self.dash_cd > 0:
             self.dash_cd = max(0.0, self.dash_cd - dt)
+        if self.decoy_cd > 0:
+            self.decoy_cd = max(0.0, self.decoy_cd - dt)
         if self.awaken_t > 0:
             self.awaken_t = max(0.0, self.awaken_t - dt)
 
@@ -2184,7 +2227,9 @@ class Game:
             self.audio.play("ui")
 
     def try_decoy(self):
-        """诱饵(F)：在脚下放一个有血量的假黑域方块，强吸引怪物来攻击它。"""
+        """诱饵(F)：在脚下放一个有血量的假黑域方块，强吸引怪物来攻击它。冷却 DECOY_CD。"""
+        if self.decoy_cd > 0:
+            return
         r, c = self.player.cell
         if not self.board.in_altar(r, c):
             return
@@ -2192,7 +2237,7 @@ class Game:
             return
         self.board.state[r][c] = VALID
         self.decoys.append(Decoy((r, c)))
-        self.decoy_count -= 1
+        self.decoy_cd = DECOY_CD
         self.audio.play("ui")
 
     def try_scroll(self):
