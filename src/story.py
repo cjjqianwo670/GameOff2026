@@ -164,6 +164,22 @@ AWAKEN = {
     "scroll": ("PULL BACK", "[G]"),
 }
 
+# 按键教学动画（2026-11-20）：键帽文本 + 右侧短标签，画法在 ui.py。
+# 元组 = (短标签, 键帽文本)；E/Q/F/G 四技能走觉醒横幅（AWAKEN），不在此列。
+TEACH = {
+    "move":    ("MOVE",    "WASD"),
+    "shift":   ("ANOMALY", "SHIFT"),
+    "write":   ("DARK",    "J"),
+    "erase":   ("ERASE",   "K"),
+    "call":    ("CALL",    "T"),
+    "pick":    ("PICK UP", "B"),
+    "bridge":  ("SPAN",    "I"),
+    "sword":   ("SWORD",   "U"),
+    "revive":  ("HELP",    "H"),
+    "sweep":   ("SWEEP",   "HOLD J"),
+    "holdfmt": ("HOLD",    "HOLD J"),
+}
+
 # 核心被破坏 / 修复（2026-11-15 作者定的「核心」机制）
 CORE_BROKEN = "The core broke.\nThat slab is loose."          # 板块分离（飘字）
 CORE_FIXED = "The core holds.\nThe slab is whole again."      # 补满核心、板块合回（飘字）
@@ -171,13 +187,13 @@ CORE_FIXED = "The core holds.\nThe slab is whole again."      # 补满核心、�
 
 
 # ==== 第三幕（2026-11-12 新增，草稿见 DATA_SHIFT_第三幕英文文案.md）====
-# 老者回来了，带回「怎么读这张码」，替码序使写格式信息；追兵（黄怪，M2）随后就到。
+# 老者回来了，带回「怎么读这张码」，替码序使写整副骨架（定位+定时+暗模块+格式，2026-11-19 起）；追兵（黄怪，M2）随后就到。
 #
 # 能力设定（2026-11-15 作者定，解决「他没能力了为什么还能写」的矛盾）：
 #   · 「召唤异象（照灰域）」是码序者独有的天赋，也是唯一在衰退的能力
 #   · 「写黑域」是照着灰域落笔的机械活，谁都能做
 #   · 老者写了几十年，把「召唤异象」的感知力烧到几乎没了 —— 还能写，但看不见该写哪
-#   · 所以第三幕他只能写「背得下来的」格式信息（固定、异象照不出来、按顺序记），
+#   · 所以第三幕他只能写「背得下来的」整副骨架（定位/定时/暗模块/格式都是固定结构，异象照不出来），
 #     数据区要现照现写，那是码序使（玩家）的活。第一幕台词已按此埋下伏笔。
 
 DIALOG_THREE = [
@@ -210,7 +226,7 @@ A3_UP = "Up. Come on. Up."                                           # ⚠️ �
                                                                   # 反而救不起来（见 Game.update_revive）
 A3_UP_MAN = "Still here. Keep going."                              # 他站起来之后自己回一句
 A3_STAGGER = "Ah\u2014 hold on. I lost the line."                   # 第一次被咬断（笔停在半空）
-A3_READ = "That\u2019s the reading. The rest is yours."             # 格式信息写完：剩下的归玩家
+A3_READ = "That\u2019s the reading. The rest is yours."             # 整副骨架写完：剩下的归玩家
 
 
 # ==== 第四幕（2026-11-14 新增）====
@@ -221,6 +237,10 @@ A3_READ = "That\u2019s the reading. The rest is yours."             # 格式信�
 
 A4_M1 = ("He came back.\nHe keeps the frame. I keep the words.\n"
          "The frame is everyone's. The words are only mine.")   # 末行 2026-11-18 补：数据区=专属、骨架=通用
+# 第四幕起脏格不再有（2026-11-20）：前三幕「闭眼写=脏格扣血」是教学期的纠错，
+# 这一幕换成「扫灰域、盲格跳过」—— 主角已学会先看清再落笔，惩罚自然退场。
+# 呼应第一幕 MONO_BLIND「I should look first」，是同一句的成长闭环。
+A4_NO_STAIN = "No more stains. I've learned to look first."
 A4_PURPLE = "That's not one of the red ones.\nIt's slower. It's looking at the lines."  # 紫怪首次进场
 A4_M2 = "It didn't take one cell.\nIt took the whole line."        # 第一次被紫怪清行
 A4_M3 = "Almost.\nDon't stop now."                                 # 剩下不到 15 格

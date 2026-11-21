@@ -10,12 +10,13 @@
 
 ---
 
-## 0. 译名表（在第一幕的基础上只新增两条）
+## 0. 译名表（在第一幕的基础上新增三条）
 
 | 中文 | English | 说明 |
 | --- | --- | --- |
 | 定时图案 | **the timing pattern** | QR 第 6 行 / 第 6 列那两条交替的黑格。专有名词，小写 t |
 | 紫色生物 | **the purple one** | **不给学名**。跟「the red ones」同一逻辑；它一次只来一只，所以用单数 |
+| 绿色生物 | **the green one** | **不给学名**。第二幕起低频登场，一次清 3×3（红怪的面扩展版） |
 
 沿用第一幕：`Sequencer` / `the Altar` / `the Dark` / `the Anomaly` / `the grey` / `a stain` / `the plain` / `the old man` / `the red ones` / `erosion`。
 
@@ -36,11 +37,12 @@
 | --- | --- | --- | --- |
 | **A2\_****M1** ✅ | 第二幕开场，光退下去之后（**作者已确认**） | `The old man hasn't come back.`<br>`The three corners are still here.`<br>`Something between them is missing.` | 老者没有回来。三个角还在，但角与角之间少了什么。 |
 | **A2\_****M2** | 第一次照出定时图案的绿框 | `Two lines.`<br>`They run between the corners.`<br>`I never looked there.` | 两条线，从角与角之间穿过去。我从来没往那儿看过。 |
+| **A2\_****GREEN** | 绿怪第一次进场（第二幕低频，清 3×3） | `That one's green.`<br>`It eats a whole patch.` | 那是绿色的。它吃一整片。 |
 | ~~**A2\_**~~~~**M3**~~ | ~~紫色生物第一次出现~~ | `That's not one of the red ones.`<br>`It's slower. It's looking at the lines.` | ~~那不是红色生物。它更慢，而且它在看那两条线。~~ |
 | ~~**A2\_**~~~~**M4**~~ | ~~第一次被清掉一整条之后~~ | `It didn't take one cell.`<br>`It took the whole line.` | ~~它不是拿走一格。它拿走了整条。~~ |
 
 > **2026-11-16 变更**：紫怪从第二幕**延后到第四幕**。`A2_M3` / `A2_M4` 两条台词随之挪到第四幕
-> （`A2_M3` → `A4_PURPLE`，`A2_M4` → 并入 `A4_M2`）。第二幕只剩红怪（咬核心→板块分离）。
+> （`A2_M3` → `A4_PURPLE`，`A2_M4` → 并入 `A4_M2`）。第二幕剩红怪（咬核心→板块分离）+ 绿怪（低频、清 3×3）。
 
 **2026-11-12 补充**（原系统提示改成嘀咕）：
 

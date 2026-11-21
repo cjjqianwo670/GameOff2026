@@ -10,6 +10,7 @@
 """
 
 import math
+import types
 from typing import TYPE_CHECKING
 
 import pygame
@@ -37,7 +38,9 @@ from src.config import (
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
     OLDMAN_HP, OLDMAN_REVIVE_TIME, SPAWN_ORIGIN,
     SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
-    TARGET_OFFSET, THREAT_Y, TIME_SLOW_CD, DASH_CD, DECOY_CD, VALID, WHITE, WINDOW_H, WINDOW_W
+    TARGET_OFFSET, THREAT_Y, TIME_SLOW_CD, DASH_CD, DECOY_CD, VALID, WHITE, WINDOW_H, WINDOW_W,
+    TEACH_TIME, TEACH_FADE_IN, TEACH_FADE_OUT, TEACH_PULSE_HZ, TEACH_LOOP,
+    TEACH_PLATE_W, TEACH_PLATE_H, TEACH_DEMO_CELL
 )
 from src.grid import cell_center, cell_to_rect, target_rect
 from src.qr import ERROR_TOLERANCE, finder_cores
@@ -1158,7 +1161,19 @@ def _draw_bottom(g, s):
             keys += "   [G] PULL"
         txt(g, keys, (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
-            txt(g, g.prompt_text, (PLAY_W - 16, HINT_Y - 6), g.f_prompt, C_ACCENT, right=True)
+            if g.prompt_text == story.PROMPT_CALL and g.oldman is not None and not g.oldman.gone:
+                # T 呼叫提示：放在老者头顶附近，跟着老者走
+                ox, oy = int(g.oldman.pos.x), int(g.oldman.pos.y)
+                img = g.f_prompt.render(g.prompt_text, True, C_ACCENT)
+                r = img.get_rect(center=(ox, oy - 64))
+                # 贴近边缘时把提示夹在窗口内，避免文字出界被裁掉
+                r.left = max(r.left, 6)
+                r.right = min(r.right, WINDOW_W - 6)
+                r.top = max(r.top, 6)
+                g.screen.blit(img, r)
+            else:
+                # 其他操作提示（PRESS [J] / [B] 之类）：棋盘下方居中
+                center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y - 100), g.f_prompt, C_ACCENT)
 
     # 心声：暂停中（mono_hold）时 mono_t 是 0，所以两个条件都要认
     if g.mono_text and (g.mono_hold or g.mono_t > 0):
@@ -1168,6 +1183,7 @@ def _draw_bottom(g, s):
         _draw_hint(g, s)
 
     _draw_awaken(g, s)
+    _draw_teach_anim(g, s)
 
     if g.debug:
         txt(g, "FPS %d  CELL %d,%d  QR %s  STATE %s  WAVE %.0f  LAST SC %d" % (
@@ -1447,6 +1463,9 @@ def _draw_awaken(g, s):
     icx = 14 + icon_r
     pygame.draw.circle(surf, C_BAG_SLOT, (icx, bh // 2), icon_r + 4)
     pygame.draw.circle(surf, C_PANEL_LINE, (icx, bh // 2), icon_r + 4, 1)
+    # 图标脉冲（2026-11-20）：呼吸光环，让觉醒横幅的图标动起来
+    k = 0.5 + 0.5 * math.sin((g.awaken_total - g.awaken_t) * 2 * math.pi * TEACH_PULSE_HZ)
+    pygame.draw.circle(surf, (*C_ACCENT, int(90 * k)), (icx, bh // 2), icon_r + 7 + int(3 * k), 1)
     sprites.draw_ability_icon(surf, g.awaken_kind, icx, bh // 2)
     # 文字：两行居中于图标右侧区域
     tx = icon_r * 2 + 28
@@ -1456,6 +1475,161 @@ def _draw_awaken(g, s):
 
     surf.set_alpha(alpha)
     s.blit(surf, plate)
+
+
+def _draw_teach_anim(g, s):
+    """按键教学动画：独立窗口，顶部键帽 + 下方码序者角色演示。纯叠加，不冻世界。"""
+    if g.teach_t <= 0 or not g.teach_kind:
+        return
+    label, key = story.TEACH.get(g.teach_kind, ("", ""))
+    if not key:
+        return
+    tl = g.teach_total - g.teach_t                  # 已播时长（本地时间）
+    alpha = int(255 * min(1.0, tl / TEACH_FADE_IN, g.teach_t / TEACH_FADE_OUT))
+    if alpha <= 0:
+        return
+
+    bw, bh = TEACH_PLATE_W, TEACH_PLATE_H
+    plate = pygame.Rect(0, 0, bw, bh)
+    plate.center = (PLAY_W // 2, WINDOW_H // 2)     # 世界区正中央
+
+    surf = pygame.Surface((bw, bh), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (10, 16, 26, 232), surf.get_rect(), border_radius=12)
+    pygame.draw.rect(surf, C_PANEL_LINE, surf.get_rect(), 1, border_radius=12)
+
+    # 顶部：键帽 + 标签
+    k = 0.5 + 0.5 * math.sin(tl * 2 * math.pi * TEACH_PULSE_HZ)
+    key_img = g.f_small.render(key, True, C_ACCENT)
+    kw = key_img.get_width() + 18
+    key_box = pygame.Rect(18, 20, kw, 28)
+    pygame.draw.circle(surf, (*C_ACCENT, int(60 * k)), (key_box.centerx, 34), 20 + int(4 * k))
+    right = _keycap(surf, g, key, 18, 34, color=C_ACCENT)
+    img = g.f_main.render(label, True, C_TEXT)
+    surf.blit(img, img.get_rect(midleft=(right + 14, 34)))
+
+    # 舞台：码序者角色演示区
+    stage = pygame.Rect(16, 64, bw - 32, bh - 64 - 14)
+    _teach_effect(surf, g.teach_kind, stage, tl)
+
+    surf.set_alpha(alpha)
+    s.blit(surf, plate)
+
+
+def _teach_effect(surf, kind, rect, tl):
+    """按键教学动画的舞台：3 个格子 + 一个码序者角色演示该按键的动作。"""
+    cw = TEACH_DEMO_CELL
+    p = (tl % TEACH_LOOP) / TEACH_LOOP              # 0→1 循环
+
+    # 3 个格子横排，居中于舞台；角色脚踩在格子顶边
+    stage_w = 3 * cw
+    sx = rect.centerx - stage_w // 2
+    gy = rect.bottom - cw
+    cells = []
+    for i in range(3):
+        cr = pygame.Rect(sx + i * cw, gy, cw, cw)
+        cells.append(cr)
+        pygame.draw.rect(surf, C_CELL_WHITE, cr)
+        pygame.draw.rect(surf, C_CELL_LINE, cr, 1)
+    cy = gy - 10                                    # 角色站姿：脚落在格子上
+
+    if kind == "move":
+        f = min(1.0, p / 0.6)
+        x = cells[0].centerx + int((cells[2].centerx - cells[0].centerx) * f)
+        sprites.draw_sequencer(surf, x, cy, facing=3, t=tl, moving=f < 1.0)
+    elif kind == "shift":
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
+        # 扩散照出灰域：光圈从角色脚下向外扫，格子被扫到时点亮成灰，再整体淡出
+        cx_mid = cells[1].centerx
+        max_r = cw * 1.5 + 6
+        if p < 0.55:
+            radius = int(4 + (p / 0.55) * (max_r - 4))   # 0→扩散到盖住三格
+            fade = 1.0
+        else:
+            radius = int(max_r)
+            fade = max(0.0, 1.0 - (p - 0.55) / 0.45)     # 0.55→1 灰域淡出
+        for cr in cells:
+            if abs(cr.centerx - cx_mid) <= radius:
+                shade = pygame.Surface((cw, cw), pygame.SRCALPHA)
+                shade.fill((*C_MIRAGE, int(120 * fade)))
+                surf.blit(shade, cr)
+                pygame.draw.rect(surf, C_CELL_LINE, cr, 1)
+        pygame.draw.circle(surf, C_ACCENT, (cx_mid, cy), radius, 1)
+    elif kind == "write":
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
+        frac = min(1.0, p / 0.5)
+        fill = pygame.Rect(cells[1].x, cells[1].bottom - int(cw * frac), cw, int(cw * frac))
+        pygame.draw.rect(surf, C_CELL_BLACK, fill)
+        pygame.draw.rect(surf, C_CELL_LINE, cells[1], 1)
+    elif kind == "erase":
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
+        if p < 0.3:
+            pygame.draw.rect(surf, C_CELL_BLACK, cells[1])
+            pygame.draw.line(surf, C_ERASING, cells[1].topleft, cells[1].bottomright, 2)
+            pygame.draw.line(surf, C_ERASING, cells[1].topright, cells[1].bottomleft, 2)
+        elif p < 0.6:
+            pygame.draw.rect(surf, C_CELL_WHITE, cells[1])
+            pygame.draw.line(surf, C_ERASING, cells[1].topleft, cells[1].bottomright, 2)
+            pygame.draw.line(surf, C_ERASING, cells[1].topright, cells[1].bottomleft, 2)
+        else:
+            pygame.draw.rect(surf, C_CELL_WHITE, cells[1])
+        pygame.draw.rect(surf, C_CELL_LINE, cells[1], 1)
+    elif kind == "call":
+        # 码序者（左）与老者（右）面对面，两人之间冒出对话气泡
+        sprites.draw_sequencer(surf, cells[0].centerx, cy, facing=3, t=tl)
+        om = types.SimpleNamespace(pos=pygame.math.Vector2(cells[2].centerx, cy - 2),
+                                   facing=2, staff_t=0.0)
+        sprites.draw_oldman(surf, om, t=tl)
+        # 对话气泡：省略号 1→2→3 个点循环
+        bx = cells[1].centerx
+        bubble = pygame.Rect(0, 0, 24, 15)
+        bubble.center = (bx, cy - 2)
+        pygame.draw.rect(surf, C_CELL_WHITE, bubble, border_radius=4)
+        pygame.draw.rect(surf, C_CELL_LINE, bubble, 1, border_radius=4)
+        pygame.draw.polygon(surf, C_CELL_WHITE,
+                            [(bx - 3, bubble.bottom - 1), (bx + 3, bubble.bottom - 1), (bx, bubble.bottom + 4)])
+        pygame.draw.line(surf, C_CELL_LINE, (bx - 3, bubble.bottom - 1), (bx, bubble.bottom + 4), 1)
+        pygame.draw.line(surf, C_CELL_LINE, (bx + 3, bubble.bottom - 1), (bx, bubble.bottom + 4), 1)
+        n = 1 + (int(p * 4) % 3)
+        for i in range(n):
+            pygame.draw.circle(surf, C_CELL_BLACK, (bubble.centerx - 3 + i * 3, bubble.centery + 1), 1)
+    elif kind == "pick":
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
+        y = gy - int(22 * min(1.0, p / 0.5))
+        sq = pygame.Rect(0, 0, 8, 8)
+        sq.center = (cells[1].centerx, y)
+        pygame.draw.rect(surf, C_ITEM, sq)
+    elif kind == "bridge":
+        sprites.draw_sequencer(surf, cells[0].centerx, cy, facing=3, t=tl)
+        f = min(1.0, p / 0.6)
+        x2 = cells[0].centerx + int((cells[2].centerx - cells[0].centerx) * f)
+        pygame.draw.line(surf, C_THREAD, (cells[0].centerx, gy - 2), (x2, gy - 2), 2)
+    elif kind == "sword":
+        swing = max(0.0, 1.0 - min(1.0, p / 0.6))
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=3, t=tl, has_sword=True, swing=swing)
+    elif kind == "revive":
+        sprites.draw_sequencer(surf, cells[0].centerx, cy, facing=3, t=tl)
+        pygame.draw.circle(surf, C_PANEL_LINE, cells[2].center, cw // 2 - 2, 2)
+        pygame.draw.arc(surf, C_ACCENT, cells[2].inflate(-4, -4),
+                        -math.pi / 2, -math.pi / 2 + 2 * math.pi * p, 2)
+    elif kind == "sweep":
+        f = min(1.0, p / 0.8)
+        swept = min(2, int(f * 3))
+        for i in range(swept + 1):
+            pygame.draw.rect(surf, C_CELL_BLACK, cells[i])
+            pygame.draw.rect(surf, C_CELL_LINE, cells[i], 1)
+        x = cells[0].centerx + int((cells[2].centerx - cells[0].centerx) * f)
+        sprites.draw_sequencer(surf, x, cy, facing=3, t=tl, moving=True)
+    elif kind == "holdfmt":
+        sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
+        if p < 0.8:
+            f = p / 0.8
+            fill = pygame.Rect(cells[1].x + 3, cells[1].bottom - 3 - int((cw - 6) * f),
+                               cw - 6, int((cw - 6) * f))
+            pygame.draw.rect(surf, C_ACCENT, fill)
+        else:
+            pygame.draw.rect(surf, C_CELL_BLACK, cells[1])
+        pygame.draw.rect(surf, C_CELL_LINE, cells[1], 1)
+
 
 # ==== 对话框 ====
 

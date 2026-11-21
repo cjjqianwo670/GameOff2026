@@ -7,7 +7,7 @@ Game Off 2026 · theme **SHIFT** · Python + pygame · 5 acts · English UI
 > **开发状态（2026-11-14）**
 > **五幕全部能玩了**，从 `TITLE` 一路到 `ACT 5 — END`：
 > 学异象 → 补定时图案 → 守老者写格式信息 → 扫完数据区 → **把它读出来**。
-> **30 个验证脚本 984 项全绿**（跑法：`python tests/_run_all.py`，只认「全绿：984 / 984」这一行）。
+> **30 个验证脚本 982 项全绿**（跑法：`python tests/_run_all.py`，只认「全绿：982 / 982」这一行）。
 > 接手开发 / 交接给别的 AI → 先读[交接说明](https://www.workbuddy.cn/space/d/6hngpYcwDnAANNOdDKKVTi)；完整技术档案在[工作日志](https://www.workbuddy.cn/space/d/86LmxEKjgD0ZNHfnEic6t8)（都在资料库）。
 
 ---
@@ -184,27 +184,27 @@ config ──> grid ──> board ──┐
 | 文件 | 行 | 职责 |
 |---|---|---|
 | `src/__init__.py` | 5 | 空包标记 |
-| `src/config.py` | 403 | 全部常量、颜色（含角色分层配色与纸色）、幕参数、异象/脏格/血量、`QR_CONTENT` |
+| `src/config.py` | 418 | 全部常量、颜色（含角色分层配色与纸色）、幕参数、异象/脏格/血量、`QR_CONTENT` |
 | `src/grid.py` | 43 | 坐标换算 4 个函数 |
-| `src/qr.py` | 288 | 用 `segno` 生成真二维码（内容固定 `YOU WERE HERE`、纠错恒 L）+ `required_cells()` 算必涂格 + 格→码字映射 |
+| `src/qr.py` | 288 | 用 `segno` 生成真二维码（内容固定 `https://he-r.cn`、纠错恒 L）+ `required_cells()` 算必涂格 + 格→码字映射 |
 | `src/board.py` | 348 | 四态棋盘、进度、涂改、抹除、灰域计时、脏格累计、快照 |
-| `src/input_state.py` | 67 | 键盘状态（只认 scancode） |
-| `src/entities.py` | 625 | 玩家、怪物（红怪 `eat`/`hunt`）、老者、过场红怪、道具、诱饵（**只存状态**） |
-| `src/ui.py` | 1623 | 所有绘制（含开始页、右侧面板、对话框、终幕那张能扫的码） |
+| `src/input_state.py` | 97 | 键盘状态（只认 scancode） |
+| `src/entities.py` | 634 | 玩家、怪物（红怪 `eat`/`hunt`）、老者、过场红怪、道具、诱饵（**只存状态**） |
+| `src/ui.py` | 1825 | 所有绘制（含开始页、右侧面板、对话框、终幕那张能扫的码） |
 | `src/sprites.py` | 548 | **三个角色的像素级画法**（影子/剪影/体积/高光/描边，全部图元现画） |
 | `src/sfx.py` | 248 | **程序合成音效**（标准库，不引 numpy），`build(name)` → WAV bytes |
-| `src/game.py` | 2494 | 13 个相位、对话推进、检查点、每帧更新、贴图时基、音效分发 |
-| `src/story.py` | 247 | **五幕全部英文文案**（第一幕 22 条对话 + 双支线、第二~五幕独白与提示、`act_title()`、`END_LINE`） |
+| `src/game.py` | 2655 | 13 个相位、对话推进、检查点、每帧更新、贴图时基、音效分发 |
+| `src/story.py` | 284 | **五幕全部英文文案**（第一幕 22 条对话 + 双支线、第二~五幕独白与提示、`act_title()`、`END_LINE`） |
 | `src/main.py` | 69 | 开窗口 + 主循环 |
 
-共 **7008 行**。第一幕需要的对话系统、物品栏、检查点、右侧面板都落在现有模块里；
+共 **7462 行**。第一幕需要的对话系统、物品栏、检查点、右侧面板都落在现有模块里；
 新开的文件是 `sprites.py`（角色贴图）和 `sfx.py`（音效），都只碰呈现层、不碰规则。
 
 另外两个目录（2026-11-14 从工作区搬进仓库 —— 在那之前，项目还依赖仓库外的测试脚本和文案）：
 
 | 目录 | 是什么 |
 |---|---|
-| `tests/` | **30 个验证脚本 / 984 项断言**：`_verify_act*.py` + 公共部分 `_act1_common.py` + 跑全量的 `_run_all.py` + 全流程冒烟 `_smoke_full_run.py`。跑法 `.venv/Scripts/python.exe tests/_run_all.py`（**只认「全绿：984 / 984」这一行**） |
+| `tests/` | **30 个验证脚本 / 982 项断言**：`_verify_act*.py` + 公共部分 `_act1_common.py` + 跑全量的 `_run_all.py` + 全流程冒烟 `_smoke_full_run.py`。跑法 `.venv/Scripts/python.exe tests/_run_all.py`（**只认「全绿：982 / 982」这一行**） |
 | `docs/` | 五份 `DATA_SHIFT_第N幕英文文案.md` —— `story.py` 的抄写来源，`tests/_verify_act1_text.py` 拿第一幕那份逐字比对 |
 
 > 代码里**没有旧五关版的残留**了（2026-11-12 按作者要求清空，−152 行）：五关表、结算页、旧紫怪分支、
@@ -215,6 +215,8 @@ config ──> grid ──> board ──┐
 ## 文档
 
 - [`docs/`](docs/) —— 五份分幕英文文案，`story.py` 的**抄写来源**（`tests/_verify_act1_text.py` 逐字比对）
+- [`docs/彩蛋_网页.md`](docs/彩蛋_网页.md) —— 结局二维码扫出来跳的那个网页 `https://he-r.cn`：
+  托管坐标、9 条 DNS 记录、怎么改、还差什么（**现在是占位页**）
 - [工程交接与工作日志](https://www.workbuddy.cn/space/d/86LmxEKjgD0ZNHfnEic6t8)（资料库）—— 踩过的坑、验证方法、全部设计决策的来龙去脉
 - [给下一个接手的 AI](https://www.workbuddy.cn/space/d/6hngpYcwDnAANNOdDKKVTi)（资料库）—— 一页版上手说明
 - `D:/Al_WorkPlace/WorrkBuddy_WorkPlace/游戏设计方案/DATA_SHIFT_游戏指导方案.md` —— 作者的原意稿，

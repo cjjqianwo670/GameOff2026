@@ -133,7 +133,7 @@ for _ in range(max(0, g.act5_errors() - ERROR_TOLERANCE)):
 in_altar(g)
 tick(g, 2400, "END")
 check("第五幕收尾", g.state, "END")
-check("终幕那句话", g.end_line.endswith("https://he-r.link"), True)
+check("终幕那句话", g.end_line.endswith("https://he-r.cn"), True)
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
 check("回车回标题", g.state, "TITLE")
 

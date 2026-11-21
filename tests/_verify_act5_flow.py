@@ -303,7 +303,7 @@ from src.config import QR_CONTENT, C_PAPER  # noqa: E402
 from src.qr import make_qr  # noqa: E402
 from src import ui as _ui  # noqa: E402
 
-check("这张码的内容是固定的那个网址", QR_CONTENT == "https://he-r.link", repr(QR_CONTENT))
+check("这张码的内容是固定的那个网址", QR_CONTENT == "https://he-r.cn", repr(QR_CONTENT))
 
 gE = new_game()
 gE.act = 5

@@ -17,6 +17,7 @@
 | 常量 | 时机 | 英文 | 中文意思 |
 | --- | --- | --- | --- |
 | **A4\_****M1** | 进幕第一句 | `He came back.`<br>`He keeps the frame. I keep the words.`<br>`The frame is everyone's. The words are only mine.` | 他回来了。他守骨架，我填内容。骨架是所有人的，字只有我的（2026-11-18 补第三行：数据区=专属、骨架=通用） |
+| **A4\_****NO_STAIN** | 进幕时（紧跟 HINT\_SWEEP，mumble 不冻世界） | `No more stains. I've learned to look first.` | 不再有脏格。我已经学会先看清再落笔（呼应第一幕「I should look first」的成长闭环，2026-11-20 补） |
 | **A4\_****PURPLE** | 紫怪第一次进场（2026-11-16 从第二幕延后到这里） | `That's not one of the red ones.`<br>`It's slower. It's looking at the lines.` | 那不是红色生物。它更慢，而且它在看那两条线 |
 | **A4\_****M2** | 第一次被紫怪清掉一整行 | `It didn't take one cell.`<br>`It took the whole line.` | 它没拿一格。它拿了一整行 |
 | **A4\_****M3** | 只剩 ≤15 格时（只一次） | `Almost.`<br>`Don't stop now.` | 快了。别停 |

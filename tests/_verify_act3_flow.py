@@ -15,7 +15,7 @@ from src.config import (  # noqa: E402
     C_ITEM, C_OLDMAN, HEALTH_MAX, OLDMAN_BLAST_RADIUS, OLDMAN_CELL, OLDMAN_STAGGER,
     SC_H, SCRIBE_PAUSE, SCRIBE_WALK_SPEED, VALID, WHITE
 )
-from src.qr import format_cells, format_dark_cells, required_cells
+from src.qr import format_cells, format_dark_cells, required_cells, structural_black_cells
 from src.config import TARGET_N, TARGET_OFFSET
 from src.grid import cell_center
 
@@ -109,11 +109,15 @@ check("...老者还站在原地（没被 end_dialog 弄走）",
 
 # ==================== 4. 老者替你写格式信息 ====================
 check("（准备）格式格还没写", g.board.progress() == 106, "%d" % g.board.progress())
-check("（准备）他不知道写哪些格", len(g.scribe_cells) == len(g.format_cells),
-      "%d / %d" % (len(g.scribe_cells), len(g.format_cells)))
+check("（准备）他负责写整副骨架（定位/定时/暗模块/格式）",
+      len(g.scribe_cells) == len(g.scribe_scope)
+      and g.scribe_scope == structural_black_cells(g.target),
+      "%d / scope %d" % (len(g.scribe_cells), len(g.scribe_scope)))
+check("...骨架 ⊇ 格式格（格式格只是其中一部分）",
+      g.format_cells <= g.scribe_scope, "%d ⊇ %d" % (len(g.scribe_scope), len(g.format_cells)))
 
 # 作者 2026-11-12：**他必须走到那一格上才落笔**（不是隔空写）
-first = g.scribe_cells[0]
+first = g.pick_scribe_target()          # 他第一个要写的是离他最近的、还是白的骨架格
 home = (g.oldman.pos.x, g.oldman.pos.y)
 run = 0.0
 while g.board.progress() == 106 and run < 8.0:
@@ -145,8 +149,8 @@ check("玩家先涂好的格子他不会去抢（挑的永远是白的那些）"
       and g.scribe_target != nxt,
       "i %d → %d / target %s" % (i_before, g.scribe_i, g.scribe_target))
 
-# ==================== 5. 被怪吃掉 → 玩家必须自己补 ====================
-victim = g.scribe_cells[0]
+# ==================== 5. 被怪吃掉 → 玩家也能自己补 ====================
+victim = sorted(g.format_cells)[0]               # 挑一个格式格来模拟被吃
 g.format_seen.add(victim)                       # 他写过，已经记在账上
 g.board.state[victim[0]][victim[1]] = WHITE     # 模拟被红怪啃掉
 auto_mono(g)
@@ -301,25 +305,23 @@ for _ in range(int(25 * 60)):
 check("被吃掉的格式格 → 他会回头补（不再是「走过的不回头」）", back,
       "进度 %d → %d" % (n_before, gb.scribe_i))
 
-# --- ②b 全写完但整张码没满 → 他说一句 + 点名还差几格 ---
+# --- ②b 被吃掉的骨架格（定位/定时/暗模块）→ 他也会回头补（2026-11-19）---
 gc = fresh3()
 gc.yellow_t = -9999
-# 先让一个**普通格**被啃掉（模拟红怪），否则格式一写完整张码就成了、直接清屏，测不到这句话
-eaten = sorted(c for c in gc.must if c not in gc.format_cells)[0]
-gc.board.state[eaten[0]][eaten[1]] = WHITE
-for c in gc.format_cells:                          # 假装他已经把格式信息写完了
+# 先把格式信息全写满，逼「剩下的白格」只剩一个被啃掉的骨架格，看他会不会去补它
+for c in gc.format_cells:
     gc.board.state[c[0]][c[1]] = VALID
+victim3 = sorted(c for c in gc.scribe_scope if c not in gc.format_cells)[0]   # 一个定位/定时格
+gc.board.state[victim3[0]][victim3[1]] = WHITE     # 模拟被红怪啃掉
 gc.scribe_target = None
-owe = len(gc.must) - gc.board.progress()
-auto_mono(gc)
-gc.update(1 / 60)
-check("格式信息写完 → 他开口（「读法成了，剩下的归你」）",
-      gc.mono_last == story.A3_READ, repr(gc.mono_last[:26]))
-check("...底部点名还差几格（玩家才知道该干嘛）",
-      gc.hint_text == story.HINT_FILL_REST % owe, "%r / owe=%d" % (gc.hint_text, owe))
-check("...这个提示只说一次（不每帧刷）",
-      gc.scribe_done_said is True)
-check("...HUD 的标签从 DARK 换成 FILL（第三幕专有）", gc.act >= 3 and gc.scribe_done_said)
+back2 = False
+for _ in range(int(25 * 60)):
+    auto_mono(gc)
+    gc.update(1 / 60)
+    if gc.board.state[victim3[0]][victim3[1]] == VALID:
+        back2 = True
+        break
+check("被吃掉的骨架格（定位/定时/暗模块）→ 他也会回头补", back2, "cell %s" % (victim3,))
 
 # --- ③ 救他起来那一下会把身边的黄怪震开 ---
 gd = fresh3()

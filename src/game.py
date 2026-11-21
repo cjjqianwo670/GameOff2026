@@ -53,7 +53,8 @@ from src.config import (
     PURPLE_SPAWN_PER_MIN_ACT4,
     MIRAGE_RADIUS_ACT4, ALMOST_OWE, ERODE_BLOCKS, PURPLE_SPAWN_PER_MIN_ACT5, SCAN_TIME,
     ERODE_EVERY, ERODE_CAP, OLDMAN_REPAIR_PAUSE,
-    THREAD_SPAWN_INTERVAL, THREAD_MAX, THREAD_BRIDGE_CAST, THREAD_BRIDGE_LIFE, THREAD_PICK_RANGE
+    THREAD_SPAWN_INTERVAL, THREAD_MAX, THREAD_BRIDGE_CAST, THREAD_BRIDGE_LIFE, THREAD_PICK_RANGE,
+    TEACH_TIME, TEACH_GAP
 )
 from src.entities import Decoy, GreenOne, Item, Monster, OldMan, Player, PurpleOne, SceneRed, YellowOne
 from src.grid import altar_center, cell_center
@@ -167,6 +168,7 @@ class Game:
         self.player = None
         self.oldman = None
         self.oldman_turned = False
+        self.call_armed = False                       # T 呼叫提示已激活：靠近老者后保持到对话开始
         self.has_sword = False                        # 第二幕收尾拿到（M2 才能用）
         # 道具（2026-11-16 作者定：每幕一个新，固定字母键）
         self.has_time_slow = False                    # 时停(E)：第二幕解锁
@@ -183,7 +185,8 @@ class Game:
         self.format_cells = set()                     # 本幕该黑的格式格（主网格坐标）
         self.format_seen = set()                      # 已经写黑过的 → 用来发现「又被吃掉了」
         self.format_warned = False
-        self.scribe_cells = []                        # 格式信息的 20 个位置（清单，测试用）
+        self.scribe_cells = []                        # 他负责写的骨架格清单（测试用）
+        self.scribe_scope = set()                     # 他负责写的骨架格集合（第三幕，2026-11-19 起不限于格式信息）
         self.scribe_target = None                     # 当前锁定的那一格（写完就清空，下一帧重挑）
         self.scribe_i = 0                             # **累计写过几格**（只增，给测试看「他在干活」）
         self.scribe_done_said = False                 # 「读通了，剩下归你」说过没有
@@ -275,6 +278,12 @@ class Game:
         self.awaken_kind = ""                 # 觉醒横幅：正在播的天赋图标 kind
         self.awaken_t = 0.0                   # 横幅剩余时长
         self.awaken_total = 1.0
+        self.teach_kind = ""                  # 按键教学动画：正在播的 kind
+        self.teach_t = 0.0                    # 剩余时长
+        self.teach_total = 1.0
+        self.teach_taught = set()             # 去重：每个 kind 整局只播一次
+        self.teach_pending = ""               # 排队中：当前动画播完+间隔后再放
+        self.teach_gap_t = 0.0                # 两条动画之间的间隔计时
 
         # 教程
         self.move_time = 0.0
@@ -334,6 +343,7 @@ class Game:
         # 第一幕他站在玩家板块**下方的平地**上（不在任何一块石板上），面朝坛内（朝上）
         self.oldman = OldMan(OLDMAN_CELL_ACT1, facing=0)
         self.oldman_turned = False
+        self.call_armed = False
         self.health = HEALTH_MAX
         self.monsters = []
         self.purples = []
@@ -360,6 +370,12 @@ class Game:
         self.awaken_kind = ""
         self.awaken_t = 0.0
         self.awaken_total = 1.0
+        self.teach_kind = ""
+        self.teach_t = 0.0
+        self.teach_total = 1.0
+        self.teach_taught = set()             # 完整重开才清空（换幕保留）
+        self.teach_pending = ""
+        self.teach_gap_t = 0.0
 
         self.move_time = 0.0
         self.last_cell = self.player.cell
@@ -390,6 +406,7 @@ class Game:
         self.format_seen = set()
         self.format_warned = False
         self.scribe_cells = []
+        self.scribe_scope = set()
         self.scribe_target = None
         self.scribe_i = 0
         self.scribe_t = 0.0
@@ -402,6 +419,7 @@ class Game:
         self.almost_said = False
         self.taught_write = False
         self.looked = False
+        self.call_armed = False
         self.tut_t = 0.0
         self.repair_cells = set()
         self.repair_target = None
@@ -528,6 +546,12 @@ class Game:
         self.awaken_kind = ""
         self.awaken_t = 0.0
         self.awaken_total = 1.0
+        self.teach_kind = ""
+        self.teach_t = 0.0
+        self.teach_total = 1.0
+        self.teach_pending = ""
+        self.teach_gap_t = 0.0
+        # ⚠️ 这里不复位 teach_taught：Shift/J/K 只教一次，换幕不重教（同 taught_write/looked）
         self.items = []
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
         self.reward_phase, self.reward_t, self.spread_r = None, 0.0, 0.0
@@ -537,6 +561,7 @@ class Game:
         self.format_seen = set()
         self.format_warned = False
         self.scribe_cells = []
+        self.scribe_scope = set()
         self.scribe_target = None
         self.scribe_i = 0
         self.scribe_t = 0.0
@@ -609,17 +634,20 @@ class Game:
     def start_act3(self):
         """第二幕结束 → 第三幕：**老者回来了**，带回「怎么读这张码」。
 
-        这一幕玩家**不写格式信息** —— 老者走过去一格一格写（`SCRIBE_WALK_SPEED` / `SCRIBE_PAUSE`）。
-        玩家要做的是守住他写下的东西：被怪吃掉的格式格，他**不回头补**，得玩家自己补。
+        这一幕玩家**不写** —— 老者走过去一格一格写整副**骨架**（定位图案、定时图案、
+        固定黑点、格式信息，2026-11-19 起）。玩家要做的是守住他：被怪吃掉的骨架格他会回头补，
+        但格式格要玩家压住 J 才补得快（`SCRIBE_WALK_SPEED` / `SCRIBE_PAUSE`）。
         """
         self._begin_act(3)
         self.must = required_cells(self.target, act=3)   # 106 + 格式信息里该黑的 10~20 格
         self.must_all = set(self.must)
         self.board.set_must(self.must)
 
-        # 他按顺序写：先把「贴着左上的那一份」写完，再写「右上 + 左下」那一份
+        # 他写的是**整副骨架**：定位图案 + 定时图案 + 固定黑点 + 格式信息（2026-11-19 起，
+        # 作者要求不限于格式信息）。format_cells 单独留着：只有格式格玩家才要按住 J。
         self.format_cells = format_dark_cells(self.target)
-        self.scribe_cells = sorted(self.format_cells)
+        self.scribe_scope = structural_black_cells(self.target)
+        self.scribe_cells = sorted(self.scribe_scope)
 
         # 老者回来，站在坛外老位置，这回面朝坛内
         self.oldman = OldMan(OLDMAN_CELL, facing=1)
@@ -665,6 +693,8 @@ class Game:
         self.mumble(story.A4_DECOY)                  # 心声：诱饵(F) 解锁
         self.show_awaken("decoy")                    # 觉醒横幅
         self.show_hint(story.HINT_SWEEP, 6.0)
+        self.show_teach_anim("sweep")
+        self.mumble(story.A4_NO_STAIN)               # 心声：不再有脏格（成长闭环）
         self.audio.play("clear")
         self.checkpoint = self.make_checkpoint()
 
@@ -869,14 +899,14 @@ class Game:
         self.repair_target = None
         self.repair_writing = False
 
-    def pick_format_target(self):
-        """挑下一个要写的格式格：**离他最近的那一格白的**。
+    def pick_scribe_target(self):
+        """挑下一个要写的骨架格（定位/定时/暗模块/格式）：**离他最近的那一格白的**。
 
-        2026-11-12 起他会**回头补**（作者：紫怪把格式信息清了，让他再涂一遍就行），
-        所以这里不是「按清单走一遍」，而是**每写完一格就重新找一次**。
-        全都黑了就返回 None —— 那一刻格式信息写完了。
+        2026-11-12 起他会**回头补**（被怪吃掉的骨架格就再涂一遍），所以这里不是
+        「按清单走一遍」，而是**每写完一格就重新找一次**。
+        全都黑了就返回 None —— 那一刻骨架写完了。
         """
-        need = [(r, c) for (r, c) in self.format_cells if self.board.state[r][c] == WHITE]
+        need = [(r, c) for (r, c) in self.scribe_scope if self.board.state[r][c] == WHITE]
         if not need:
             return None
         om = self.oldman
@@ -886,14 +916,14 @@ class Game:
         return min(need, key=lambda rc: (cell_center(*rc)[0] - px) ** 2 + (cell_center(*rc)[1] - py) ** 2)
 
     def update_scribe(self, dt):
-        """第三幕：老者走过去，一格一格写格式信息。
+        """第三幕：老者走过去，一格一格写整副骨架（定位/定时/暗模块/格式）。
 
         作者 2026-11-12 定的两条，缺任何一条这一幕都不成立：
           1. **他必须站到那一格上才落笔** —— 所以节奏由「路程」决定，不是由格数决定；
-          2. **被咬一口就停手** `OLDMAN_STAGGER` 秒 —— 不加这条，实测玩家全程不动他也能 21.6 秒写完，
+          2. **被咬一口就停手** `OLDMAN_STAGGER` 秒 —— 不加这条，实测玩家全程不动他也能很快写完，
              「守老者」就是个摆设。
 
-        他会**回头补**被怪吃掉的格式格（作者定的），所以没有「干完收工」这回事：
+        他会**回头补**被怪吃掉的骨架格（作者定的），所以没有「干完收工」这回事：
         只有「暂时没有白的格要写」，那一刻走 `on_scribe_idle()`。
         """
         self.check_format_broken()
@@ -902,7 +932,7 @@ class Game:
             return
 
         if self.scribe_target is None:
-            self.scribe_target = self.pick_format_target()
+            self.scribe_target = self.pick_scribe_target()
             self.scribe_writing = False
             if self.scribe_target is None:
                 self.on_scribe_idle()
@@ -944,10 +974,10 @@ class Game:
             self.enter_clear()
 
     def on_scribe_idle(self):
-        """格式信息暂时写完了（没有白的格式格要写）。
+        """骨架暂时写完了（没有白的骨架格要写）。
 
-        如果整张码还没完成，**差的就是玩家自己该补的格** —— 说一句、并在底部点名还差几格。
-        只喊一次：不喊玩家会以为游戏卡了；每帧喊又太吵。
+        他写的是整副骨架，写完就等于通关（`is_complete` → 清屏）。
+        只喊一次「读通了」：不喊玩家会以为游戏卡了；每帧喊又太吵。
         """
         if not self.scribe_done_said:
             self.scribe_done_said = True
@@ -961,7 +991,8 @@ class Game:
     def check_format_broken(self):
         """格式信息被你之外的东西弄掉了？第一次给一句提示 + 一句心声。
 
-        玩家必须自己补 —— 老者不会回头（他正忙着往前写）。
+        老者会回头补（骨架格他都管），但格式格要**按住 J** 才写得快，所以这句提示
+        是告诉玩家「你可以自己去按住补」，别干等他慢吞吞走过去。
         """
         for cell in self.format_cells:
             if self.board.state[cell[0]][cell[1]] == VALID:
@@ -1069,7 +1100,7 @@ class Game:
             self.oldman.down = False
         self.scribe_cells = []                           # 检查点里没存写格进度，回来重排
         if self.act >= 3:
-            self.scribe_cells = sorted(self.format_cells)
+            self.scribe_cells = sorted(self.scribe_scope)
             self.scribe_target = None
             self.scribe_i = 0
             self.scribe_t = 0.0
@@ -1173,6 +1204,19 @@ class Game:
         self.awaken_kind = kind
         self.awaken_t = secs
         self.awaken_total = secs
+
+    def show_teach_anim(self, kind, secs=TEACH_TIME):
+        """按键教学动画：独立窗口键帽 + 角色演示。每个 kind 整局只播一次；
+        有动画在播或处于间隔期时不打断，改为排队等它播完再放。"""
+        if kind in self.teach_taught:
+            return
+        if self.teach_t > 0 or self.teach_gap_t > 0:
+            self.teach_pending = kind           # 不打断当前动画：排队
+            return
+        self.teach_taught.add(kind)
+        self.teach_kind = kind
+        self.teach_t = secs
+        self.teach_total = secs
 
     # ---------- 事件 ----------
     def handle_event(self, e):
@@ -1419,6 +1463,18 @@ class Game:
             self.decoy_cd = max(0.0, self.decoy_cd - dt)
         if self.awaken_t > 0:
             self.awaken_t = max(0.0, self.awaken_t - dt)
+        if self.teach_t > 0:
+            self.teach_t = max(0.0, self.teach_t - dt)
+            if self.teach_t <= 0:
+                self.teach_gap_t = TEACH_GAP    # 播完进入间隔期
+        elif self.teach_gap_t > 0:
+            self.teach_gap_t = max(0.0, self.teach_gap_t - dt)
+            if self.teach_gap_t <= 0 and self.teach_pending:
+                self.teach_taught.add(self.teach_pending)
+                self.teach_kind = self.teach_pending
+                self.teach_pending = ""
+                self.teach_t = TEACH_TIME
+                self.teach_total = TEACH_TIME
 
     def note_move(self, dt):
         """只有按着方向键在走才算「移动」。站着不动，计时一秒都不涨。"""
@@ -1522,6 +1578,7 @@ class Game:
     def enter_tutorial(self):
         self.state = "TUTORIAL"
         self.prompt_text = story.TUTORIAL_MOVE
+        self.show_teach_anim("move")
         self.say(story.M1)
         # 醒来时只剩脚下这一小片灰：异象真的在，只是他还不知道为什么
         self.board.reveal_around(*self.player.cell)
@@ -1544,6 +1601,7 @@ class Game:
         if (self.move_time >= TUTORIAL_MOVE_SECONDS or self.tut_t >= 6.0) \
                 and self.prompt_text != story.TUTORIAL_SHIFT:
             self.prompt_text = story.TUTORIAL_SHIFT
+            self.show_teach_anim("shift")
 
     def mirage_radius(self):
         """这一幕的异象半径：第四幕给 7×7（扫街要覆盖），前三幕还是 5×5。"""
@@ -1561,6 +1619,7 @@ class Game:
                 self.prompt_text = ""           # 照到了：这句立刻退场
             return
         self.prompt_text = story.TUTORIAL_SHIFT
+        self.show_teach_anim("shift")           # 补动画：快速走向老者跳过教程时，这里兜底（去重只播一次）
 
     def update_write_prompt(self):
         """第一笔之前：站在亮着的灰域上就提示「按 J」。
@@ -1576,6 +1635,7 @@ class Game:
         lit = self.board.reveal[r][c] > 0 and self.board.state[r][c] == WHITE
         if lit and not self.prompt_text:
             self.prompt_text = story.PROMPT_WRITE
+            self.show_teach_anim("write")
         elif not lit and self.prompt_text == story.PROMPT_WRITE:
             self.prompt_text = ""
 
@@ -1668,18 +1728,19 @@ class Game:
         return self.dist(self.player.pos, self.oldman.pos)
 
     def update_call_prompt(self):
-        d = self.oldman_dist()
-        on_altar = self.board.in_altar(*self.player.cell)
-        if d > CALL_RANGE_PX:
+        if not self.looked:
+            self.call_armed = False
             self.prompt_text = ""
-        elif not self.looked:
-            # 还没照过灰域：T 的提示**不出现**（不是换成别的句子）。
-            # 「按 Shift」那句是全局的 —— 站在哪儿都给，见 update_look_prompt()。
-            self.prompt_text = ""
-        elif self.oldman_turned and not on_altar and d > CLOSE_RANGE_PX:
-            self.prompt_text = ""                        # 已经转身了：再走近才喊得动
-        else:
+            return
+        if self.call_armed:
+            self.prompt_text = story.PROMPT_CALL        # 已激活：持续显示到对话开始
+            return
+        if self.oldman_dist() <= CALL_RANGE_PX:
+            self.call_armed = True                      # 第一次靠近老者：激活提示
             self.prompt_text = story.PROMPT_CALL
+            self.show_teach_anim("call")
+        else:
+            self.prompt_text = ""
 
     def try_call(self):
         d = self.oldman_dist()
@@ -1716,6 +1777,8 @@ class Game:
         `after`      → 说完去哪：None = 第一幕那套（老者离开 + 自由探索）；"BATTLE" = 直接开打
         """
         self.state = "DIALOG"
+        self.call_armed = False                         # 对话开始：T 提示退场
+        self.prompt_text = ""
         self.dlg_lines = list(lines) + ([story.LEAVE_LINE] if tail else [])
         self.dlg_after = after
         self.dlg_i = 0
@@ -1980,6 +2043,7 @@ class Game:
         if not self.hold_said:                          # 第一次碰到格式格：教一下「按住」
             self.hold_said = True
             self.show_hint(story.HINT_FORMAT_HOLD, 3.0)
+            self.show_teach_anim("holdfmt")
         self.fill_t = min(FORMAT_HOLD_TIME, self.fill_t + dt)
         if self.fill_t >= FORMAT_HOLD_TIME:
             self.fill_t = 0.0
@@ -2003,6 +2067,7 @@ class Game:
             if not self.stain_warned:                  # 第一次：教一下 K（按键教学，保留系统提示）
                 self.stain_warned = True
                 self.show_hint(story.HINT_CLEAR, 3.0)
+                self.show_teach_anim("erase")
             if blind:
                 self.mumble(story.MONO_BLIND)          # 「还没看」→ 嘀咕（不冻世界）
             else:
@@ -2052,6 +2117,7 @@ class Game:
         self.scribe_writing = False                  # 笔停在半空
         self.audio.play("wipe")
         self.show_hint(story.HINT_HELP_OLDMAN, 999.0)
+        self.show_teach_anim("revive")
         if not self.down_said:
             self.down_said = True
             self.say(story.A3_DOWN, 3.0)
@@ -2166,6 +2232,7 @@ class Game:
             self.thread_spawn_t -= dt
             if self.thread_spawn_t <= 0.0:
                 self.thread_on_cell = True
+                self.show_teach_anim("bridge")
                 self.audio.play("pickup")          # 长出来了：一声轻响
         # 通道计时
         if self.thread_bridge is not None:
@@ -2510,6 +2577,8 @@ class Game:
         elif self.reward_phase == "items":
             near = self.nearest_item()
             self.prompt_text = story.PROMPT_PICK if near is not None else ""
+            if near is not None:
+                self.show_teach_anim("pick")
             if not self.items:
                 self.reward_phase = "wait2"
                 self.reward_t = 0.0
@@ -2547,6 +2616,7 @@ class Game:
             self.show_hint(story.ITEM_BAG, 5.0)
         elif it.kind == "sword":
             self.has_sword = True
+            self.show_teach_anim("sword")
             self.show_hint(story.ITEM_SWORD, 5.0)
 
     # ---------- 绘制 ----------
