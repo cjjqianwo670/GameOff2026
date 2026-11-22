@@ -1736,6 +1736,9 @@ def draw_end(g: "Game"):
         center_txt(g, g.banner_text, (cx, 604), g.f_big, C_TEXT)
         if getattr(g, "end_line", ""):
             center_txt(g, g.end_line, (cx, 660), g.f_mid, C_ACCENT)
+        # 脚注：这张码是**真的要拿手机扫**的。放在 PRESS ENTER 下面当小字，
+        # 不抢那张码的戏，但让「扫它」这个动作有机会被想到。
+        center_txt(g, story.END_HINT, (cx, 774), g.f_small, C_DIM)
         if int(g.menu_t * 2.0) % 2 == 0:
             center_txt(g, "PRESS ENTER", (cx, 722), g.f_main, C_ERASING)
         return
