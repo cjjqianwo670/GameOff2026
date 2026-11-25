@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """第二幕 · 紫怪（the purple one）验收。
 
-规则来源：作者 2026-11-11 拍板（见 DATA_SHIFT_第二幕待定清单.md P1~P9）
-  P3 只锁圣坛内的有效黑域
-  P2 清「黑格更多」的那条（行 vs 列）
+规则来源：作者 2026-11-11 拍板（见 DATA_SHIFT_第二幕待定清单.md P1~P9），2026-11-25 改了索敌：
+  P3 只锁圣坛内的有效黑域，且在**全部有效黑格里均匀随机**挑一格（原：最近）
+  P2 撞到后**随机**清该格所在的行或列（原：清「黑格更多」的那条）
   P4 清整条 25 格（含圣坛外平地诱饵）
-  P9 脏格不算黑格：不计入比较，也不被清掉
-  默认  平局选离玩家远的那条；一生一次；撞完由 game 移除
+  P9 脏格不算黑格：不会被选中，也不被清掉
+  默认  诱饵优先；一生一次；撞完由 game 移除
 
 夹具说明：这里**直接设置 board.state**，不走 paint()。
 因为 paint() 对「圣坛内非必涂格」只会产生脏格，用它造不出想要的 VALID 布局。
@@ -26,7 +26,7 @@ from src.config import (  # noqa: E402
     DIRTY, PURPLE_EAT_DIST, PURPLE_HIT_DAMAGE, PURPLE_HIT_DIST, PURPLE_RADIUS, PURPLE_SPEED,
     VALID, WHITE
 )
-from src.entities import PurpleOne  # noqa: E402
+from src.entities import Decoy, PurpleOne  # noqa: E402
 from src.grid import cell_center  # noqa: E402
 from src.qr import generate_target, required_cells  # noqa: E402
 
@@ -69,70 +69,69 @@ p2.update(1 / 60, b2)
 check("没有目标时朝圣坛中心漂（不是原地发呆）", p2.pos.distance_to(before) > 0,
       "移动 %.2fpx" % p2.pos.distance_to(before))
 
-# ==================== 2. 锁最近的坛内黑格 ====================
+# ==================== 2. 坛内黑格：均匀随机（2026-11-25 改） ====================
 b3 = new_board()
 fill(b3, [(8, 8), (18, 18)])
 p3 = PurpleOne(cell_center(7, 7))
-p3.retarget(b3)
-check("锁最近的坛内黑格", p3.target == (8, 8), "%s" % (p3.target,))
+picked = set()
+for _ in range(60):
+    p3.retarget(b3)
+    picked.add(p3.target)
+check("随机锁坛内黑格：两格都能抽到（不再固定最近）",
+      picked == {(8, 8), (18, 18)}, "%s" % (picked,))
 
-# ==================== 3. 行 vs 列：清黑格更多的那条（P2） ====================
-b4 = new_board()
-fill(b4, [(10, c) for c in range(6, 14)])     # 第 10 行 8 格
-fill(b4, [(11, 10), (12, 10)])                # 第 10 列：交点 + 这 2 格 = 3 格
-check("构造有效：行 8 格 > 列 3 格",
-      b4.line_dark("row", 10) == 8 and b4.line_dark("col", 10) == 3,
-      "row=%d col=%d" % (b4.line_dark("row", 10), b4.line_dark("col", 10)))
-axis, idx = PurpleOne(cell_center(10, 10)).pick_line(b4, (10, 10))
-check("黑格多的那条是行 → 清行（P2）", (axis, idx) == ("row", 10), "%s,%s" % (axis, idx))
+b3b = new_board()
+fill(b3b, [(18, 18)])
+p3b = PurpleOne(cell_center(7, 7))
+p3b.retarget(b3b)
+check("坛内只有一格 → 只能锁它", p3b.target == (18, 18), "%s" % (p3b.target,))
 
-b5 = new_board()
-fill(b5, [(r, 16) for r in range(6, 14)])     # 第 16 列 8 格
-fill(b5, [(16, 15), (16, 17)])                # 第 16 行 2 格
-check("构造有效：列 8 格 > 行 2 格",
-      b5.line_dark("col", 16) == 8 and b5.line_dark("row", 16) == 2,
-      "row=%d col=%d" % (b5.line_dark("row", 16), b5.line_dark("col", 16)))
-axis, idx = PurpleOne(cell_center(16, 16)).pick_line(b5, (16, 16))
-check("黑格多的那条是列 → 清列（P2）", (axis, idx) == ("col", 16), "%s,%s" % (axis, idx))
+# ==================== 3. 行 / 列：各 50% 随机（2026-11-25 改） ====================
+axes = set()
+idx_ok = True
+for _ in range(60):
+    axis, idx = PurpleOne((0, 0)).pick_line((10, 10))
+    axes.add(axis)
+    idx_ok = idx_ok and idx == 10
+check("行与列都能被抽到（各 50% 随机）", axes == {"row", "col"}, "%s" % (axes,))
+check("index 始终是锁定格所在的行号/列号", idx_ok)
 
-# ==================== 4. 平局 → 离玩家远的那条 ====================
-b6 = new_board()
-fill(b6, [(12, c) for c in (10, 11, 13)] + [(r, 12) for r in (10, 11, 13)])
-check("构造有效：行 3 = 列 3（平局）",
-      b6.line_dark("row", 12) == b6.line_dark("col", 12) == 3,
-      "row=%d col=%d" % (b6.line_dark("row", 12), b6.line_dark("col", 12)))
-
-cx, cy = cell_center(12, 12)
-axis, _ = PurpleOne(cell_center(12, 12)).pick_line(b6, (12, 12), pygame.Vector2(cx, cy + 200))
-check("平局：玩家在正下方 → 清离他更远的「行」", axis == "row", "%s" % (axis,))
-axis2, _ = PurpleOne(cell_center(12, 12)).pick_line(b6, (12, 12), pygame.Vector2(cx + 200, cy))
-check("平局：玩家在正右方 → 清离他更远的「列」", axis2 == "col", "%s" % (axis2,))
-
-# ==================== 5. 撞到 → 清整条（P4） ====================
+# ==================== 4. 撞到 → 清整条（P4） ====================
 b7 = new_board()
 row = 10
 fill(b7, [(row, c) for c in range(6, 14)])
-before = b7.line_dark("row", row)
 p7 = PurpleOne(cell_center(row, 10))
-res = run_to_target(p7, b7)
+p7.target = (row, 10)                          # 夹具：直接指定锁哪一格（绕开随机索敌）
+res = p7.update(1 / 60, b7)
 check("撞到锁定格 → 返回 ('wipe', axis, index, 清掉格数)",
-      isinstance(res, tuple) and res == ("wipe", "row", row, before), "%s" % (res,))
-check("整条线的有效黑域被清空", b7.line_dark("row", row) == 0,
-      "剩 %d" % b7.line_dark("row", row))
+      isinstance(res, tuple) and res[0] == "wipe" and res[1] in ("row", "col"), "%s" % (res,))
+check("整条线的有效黑域被清空", b7.line_dark(res[1], res[2]) == 0,
+      "剩 %d" % b7.line_dark(res[1], res[2]))
 
 # 整 25 格：圣坛外的平地诱饵也一起被清（P4）
-b8 = new_board()
-fill(b8, [(3, 0), (3, 1)])                    # 平地（圣坛外）
-fill(b8, [(3, c) for c in range(6, 12)])      # 圣坛内
-total_before = b8.line_dark("row", 3)
-p8 = PurpleOne(cell_center(3, 6))
-res8 = run_to_target(p8, b8)
-check("先确定它清的是「行」", isinstance(res8, tuple) and res8[1] == "row", "%s" % (res8,))
-check("清整条 25 格 → 圣坛外的平地诱饵也被清（P4）",
-      b8.state[3][0] == WHITE and b8.state[3][1] == WHITE,
-      "平地格状态 %d/%d（0=白）" % (b8.state[3][0], b8.state[3][1]))
-check("清掉的数量 = 清之前这条线上的黑格数", res8[3] == total_before,
-      "%d vs %d" % (res8[3], total_before))
+# 行、列两边都摆平地黑格，随机抽到哪条都能验证
+plain_ok, count_ok, both_axes = True, True, set()
+for _ in range(40):
+    b8 = new_board()
+    fill(b8, [(3, 0), (3, 1)])                    # 行上的平地诱饵（圣坛外）
+    fill(b8, [(0, 6), (1, 6)])                    # 列上的平地诱饵（圣坛外）
+    fill(b8, [(3, c) for c in range(6, 12)])      # 圣坛内
+    fill(b8, [(r, 6) for r in range(6, 12)])
+    n_row, n_col = b8.line_dark("row", 3), b8.line_dark("col", 6)
+    p8 = PurpleOne(cell_center(3, 6))
+    p8.target = (3, 6)
+    res8 = p8.update(1 / 60, b8)
+    axis, idx = res8[1], res8[2]
+    both_axes.add(axis)
+    expect = n_row if axis == "row" else n_col
+    count_ok = count_ok and res8[3] == expect
+    if axis == "row":
+        plain_ok = plain_ok and b8.state[3][0] == WHITE and b8.state[3][1] == WHITE
+    else:
+        plain_ok = plain_ok and b8.state[0][6] == WHITE and b8.state[1][6] == WHITE
+check("行和列都出现过（随机）", both_axes == {"row", "col"}, "%s" % (both_axes,))
+check("清整条 25 格 → 圣坛外的平地诱饵也被清（P4）", plain_ok)
+check("清掉的数量 = 清之前这条线上的黑格数", count_ok)
 
 # ==================== 6. 脏格不算黑格、也不被清（P9） ====================
 b9 = new_board()
@@ -145,13 +144,13 @@ check("脏格不计入「这条线有多少黑格」", b9.line_dark("row", 14) =
 p9 = PurpleOne(cell_center(14, 20))
 res9 = run_to_target(p9, b9)
 check("撞到了（返回 wipe）", isinstance(res9, tuple) and res9[0] == "wipe", "%s" % (res9,))
-check("清行时脏格**不被清掉**（P9）", b9.state[14][18] == DIRTY,
+check("脏格不会被选中，清行/清列都不碰它（P9）", b9.state[14][18] == DIRTY,
       "脏格状态 %d（2=脏）" % b9.state[14][18])
 check("那唯一一格有效黑域被清了", b9.state[14][20] == WHITE, "%d" % b9.state[14][20])
 
 # ==================== 7. 一生一次 ====================
 check("撞完置 done", p9.done is True)
-check("last_wipe 记下了这一次", p9.last_wipe is not None and p9.last_wipe[0] == "row",
+check("last_wipe 记下了这一次", p9.last_wipe is not None and p9.last_wipe[0] in ("row", "col"),
       "%s" % (p9.last_wipe,))
 fill(b9, [(16, 16)])                          # 故意再造一格黑，看它会不会又去吃
 snapshot = [r[:] for r in b9.state]           # 快照要在填完之后取
@@ -163,11 +162,11 @@ check("撞完不再动作（返回 alive，棋盘不变）",
 b10 = new_board()
 fill(b10, [(10, 10), (10, 16)])
 p10 = PurpleOne(cell_center(10, 11))
-p10.retarget(b10)
-check("先锁最近的那个", p10.target == (10, 10), "%s" % (p10.target,))
+p10.target = (10, 10)                         # 夹具：只看「目标失效后重选」这一条
+check("（准备）锁在 (10,10)", p10.target == (10, 10), "%s" % (p10.target,))
 b10.state[10][10] = WHITE                     # 玩家按 K 抹掉
 p10.update(1 / 60, b10)
-check("目标被抹掉 → 立刻改锁另一个", p10.target == (10, 16), "%s" % (p10.target,))
+check("目标被抹掉 → 立刻改锁坛内剩下的黑格", p10.target == (10, 16), "%s" % (p10.target,))
 
 # ==================== 9. 坛内没黑域 → 转去扑人（P10，2026-11-12）====================
 # 作者：圣坛内没有格子了，紫怪就攻击码序使；被打到扣 10% 血。
@@ -209,7 +208,35 @@ check("扑人判定距离 = PURPLE_HIT_DIST 且 > 撞黑格的距离",
 check("扑人扣血 = 10%", PURPLE_HIT_DAMAGE == 10, "%d" % PURPLE_HIT_DAMAGE)
 check("比红怪咬一口（5%%）更疼", PURPLE_HIT_DAMAGE > 5, "%d > 5" % PURPLE_HIT_DAMAGE)
 
-# ==================== 9. 数值与 config 对齐 ====================
+# ==================== 10. 诱饵优先（2026-11-16 起） ====================
+b14 = new_board()
+fill(b14, [(10, 10)])
+d_alive = Decoy((14, 14))
+p14 = PurpleOne((0, 0))
+p14.retarget(b14, [d_alive])
+check("坛内有诱饵 → 优先锁诱饵（哪怕有黑格）", p14.target == (14, 14), "%s" % (p14.target,))
+
+d_dead = Decoy((14, 14))
+d_dead.dead = True
+p14b = PurpleOne((0, 0))
+p14b.retarget(b14, [d_dead])
+check("诱饵已消失 → 回去锁黑格", p14b.target == (10, 10), "%s" % (p14b.target,))
+
+p14c = PurpleOne((0, 0))
+p14c.retarget(b14, [Decoy((0, 0))])           # 圣坛外的诱饵
+check("诱饵在圣坛外 → 不锁它", p14c.target == (10, 10), "%s" % (p14c.target,))
+
+b15 = new_board()
+fill(b15, [(14, 14)])
+d15 = Decoy((14, 14))
+p15 = PurpleOne(cell_center(14, 14))
+p15.target = (14, 14)
+res15 = p15.update(1 / 60, b15, None, [d15])
+check("撞到诱饵 → 咬它（返回 decoy），不清整条线",
+      isinstance(res15, tuple) and res15[0] == "decoy" and b15.state[14][14] == VALID,
+      "%s" % (res15,))
+
+# ==================== 11. 数值与 config 对齐 ====================
 p11 = PurpleOne((0, 0))
 check("速度/半径取自 config", p11.speed == PURPLE_SPEED and p11.radius == PURPLE_RADIUS,
       "%.1f px/s / r=%d" % (p11.speed, p11.radius))

@@ -50,7 +50,10 @@ singles = [
     ("脏格扣血嘀咕", story.MONO_STAIN_HURT),
     ("拾取提示", story.PROMPT_PICK),
     ("背包说明", story.ITEM_BAG),
+    ("地图说明", story.ITEM_MAP),
     ("幕结束", story.ACT_TITLE),
+    ("A1 引导第一行", story.A1_GUIDE.split("\n")[0]),
+    ("A1 引导第二行", story.A1_GUIDE.split("\n")[1]),
 ]
 bad2 = [name for name, text in singles if not found(text)]
 check("独白 / 提示 / 道具说明 / 结尾字幕全部逐字一致",
@@ -71,10 +74,10 @@ check("坛外第 9 句起 = 对话一第 5 句起（汇合不重复）",
 check("汇合点那一句是 I didn't either, at first",
       two[8][1].startswith("I didn't either, at first"))
 
-# 文本里不许出现中文（界面全英文）
+# 英文原文里不许出现中文（中文译文在 story_zh.py，由 _verify_i18n.py 管）
 all_text = " ".join(t for _, t in one + two) + " ".join(t for _, t in singles)
 # 破折号 — 是英文文案里本来就有的（U+2014），只查中日韩字符
 cjk = [ch for ch in all_text if "\u4e00" <= ch <= "\u9fff"]
-check("文本里没有中文（只允许英文 + 文案里的 — ）", not cjk, "".join(cjk[:10]))
+check("英文文案里没有中文（只允许英文 + 文案里的 — ）", not cjk, "".join(cjk[:10]))
 
 finish(TITLE)

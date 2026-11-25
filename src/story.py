@@ -7,6 +7,8 @@
 
 译名（定死）：Sequencer / the Altar / the Dark / the Anomaly / the grey / a stain /
 the plain / the old man / the red ones / erosion。
+
+中文译文**不在这里**：见 `story_zh.py`（状态永远存本文件的英文，渲染时由 `lang.T()` 取译文）。
 """
 
 # ==== 0. 幕 ====
@@ -56,6 +58,10 @@ M3 = "Why you two?"
 # 第一幕第一波清完之后的一句（2026-11-14 拆两波）：老者交代过「每写完一部分，圣坛会护你一会儿」
 A1_WAVE = "One corner holds.\nIt pushed them back."
 A1_MERGE = "The edge is whole again."      # 合并一句（飘字，不冻世界）
+# 第一幕老者走后、开战前：教玩家「照出三个定位图案 + 固定黑点 → 复原 → 合并板块去下一块」（心声，冻世界）
+# 注：第一幕只涂 3 个定位图案 + 1 个暗模块（=100 格）；定时图案是第二幕才加的，这里不提以免误导。
+A1_GUIDE = ("The Anomaly shows three finder squares and one fixed dark dot. Restore them all.\n"
+            "Restore a slab, and it joins to the next — only a whole slab opens the way.")
 
 # 这些是「从系统提示改成心声」的嘀咕（2026-11-12 作者要求），正常大小写：
 MONO_STAIN = "That one failed. It's just a stain."          # 涂错成脏格
@@ -130,6 +136,7 @@ LEAVE_LINE = (OLD_MAN,
 # ==== 5. 道具说明（拾取后显示）====
 
 ITEM_BAG = "BAG \u2014 you can carry what you find."
+ITEM_MAP = "MAP \u2014 out past the edge. A second altar, still holding a code."
 ITEM_SWORD = "SWORD \u2014 the last Sequencer left it. He never finished."   # 第二幕结束的奖励：前任码序使留下（2026-11-18 定）
 
 
@@ -149,6 +156,17 @@ A2_M1 = ("The old man hasn't come back.\nThe three corners are still here.\n"
          "Something between them is missing.")
 A2_M2 = "Two lines.\nThey run between the corners.\nI never looked there."
 A2_GREEN = "That one's green.\nIt eats a whole patch."        # 绿怪第一次进场（清 3×3）
+
+# ==== 界丝（BOUND-THREAD）的三句（2026-11-24 新增）====
+# 作者：「目前游戏里面没有讲述界丝的来历和作用」—— 此前界丝只有四句操作提示
+# （`HINT_THREAD_*`），玩家知道要按 I，但不知道这根丝是什么、从哪来、凭什么架得住裂缝。
+# 写法跟着第二幕的调子：短句、不解释原理、不煽情，只让他看见什么就说什么。
+A2_THREAD_BORN = ("The altar grew a thread.\n"
+                  "One at a time, on the dark dot.")
+A2_THREAD_PICK = ("It's the altar's own material.\n"
+                  "It knows it's broken.\n"
+                  "I can pull it across a gap.")
+A2_THREAD_BRIDGE = "It won't hold long."      # 第一次搭成通道：飘字（不停世界，玩家正在走）
 
 # 道具解锁（2026-11-16 作者定：每幕一个新）
 A2_TIMESLOW = "I can make the pattern hold them still."       # 第二幕：时停
@@ -171,7 +189,6 @@ TEACH = {
     "shift":   ("ANOMALY", "SHIFT"),
     "write":   ("DARK",    "J"),
     "erase":   ("ERASE",   "K"),
-    "call":    ("CALL",    "T"),
     "pick":    ("PICK UP", "B"),
     "bridge":  ("SPAN",    "I"),
     "sword":   ("SWORD",   "U"),
@@ -275,6 +292,15 @@ EPILOGUE_LAST = "I'll remember.\nI'll write it down somewhere."
 # 全游戏最后一句：这张码 / 这一切，记的是「你来过」—— 主角失忆，码替它记住了它存在过。
 # 原主角码内容「YOU WERE HERE」（2026-11-19 已改成 URL），这句情感落点移到独白收尾。
 EPILOGUE_FINAL = "You were here."
+
+# ==== 第二圣坛（2026-11-25 新增）：把老者的码补全 ====
+# 第五幕结局页按回车 → 传送到第二圣坛（无怪）。骨架已经在那儿，缺的是数据区。
+ACT6_M1 = ("The map was right.\nA second altar \u2014 his frame is still here.\n"
+           "The words are gone.")
+# 扫描读完、老者重新出现时他说的一句
+ACT6_BACK = "You wrote it down.\nSo I wasn't forgotten."
+# 第二圣坛通关后的结局页标题
+ACT6_END_TITLE = "THE END"
 
 
 def act_title(act):

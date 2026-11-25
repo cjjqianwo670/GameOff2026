@@ -18,11 +18,13 @@
 """
 
 import math
+import os
 import random
+import sys
 
 import pygame
 
-from src import sfx, story
+from src import assets, lang, sfx, story
 from src.board import Board
 from src.config import (
     BANNER_TIME, BOARDS, BOARD_ORDER, CALL_RANGE_PX, CELL, CLEAR_WAVE_HOLD, CLEAR_WAVE_SPEED, C_BG, C_MIRAGE, C_MONSTER, C_OLDMAN,
@@ -35,13 +37,13 @@ from src.config import (
     TOAST_GAP, TOAST_MAX, TOAST_TIME,
     OLDMAN_BLAST_RADIUS, OLDMAN_HP, OLDMAN_REVIVE_HP,
     OLDMAN_REVIVE_RANGE, OLDMAN_REVIVE_TIME, PROMPT_FONT,
-    OLDMAN_CELL_ACT1, OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, PLAYER_GLOW_R, PLAYER_START_CELL, RED_RADIUS,
+    OLDMAN_CELL_ACT1, OLDMAN_LEAVE_SPEED, OLDMAN_RUN_SPEED, OLD_MAN_CODE, PLAYER_GLOW_R, PLAYER_START_CELL, RED_RADIUS,
     RED_SPAWN_ACCEL, RED_SPAWN_ACCEL_PERIOD, RED_SPAWN_PER_MIN,
     RED_SPD_JITTER,
     GREEN_FIRST_DELAY, GREEN_HIT_DAMAGE, GREEN_SPAWN_PER_MIN, GREEN_SPEED,
     TIME_SLOW_DURATION, TIME_SLOW_FACTOR, TIME_SLOW_CD, DASH_DIST, DASH_CD, DECOY_LIFE, DECOY_HP, DECOY_CD,
     RED_SPEED, REWARD_DELAY, REWARD_WAIT, SC_B, SC_ENTER, SC_ESC, SC_F1, SC_J, SC_K, SC_KP_ENTER,
-    SC_H, SC_I, SC_Q, SC_E, SC_F, SC_G, SC_SHIFT, SC_SPACE, SC_T, SC_U, SC_UP, SC_DOWN, SC_W, SC_S, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
+    SC_H, SC_I, SC_Q, SC_E, SC_F, SC_G, SC_M, SC_SHIFT, SC_SPACE, SC_T, SC_U, SC_UP, SC_DOWN, SC_W, SC_S, SHAKE_LEAD, SHAKE_SEQ, SHAKE_STEP, SPAWN_ORIGIN,
     SPAWN_PX,
     SCRIBE_FLASH, SCRIBE_PAUSE, SCRIBE_WALK_SPEED, FORMAT_HOLD_TIME, SPREAD_TIME, STAIN_DAMAGE, STAIN_LIMIT,
     SWORD_CD, SWORD_KNOCKBACK_SPEED, SWORD_KNOCKBACK_TIME, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N,
@@ -54,48 +56,156 @@ from src.config import (
     MIRAGE_RADIUS_ACT4, ALMOST_OWE, ERODE_BLOCKS, PURPLE_SPAWN_PER_MIN_ACT5, SCAN_TIME,
     ERODE_EVERY, ERODE_CAP, OLDMAN_REPAIR_PAUSE,
     THREAD_SPAWN_INTERVAL, THREAD_MAX, THREAD_BRIDGE_CAST, THREAD_BRIDGE_LIFE, THREAD_PICK_RANGE,
-    TEACH_TIME, TEACH_GAP
+    TEACH_TIME, TEACH_GAP,
+    MASTER_VOLUME, SFX_VOLUME, MUSIC_VOLUME, MUSIC_FADE_MS
 )
 from src.entities import Decoy, GreenOne, Item, Monster, OldMan, Player, PurpleOne, SceneRed, YellowOne
 from src.grid import altar_center, cell_center
 from src.input_state import InputState
 from src.qr import (ERROR_TOLERANCE, core_board_of, finder_cores, format_dark_cells, generate_target,
-                    module_table, required_cells, structural_black_cells)
-from src.ui import (draw_dead, draw_dialog, draw_end, draw_hud, draw_pause, draw_title, draw_world,
-                    make_stain_tile)
+                    make_qr, module_table, required_cells, structural_black_cells)
+from src.ui import (PAUSE_OPTIONS, dialog_char_total, draw_dead, draw_dialog, draw_end, draw_hud,
+                    draw_pause, draw_title, draw_world, make_stain_tile)
+
+WEB = sys.platform == "emscripten"      # pygbag / WebAssembly：音频改读预渲染 wav
 
 # 可移动 / 可涂的相位
-MOVE_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "CLEAR", "REWARD", "A2_OPEN")
-PAINT_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "A2_OPEN")
+MOVE_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "CLEAR", "REWARD", "A2_OPEN", "ALTAR2")
+PAINT_STATES = ("TUTORIAL", "FREE_ROAM", "GAP", "BATTLE", "A2_OPEN", "ALTAR2")
 
 # ==== 音效（可选：设备开不出来就静音，绝不拖垮游戏）====
 
 
 class _Audio:
-    """把 sfx.py 合成的 WAV 包成 pygame.mixer.Sound，按名播放。
+    """把 sfx.py 合成的 PCM 包成 pygame.mixer.Sound，按名播放。
 
+    sfx 是 16-bit **单声道**，所以 mixer 优先锁成单声道；设备只给立体声时，
+    按实际声道数把 PCM 补成双声道，否则会被交错播放、时长腰斩、音色失真
+    （2026-11-24 实测 paint 0.05s 只剩 0.025s）。
     mixer 初始化失败（无声卡 / 权限）时静默降级为 no-op，游戏照常跑。
     """
 
     def __init__(self):
         self.enabled = False
+        self.muted = False
+        self._channels = 1
         self._sounds = {}
+        self._music_sounds = {}
+        self._music_ch = []
+        self._music_active = None
+        self._music_name = None
+        self._music_volume = MASTER_VOLUME * MUSIC_VOLUME
+        self._ducked = False
+        # 测试用 dummy 驱动：反正不出声，别花时间合成 12 秒的音乐
+        self._dummy = os.environ.get("SDL_AUDIODRIVER") == "dummy"
+        self._web = WEB
+        rate = sfx.WEB_RATE if WEB else sfx.RATE      # 网页版用构建时导出的 22050Hz wav
         try:
-            if pygame.mixer.get_init() is None:
-                pygame.mixer.init()
+            init = pygame.mixer.get_init()
+            if init != (rate, -16, 1):
+                if init is not None:
+                    pygame.mixer.quit()          # 设备已被 pygame.init() 开成立体声：重开
+                try:
+                    # 优先锁死采样率 / 16-bit / 单声道，和资源完全一致
+                    pygame.mixer.init(frequency=rate, size=-16, channels=1,
+                                      buffer=512, allowedchanges=0)
+                except pygame.error:
+                    # 少数声卡只给立体声：频率和位深仍锁住，声道按实际值补数据
+                    pygame.mixer.init(frequency=rate, size=-16, channels=1,
+                                      buffer=512,
+                                      allowedchanges=pygame.AUDIO_ALLOW_CHANNELS_CHANGE)
+            self._channels = pygame.mixer.get_init()[2]
+            vol = MASTER_VOLUME * SFX_VOLUME
             for name in sfx.SOUNDS:
-                self._sounds[name] = pygame.mixer.Sound(buffer=sfx.build(name))
+                if WEB:
+                    # 浏览器里现算太慢：读构建时导出的 ogg
+                    s = pygame.mixer.Sound(assets.path("assets", "audio", "sfx_%s.ogg" % name))
+                else:
+                    pcm = sfx.to_channels(sfx.build_pcm(name), self._channels)
+                    s = pygame.mixer.Sound(buffer=pcm)
+                s.set_volume(vol)
+                self._sounds[name] = s
+            # 音乐独占 0/1 两条通道，音效永远抢不到它们
+            pygame.mixer.set_reserved(2)
+            self._music_ch = [pygame.mixer.Channel(0), pygame.mixer.Channel(1)]
             self.enabled = True
         except Exception:
             self.enabled = False
             self._sounds = {}
+            self._music_ch = []
 
     def play(self, name):
-        if not self.enabled:
+        if not self.enabled or self.muted:
             return
         s = self._sounds.get(name)
         if s is not None:
             s.play()
+
+    # ---- 背景音乐（2026-11-24）----
+    def _music_sound(self, name):
+        s = self._music_sounds.get(name)
+        if s is None:
+            if WEB:
+                s = pygame.mixer.Sound(assets.path("assets", "audio", "music_%s.ogg" % name))
+            else:
+                pcm = sfx.to_channels(sfx.build_music(name), self._channels)
+                s = pygame.mixer.Sound(buffer=pcm)
+            self._music_sounds[name] = s
+        return s
+
+    def play_music(self, name):
+        """换背景音乐（交叉淡化）。同名重复调用直接忽略。"""
+        if name == self._music_name:
+            return
+        self._music_name = name
+        if not self.enabled or not self._music_ch or self._dummy:
+            return
+        try:
+            sound = self._music_sound(name)
+            if self._music_active is self._music_ch[0]:
+                new = self._music_ch[1]
+            else:
+                new = self._music_ch[0]
+            if self._music_active is not None:
+                self._music_active.fadeout(MUSIC_FADE_MS)
+            vol = 0.0 if self.muted else self._music_volume * (0.3 if self._ducked else 1.0)
+            new.set_volume(vol)
+            new.play(sound, loops=-1, fade_ms=MUSIC_FADE_MS)
+            self._music_active = new
+        except Exception:
+            self._music_active = None
+
+    def stop_music(self, fade_ms=MUSIC_FADE_MS):
+        self._music_name = None
+        if self._music_active is None:
+            return
+        try:
+            self._music_active.fadeout(fade_ms)
+        except Exception:
+            pass
+        self._music_active = None
+
+    def set_muted(self, muted):
+        self.muted = muted
+        vol = 0.0 if muted else self._music_volume * (0.3 if self._ducked else 1.0)
+        for ch in self._music_ch:
+            try:
+                ch.set_volume(vol)
+            except Exception:
+                pass
+
+    def update(self, ducked=False):
+        """每帧调一次：暂停时把音乐压到 30%，不打断音效。
+
+        只在状态切换时改音量 —— 每帧 set_volume 会打断 `fade_ms` 的淡入。
+        """
+        if self.muted or self._music_active is None or ducked == self._ducked:
+            return
+        self._ducked = ducked
+        try:
+            self._music_active.set_volume(self._music_volume * (0.3 if ducked else 1.0))
+        except Exception:
+            pass
 
 
 # ==== 游戏主类 ====
@@ -115,17 +225,11 @@ class Game:
         self._last_dt = 1.0 / FPS
         self.audio = _Audio()
 
-        # 字体只建一次
-        self.f_small = pygame.font.Font(None, 21)
-        self.f_main = pygame.font.Font(None, 27)
-        self.f_panel = pygame.font.Font(None, 30)
-        self.f_mid = pygame.font.Font(None, 46)
-        self.f_big = pygame.font.Font(None, 104)
-        self.f_tiny = pygame.font.Font(None, 18)      # 道具标签
-        self.f_dlg_name = pygame.font.Font(None, DLG_NAME_FONT)  # 对话名牌
-        self.f_dlg = pygame.font.Font(None, DLG_FONT)         # 对话台词
-        self.f_mono = pygame.font.Font(None, MONO_FONT)       # 内心独白
-        self.f_prompt = pygame.font.Font(None, PROMPT_FONT)   # 底部提示
+        # 字体只建一次（中英两套）：切换语言时只换 `f_xxx` 指向的对象，
+        # ui.py 里 100+ 处 `g.f_xxx` 的绘制代码一行都不用改。
+        self.lang = lang.LANG
+        self._font_sets = {"en": self._make_fonts(None)}   # 中文那套第一次切过去才建（省启动时间）
+        self.apply_fonts(self.lang)
 
         # 复用贴图（每帧新建 Surface 会掉帧）
         self.mirage_tile = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
@@ -152,7 +256,9 @@ class Game:
         # --- 状态 ---
         self.state = "TITLE"
         self.menu_t = 0.0
-        self.pause_sel = 0                     # 暂停菜单：当前高亮项 0继续/1重开本幕/2退出
+        self.audio.play_music("title")        # 标题页环境音
+        # 暂停菜单：当前高亮项 0继续 / 1语言 / 2重开本幕 / 3退出
+        self.pause_sel = 0
         self.pause_prev = ""                   # 暂停菜单：进菜单前的状态（继续时回去）
         self.epilogue_i = 0                    # 第五幕尾声：老者告别说到第几句
         self.rng = random.Random()
@@ -295,6 +401,9 @@ class Game:
         self.anomaly_miss = 0
         self.stain_warned = False
         self.wipe_warned = False                     # 第二幕：第一次被清行的独白只放一次
+        self.thread_born_said = False                # 界丝：第一次长出来 / 第一次捡起 / 第一次搭成
+        self.thread_pick_said = False
+        self.thread_bridge_said = False
 
         # 过场
         self.cs_t = 0.0
@@ -320,6 +429,7 @@ class Game:
         self.glow_t = 0.0
         self.items = []
         self.has_bag = False
+        self.has_map = False
         self.reward_phase = None
         self.reward_t = 0.0
         self.spread_r = 0.0
@@ -328,6 +438,7 @@ class Game:
     # ---------- 开局 ----------
     def start_act(self):
         self.act = 1
+        self.audio.play_music("act1")
         self.target, self.qr_content = generate_target(self.rng)
         self.must_all = required_cells(self.target, act=self.act)
         # 第一幕分两波（2026-11-14）：先写完自己醒来的那个角（左下定位图案 33 格）→ 一次清屏 →
@@ -386,6 +497,9 @@ class Game:
         self.anomaly_miss = 0
         self.stain_warned = False
         self.wipe_warned = False
+        self.thread_born_said = False
+        self.thread_pick_said = False
+        self.thread_bridge_said = False
 
         self.cs_t, self.cs_red_in, self.cs_flee, self.cs_m3 = 0.0, False, False, False
         self.oldman_faced_altar = False
@@ -396,7 +510,8 @@ class Game:
         self.clear_phase, self.clear_t, self.wave_r, self.glow_t = None, 0.0, 0.0, 0.0
         self.mini_wave = False                       # 第一幕第一波那种「只放波、不放道具」的清屏
         self.items = []
-        self.has_bag = self.has_sword = False
+        self.has_bag = self.has_map = self.has_sword = False
+        self.end_line = ""                           # 上一局的结局副标题不能带进新一局（第二圣坛同样是结局页）
         self.has_time_slow = self.has_dash = self.has_decoy = False
         self.scroll_count = 0
         self.time_slow_t = self.time_slow_cd = 0.0
@@ -501,7 +616,7 @@ class Game:
         self.checkpoint = self.make_checkpoint()
 
     def next_act(self):
-        """幕结束画面按下回车：1 → 2 → 3 → 4 → 5；第五幕之后回标题。"""
+        """幕结束画面按下回车：1 → 2 → 3 → 4 → 5 → 第二圣坛；第二圣坛之后回标题。"""
         if self.act < 2:
             self.start_act2()
         elif self.act < 3:
@@ -510,9 +625,12 @@ class Game:
             self.start_act4()
         elif self.act < 5:
             self.start_act5()
+        elif self.act < 6:
+            self.start_act6()
         else:
             self.state = "TITLE"
             self.menu_t = 0.0
+            self.audio.play_music("title")
             self.input.clear()
 
     def _begin_act(self, act):
@@ -609,6 +727,8 @@ class Game:
         if act >= 4:
             self.has_decoy = True                     # 第四幕：诱饵(F)，CD 技能
         self.scroll_count = 1 if act >= 5 else 0      # 第五幕：修复卷轴(G)，每幕 1 个
+        if act <= 5:
+            self.audio.play_music("act%d" % act)      # 每幕一条环境循环（第二圣坛沿用尾声音乐）
 
     def start_act2(self):
         """第一幕结束 → 第二幕。
@@ -733,6 +853,72 @@ class Game:
         self.audio.play("clear")
         self.checkpoint = self.make_checkpoint()
 
+    def start_act6(self):
+        """第五幕结局页 → **第二圣坛**（2026-11-25 作者定）。
+
+        没有怪、没有侵蚀、没有脏格：唯一要做的事是把老者的码补完。
+        骨架（定位 / 定时 / 格式 / 暗模块，124 格）已经留在坛上 —— 他记得结构；
+        缺的是数据区（106 格），也就是「他记不住的那些字」。和网页两段记忆正好对应：
+        I 是骨架，II 是数据区。
+        """
+        self._begin_act(6)
+        self.target = make_qr(OLD_MAN_CODE)
+        self.must_all = required_cells(self.target, act=4)      # 230 个黑格
+        skel = structural_black_cells(self.target)              # 124 骨架
+        self.must = set(self.must_all) - skel                   # 106 数据区
+        self.board = Board(self.target, self.must)
+        for (r, c) in skel:                                     # 骨架预先写黑
+            self.board.state[r][c] = VALID
+        self.board.set_must(self.must)
+
+        self.repair_cells = set()
+        self.oldman = None
+        self.oldman_turned = False
+        self.qr_content = OLD_MAN_CODE
+        self.end_line = ""
+        self.scan_t = 0.0
+        self.thread_on_cell = False
+        self.thread_spawn_t = 1e9                               # 第二圣坛不产界丝
+        self.player.cell = (12, 12)
+        self.player.pos.update(cell_center(12, 12))
+        self.player.facing = 1
+        self.state = "ALTAR2"
+        self.spawn_rate = 0.0
+        # 走到这里玩家早就会看、会写了：别再弹 TRY [SHIFT] / 第一次落笔的提示
+        # （三个字段都在 __init__ / reset 里初始化为 False，见 L390-392）
+        self.looked = True
+        self.reveal_used = True
+        self.taught_write = True
+        self.audio.play_music("end")
+        self.show_hint(story.HINT_SWEEP, 6.0)
+        self.say(story.ACT6_M1)
+        self.checkpoint = self.make_checkpoint()
+
+    def enter_altar2_scan(self):
+        """数据区写满：圣坛开始读老者的码。"""
+        self.state = "ALTAR2_SCAN"
+        self.scan_t = 0.0
+        self.hint_text, self.hint_t = "", 0.0
+        self.claims.clear()
+        self.audio.play("clear")
+
+    def update_altar2_scan(self, dt):
+        self.scan_t += dt
+        if self.scan_t < SCAN_TIME:
+            return
+        self.state = "ALTAR2_BACK"
+        self.oldman = OldMan(OLDMAN_CELL, facing=1)             # 他回来了
+        self.oldman_turned = True
+        self.audio.play("staff")
+        self.say(story.ACT6_BACK, who=story.OLD_MAN)
+
+    def advance_altar2_back(self):
+        """老者说完最后一句 → 结局页：这张码也能扫，读出来是 HE REMEMBERS YOU。"""
+        self.state = "END"
+        self.menu_t = 0.0
+        self.show_banner(story.ACT6_END_TITLE, 999.0)
+        self.end_line = story.END_LINE % self.qr_content
+
     def erode(self, n):
         """侵蚀 n 个码字：把它们该黑的格整块抹白（这就是这一幕开局的「欠账」）。
 
@@ -815,6 +1001,7 @@ class Game:
             return
         # 码读出来了，记录的是码序者。老者记不住自己的数据区 → 尾声：他告别、消失。
         self.state = "EPILOGUE"
+        self.audio.play_music("end")              # 尾声：收束和弦
         self.epilogue_i = 1                       # 第一句已说，下一句是 EPILOGUE[1]
         self.menu_t = 0.0
         self.claims.clear()
@@ -1019,6 +1206,9 @@ class Game:
             self.oldman.gone = True
             self.oldman.leaving = False
         self.checkpoint = self.make_checkpoint()
+        # 第一幕老者走后：玩家常不知道该干什么，开战前先讲一句「用异象照出定时图案+固定黑点、
+        # 复原了才能合并板块、去下一块」（心声，冻世界等回车）。
+        self.say(story.A1_GUIDE)
 
     def make_checkpoint(self):
         return {
@@ -1032,6 +1222,7 @@ class Game:
             "must": set(self.must),
             "act1_wave": getattr(self, "act1_wave", 1),
             "bag": self.has_bag,          # 第一幕之后一直带着，回检查点不能丢
+            "map": self.has_map,          # 第一幕收尾的收藏品：指向第二圣坛
             "sword": self.has_sword,      # 第二幕之后一直带着
             "thread": self.thread_count,  # 界丝数量：第二幕起贯穿始终，回检查点不能丢
             "time_slow": self.has_time_slow,   # 道具：跨检查点保留解锁状态
@@ -1066,6 +1257,7 @@ class Game:
         self.items.clear()
         # 按检查点恢复：第一幕的检查点在拿道具之前（False），第二幕在拿之后（True）
         self.has_bag = cp.get("bag", False)
+        self.has_map = cp.get("map", False)
         self.has_sword = cp.get("sword", False)
         self.thread_count = cp.get("thread", 0)
         self.has_time_slow = cp.get("time_slow", False)
@@ -1113,6 +1305,7 @@ class Game:
         self.gap_t = 0.0
         self.open_t = 0.0
         self.input.clear()
+        self.audio.play_music("act%d" % min(self.act, 5))     # 回检查点：接回本幕的环境音
 
     # ---------- 文本通道 ----------
     def reset_mono(self):
@@ -1232,15 +1425,21 @@ class Game:
             self.debug = not self.debug
             return
 
+        if sc == SC_M:                               # 静音开关（2026-11-24）
+            self.audio.set_muted(not self.audio.muted)
+            self.audio.play("ui")                    # 取消静音时能听到确认音
+            self.show_hint("SOUND ON" if not self.audio.muted else "SOUND OFF", 1.4)
+            return
+
         st = self.state
 
         # ---- 暂停菜单：世界冻结，只认上下/回车/ESC ----
         if st == "PAUSE":
             if sc in (SC_W, SC_UP):
-                self.pause_sel = (self.pause_sel - 1) % 3
+                self.pause_sel = (self.pause_sel - 1) % len(PAUSE_OPTIONS)
                 self.audio.play("ui")
             elif sc in (SC_S, SC_DOWN):
-                self.pause_sel = (self.pause_sel + 1) % 3
+                self.pause_sel = (self.pause_sel + 1) % len(PAUSE_OPTIONS)
                 self.audio.play("ui")
             elif sc in (SC_ENTER, SC_KP_ENTER, SC_SPACE):
                 self._pause_confirm()
@@ -1279,6 +1478,9 @@ class Game:
                 if st == "EPILOGUE" and self.mono_elapsed >= self.mono_type_time:
                     self.mono_hold = False
                     self.advance_epilogue()
+                elif st == "ALTAR2_BACK" and self.mono_elapsed >= self.mono_type_time:
+                    self.mono_hold = False
+                    self.advance_altar2_back()
                 else:
                     self.advance_monologue()
             return
@@ -1307,6 +1509,49 @@ class Game:
         elif sc == SC_G and self.scroll_count > 0 and st in PAINT_STATES:
             self.try_scroll()               # 道具：修复卷轴
 
+    # ---------- 语言与字体（2026-11-25） ----------
+    def _make_fonts(self, path):
+        """按字体文件建一套 UI 字体。`path=None` = pygame 自带的 freesansbold（英文）。"""
+        if path is None:
+            def mk(size):
+                return pygame.font.Font(None, size)
+        else:
+            def mk(size):
+                return pygame.font.Font(path, size)
+        zh = path is not None              # 中文字形更高更宽：HUD 小字和结局大字各收一档
+        return {
+            "f_small": mk(19 if zh else 21),
+            "f_main": mk(27),
+            "f_panel": mk(30),
+            "f_mid": mk(46),
+            "f_big": mk(104),
+            "f_end": mk(76 if zh else 104),           # 结局页大字（单独一档，免得压住副标题）
+            "f_tiny": mk(16 if zh else 18),           # 道具标签
+            "f_dlg_name": mk(DLG_NAME_FONT),          # 对话名牌
+            "f_dlg": mk(DLG_FONT),                    # 对话台词
+            "f_mono": mk(MONO_FONT),                  # 内心独白
+            "f_prompt": mk(PROMPT_FONT),              # 底部提示
+        }
+
+    def apply_fonts(self, code):
+        """把某一套字体的对象挂回 `f_xxx` —— 绘制代码只认属性名，不关心是哪套。"""
+        if code not in self._font_sets:
+            self._font_sets[code] = self._make_fonts(lang.font_file())
+        for name, font in self._font_sets[code].items():
+            setattr(self, name, font)
+
+    def set_language(self, code):
+        """切换语言：换字体 + 让当前字幕按新语言重排。**状态里的英文原文不动。**"""
+        if code == self.lang:
+            return
+        before = dialog_char_total(self) if self.dlg_lines else 0
+        lang.set_lang(code)
+        self.lang = code
+        self.apply_fonts(code)
+        after = dialog_char_total(self) if self.dlg_lines else 0
+        if before and after:
+            self.dlg_t *= after / float(before)      # 打字进度按字符数缩放，半句不会突然跳完
+
     # ---------- 暂停菜单（ESC） ----------
     def _pause_open(self):
         """ESC：弹出暂停菜单，世界冻结。记下进来前的状态，「继续」时原样回去。"""
@@ -1325,7 +1570,10 @@ class Game:
         """暂停菜单按回车：执行当前高亮项。"""
         if self.pause_sel == 0:                    # 继续游戏
             self._pause_resume()
-        elif self.pause_sel == 1:                  # 重新开始本幕
+        elif self.pause_sel == 1:                  # 语言：切完仍停在菜单里
+            self.set_language("zh" if self.lang == "en" else "en")
+            self.audio.play("ui")
+        elif self.pause_sel == 2:                  # 重新开始本幕
             self.pause_prev = ""
             if self.checkpoint is None:            # 还没到检查点（第一幕开场）→ 重开第一幕
                 self.start_act()
@@ -1334,6 +1582,7 @@ class Game:
         else:                                      # 退出游戏 → 回标题页
             self.pause_prev = ""
             self.state = "TITLE"
+            self.audio.play_music("title")
             self.input.clear()
 
     def on_click(self, x, y):
@@ -1354,6 +1603,8 @@ class Game:
     # ---------- 更新 ----------
     def update(self, dt):
         self._last_dt = dt
+        # 音乐每帧更新一次：暂停菜单里自动压低（世界冻结也要能听见它在）
+        self.audio.update(ducked=self.state == "PAUSE")
         # 暂停菜单：世界彻底冻结（怪物、计时、贴图动画都不走），只走菜单自己的时基。
         if self.state == "PAUSE":
             self.menu_t += dt
@@ -1391,7 +1642,8 @@ class Game:
         if st in PAINT_STATES:
             if self.input.down(SC_J) and not self.shift_held():
                 self.hold_paint(dt)
-            elif self.input.down(SC_K):
+            elif self.input.down(SC_K) and self.act < 6:
+                # 第二圣坛没有脏格，也不许擦掉预置的骨架（擦掉这张码就扫不出来了）
                 self.fill_t = 0.0
                 self.fill_cell = None
                 if self.board.start_erase(*self.player.cell):
@@ -1421,6 +1673,8 @@ class Game:
             self.update_reward(dt)
         elif st == "SCAN":
             self.update_scan(dt)
+        elif st == "ALTAR2_SCAN":
+            self.update_altar2_scan(dt)
 
         if st in PAINT_STATES:
             if st != "TUTORIAL":                 # 教程自己有一套提示顺序，别抢
@@ -1432,6 +1686,9 @@ class Game:
         if self.act == 1 and st in PAINT_STATES and self.state != "CLEAR" \
                 and self.board.is_complete():
             self.enter_clear()
+        # 第二圣坛：数据区写满 → 扫描（这一幕没有怪，不存在中途被打断）
+        if self.act == 6 and st == "ALTAR2" and self.board.is_complete():
+            self.enter_altar2_scan()
 
     def tick_timers(self, dt):
         if self.mono_gap > 0:
@@ -1738,7 +1995,6 @@ class Game:
         if self.oldman_dist() <= CALL_RANGE_PX:
             self.call_armed = True                      # 第一次靠近老者：激活提示
             self.prompt_text = story.PROMPT_CALL
-            self.show_teach_anim("call")
         else:
             self.prompt_text = ""
 
@@ -1976,6 +2232,7 @@ class Game:
 
         if self.health <= 0:
             self.state = "DEAD"
+            self.audio.stop_music()               # 死了就别继续播环境音
             self.menu_t = 0.0
             return
         # 第五幕：骨架完好 + 错误压进容错容量 → 码能读了。**先于「涂满了」判定** ——
@@ -2234,6 +2491,10 @@ class Game:
                 self.thread_on_cell = True
                 self.show_teach_anim("bridge")
                 self.audio.play("pickup")          # 长出来了：一声轻响
+                # 第一次长出来：讲「这是圣坛自己长的、一次只长一根」（一生一次）
+                if not self.thread_born_said:
+                    self.thread_born_said = True
+                    self.say(story.A2_THREAD_BORN)
         # 通道计时
         if self.thread_bridge is not None:
             self.thread_bridge["t"] -= dt
@@ -2259,6 +2520,10 @@ class Game:
         self.thread_count += 1
         self.thread_spawn_t = THREAD_SPAWN_INTERVAL    # 重新计时下一根
         self.audio.play("pickup")
+        # 第一次拿在手里：讲它的来历（圣坛自己的材料）和用途（拉过裂缝）
+        if not self.thread_pick_said:
+            self.thread_pick_said = True
+            self.say(story.A2_THREAD_PICK)
 
     # ---- 道具（2026-11-16 作者定：每幕一个新）----
     _FACING_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
@@ -2352,6 +2617,10 @@ class Game:
                         self.thread_count -= 1
                         self.thread_bridge = {"cells": cells, "t": THREAD_BRIDGE_LIFE}
                         self.audio.play("ui")
+                        # 第一次搭成：只飘一句「撑不久」，不停世界（玩家正在过桥）
+                        if not self.thread_bridge_said:
+                            self.thread_bridge_said = True
+                            self.mumble(story.A2_THREAD_BRIDGE)
         else:
             self.thread_cast_t = 0.0
 
@@ -2552,8 +2821,8 @@ class Game:
         self.prompt_text = ""
 
     def spawn_items(self):
-        """道具浮出来：第一幕 BAG，第二幕 SWORD（第三幕之后还没定）。"""
-        kinds = {1: ("bag",), 2: ("sword",)}.get(self.act, ())
+        """道具浮出来：第一幕 BAG + MAP，第二幕 SWORD（第三幕之后还没定）。"""
+        kinds = {1: ("bag", "map"), 2: ("sword",)}.get(self.act, ())
         cells = sorted(c for c in self.must if self.board.state[c[0]][c[1]] == 1)
         self.rng.shuffle(cells)
         self.items = [Item(kind, cell) for kind, cell in zip(kinds, cells[:len(kinds)])]
@@ -2614,6 +2883,9 @@ class Game:
         if it.kind == "bag":
             self.has_bag = True
             self.show_hint(story.ITEM_BAG, 5.0)
+        elif it.kind == "map":
+            self.has_map = True                       # 纯收藏：不绑按键，只进物品栏
+            self.show_hint(story.ITEM_MAP, 5.0)
         elif it.kind == "sword":
             self.has_sword = True
             self.show_teach_anim("sword")

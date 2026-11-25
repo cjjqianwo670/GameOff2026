@@ -61,6 +61,7 @@
 | `MONO_INCOMING` | 红怪来袭（开战） | `They're coming back.` | 它们回来了 |
 | `MONO_HIT` | 被红怪咬 | `Agh! It bit me.` | 啊！它咬到我了 |
 | `MONO_STAIN_HURT` | 脏格超标开始扣血 | `Too many stains... it's taking a toll.` | 污渍太多了……在侵蚀我 |
+| `A1_GUIDE` | 第一幕老者走后（开战前） | `The Anomaly shows three finder squares and one fixed dark dot. Restore them all.`<br>`Restore a slab, and it joins to the next — only a whole slab opens the way.` | 用异象照出三个定位图案和一个固定黑点完成复原；每复原一块板块就与下一块合并，复原完整才能继续探索 |
 
 ---
 
@@ -146,9 +147,9 @@ WE WILL BE BACK FOR BOTH OF YOU.
 | 道具 | 英文 | 中文原文 |
 | --- | --- | --- |
 | 背包 | `BAG — you can carry what you find.` | 背包 |
-| 地图 | `MAP — everything you have looked at stays on it.` | 地图 |
+| 地图 | `MAP — out past the edge. A second altar, still holding a code.` | 地图 |
 
-> 地图那句要提到「看过才留下」——这是它和异象的关系，玩家需要知道。
+> 地图是第一幕收尾的**纯收藏品**（不绑按键），那句只负责埋「第二圣坛」的位置线索，不提示怎么涂格。
 
 ---
 

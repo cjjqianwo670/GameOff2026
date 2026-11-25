@@ -135,6 +135,23 @@ tick(g, 2400, "END")
 check("第五幕收尾", g.state, "END")
 check("终幕那句话", g.end_line.endswith("https://he-r.cn"), True)
 g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
+check("结局页回车 → 第二圣坛", g.state, "ALTAR2")
+check("第二圣坛 act = 6", g.act, 6)
+
+# 第二圣坛：无怪、只补数据区 106 格
+tick(g, 180)
+check("第二圣坛没有怪", (len(g.monsters), len(g.purples), len(g.greens)), (0, 0, 0))
+check("第二圣坛不掉血", g.health, 100)
+check("第二圣坛只需 106 格", len(g.must), 106)
+fill_all(g)
+tick(g, 30)
+check("数据区写满 → 扫描", g.state, "ALTAR2_SCAN")
+tick(g, 2400, "ALTAR2_BACK")
+check("扫描完 → 老者回来", g.state, "ALTAR2_BACK")
+tick(g, 900, "END")
+check("第二圣坛收尾", g.state, "END")
+check("第二圣坛读出老者的码", g.end_line.endswith("HE REMEMBERS YOU"), True)
+g.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
 check("回车回标题", g.state, "TITLE")
 
 bad = [s for s in _steps if s[1] != s[2]]

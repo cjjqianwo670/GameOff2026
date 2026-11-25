@@ -80,16 +80,16 @@ g2.clear_phase = "wave"
 g2.wave_r = 0.0
 run(g2, 3.5)
 run(g2, 1.8)
-check("走到奖励阶段、道具已浮出（只剩 BAG 一件）", g2.state == "REWARD" and len(g2.items) == 1,
-      "%s / %d" % (g2.state, len(g2.items)))
+check("走到奖励阶段、道具已浮出（BAG + MAP 两件）",
+      g2.state == "REWARD" and len(g2.items) == 2, "%s / %d" % (g2.state, len(g2.items)))
 if g2.items:
     it = g2.items[0]
     put(g2, it.cell)
     run(g2, 0.05)
     g2.handle_event(ev(48))
-    check("按 ]（旧代码里被当成 B）不会拾取", len(g2.items) == 1, "%d" % len(g2.items))
+    check("按 ]（旧代码里被当成 B）不会拾取", len(g2.items) == 2, "%d" % len(g2.items))
     g2.handle_event(ev(SC_B))
-    check("按 B 才拾取", len(g2.items) == 0, "%d" % len(g2.items))
+    check("按 B 才拾取", len(g2.items) == 1 and it not in g2.items, "%d" % len(g2.items))
 
 # ==================== 回车 / J 串键（2026-11-11 修的 bug） ====================
 # 现象：站在格子上按回车，脚下被涂黑。

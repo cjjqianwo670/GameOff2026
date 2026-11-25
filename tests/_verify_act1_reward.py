@@ -60,8 +60,8 @@ check("100 格涂满", checks_done == 100, "%d" % checks_done)
 check("四块写满 → 收尾清屏 → 进奖励阶段", g.state == "REWARD", g.state)
 
 run(g, 1.8)                       # REWARD_DELAY
-check("道具浮出来了（只剩 BAG，地图已删）", len(g.items) == 1 and g.items[0].kind == "bag",
-      str([i.kind for i in g.items]))
+kinds = sorted(i.kind for i in g.items)
+check("道具浮出来了（BAG + MAP 两件）", kinds == ["bag", "map"], str(kinds))
 check("道具落在「已复原的黑格」上",
       all(g.board.state[i.cell[0]][i.cell[1]] == VALID for i in g.items))
 shot(g, "16_reward_items.png")
@@ -70,14 +70,23 @@ shot(g, "16_reward_items.png")
 panel_x = PANEL_X + PANEL_PAD
 check("拾取前右侧没有物品栏", not g.has_bag)
 
-it = g.items[0]
-put(g, it.cell)
+bag_it = next(i for i in g.items if i.kind == "bag")
+put(g, bag_it.cell)
 run(g, 0.05)
 check("站在 BAG 旁边出现 PRESS [B] TO PICK UP", g.prompt_text == story.PROMPT_PICK, repr(g.prompt_text))
 g.handle_event(ev(SC_B))
 run(g, 0.05)
-check("按 B 拾取 BAG", g.has_bag and it not in g.items)
+check("按 B 拾取 BAG", g.has_bag and bag_it not in g.items)
 check("拾取后弹出道具说明", g.hint_text == story.ITEM_BAG, repr(g.hint_text))
+
+map_it = next(i for i in g.items if i.kind == "map")
+put(g, map_it.cell)
+run(g, 0.05)
+g.handle_event(ev(SC_B))
+run(g, 0.05)
+check("按 B 拾取 MAP", g.has_map and map_it not in g.items)
+check("地图说明指向第二圣坛", g.hint_text == story.ITEM_MAP, repr(g.hint_text))
+shot(g, "17_bag_with_map.png")
 
 g.draw()
 # 物品栏：8 个格子（边框色能在面板下半区找到）

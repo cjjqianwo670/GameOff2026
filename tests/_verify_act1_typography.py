@@ -9,11 +9,11 @@ from src.config import (
     C_BOX,
     TOAST_MAX, TOAST_TIME,
     C_ACCENT, C_OLDMAN, DLG_BOTTOM, DLG_BOX, DLG_CPS, DLG_FONT, DLG_LINE_H, DLG_NAME_FONT, DLG_PAD,
-    C_TEXT, DLG_MIN_ROWS, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_REPEAT_GAP, PLAYER_GLOW_R,
+    C_TEXT, DLG_MIN_ROWS, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_MAX_ROWS, MONO_REPEAT_GAP, PLAYER_GLOW_R,
     PROMPT_FONT, SC_ENTER, SC_ESC, WINDOW_W
 )
 from src.grid import cell_center
-from src.ui import dlg_box_lines, dialog_char_total, dialog_lines, mono_box, mono_lines
+from src.ui import dlg_box_lines, dialog_char_total, dialog_lines, mono_box, mono_lines, mono_text_top
 
 TITLE = "TYPOGRAPHY · MONOLOGUE + DIALOGUE"
 
@@ -150,16 +150,32 @@ for _ in range(int(4 * 60)):
 check("光等不会自己消失（寿命由玩家决定，不是计时器）",
       g2.mono_hold and g2.mono_text == story.M1, "%s / %r" % (g2.mono_hold, g2.mono_text[:12]))
 
-# 每一句心声都必须放得进框（最多 3 行）
+# 每一句心声都必须放得进框（最多 4 行；2026-11-24 从 3 提到 4）
 fits = {}
-for name in ("M1", "M2", "M3", "A2_M1", "A2_M2", "A4_PURPLE", "A4_M2"):
+for name in ("M1", "M2", "M3", "A2_M1", "A2_M2", "A4_PURPLE", "A4_M2", "A1_GUIDE", "A5_M1",
+             "A2_THREAD_BORN", "A2_THREAD_PICK"):
     text = getattr(story, name, None)
     if not text:
         continue
     g2.mono_text = text
     fits[name] = len(mono_lines(g2))
 g2.mono_text = story.M1
-check("9 条心声全部 ≤ 3 行（框装得下）", all(n <= 3 for n in fits.values()), str(fits))
+check("%d 条心声全部 ≤ %d 行（框装得下）" % (len(fits), MONO_MAX_ROWS),
+      all(n <= MONO_MAX_ROWS for n in fits.values()), str(fits))
+
+# 行数够不够是一回事，**框画得够不够高**是另一回事（2026-11-24 作者截图：
+# A1_GUIDE 折成 4 行，但框只按 3 行画，第 4 行掉到框外、压在 ENTER 上）。
+for name in ("A1_GUIDE", "A5_M1"):
+    g2.mono_text = getattr(story, name)
+    box = mono_box(g2)
+    top = mono_text_top(g2, box)
+    rows = len(mono_lines(g2))
+    line_h = g2.f_mono.render("Ag", True, C_TEXT).get_height()
+    last_bottom = top + (rows - 1) * MONO_LINE_H + line_h
+    enter_top = box.bottom - 18 - g2.f_small.render("ENTER", True, C_TEXT).get_height()
+    check("%s 的 %d 行整句落在框内、且不压 ENTER" % (name, rows),
+          box.top <= top and last_bottom <= enter_top,
+          "last_bottom=%d enter_top=%d box=%r" % (last_bottom, enter_top, tuple(box)))
 
 # ==================== 心声会冻住世界（2026-11-12 作者要求）====================
 # 作者：「有时候玩家犯错，然后突然出现心声遮住屏幕了，怪还在打你，体验很差。」

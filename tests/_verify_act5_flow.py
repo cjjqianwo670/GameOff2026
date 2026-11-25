@@ -142,7 +142,8 @@ check("...结局把这张码的内容念出来",
       g4.end_line == "IT READS:  %s" % g4.qr_content, repr(g4.end_line))
 check("...act_title(5) 也对", story.act_title(5) == "ACT 5 — END", story.act_title(5))
 g4.handle_event(pygame.event.Event(pygame.KEYDOWN, key=0, scancode=ENTER))
-check("...END 按回车回标题（全剧终）", g4.state == "TITLE", g4.state)
+check("...END 按回车 → 第二圣坛（2026-11-25 起不再直接回标题）",
+      g4.state == "ALTAR2" and g4.act == 6, "%s / %d" % (g4.state, g4.act))
 
 # ==================== 5. 多错一个就进不了扫描 ====================
 g5 = to_act5()

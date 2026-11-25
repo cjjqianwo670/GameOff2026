@@ -2,3 +2,6 @@
 .venv/
 __pycache__/
 tests/_shots/
+build/
+dist/
+web_build/

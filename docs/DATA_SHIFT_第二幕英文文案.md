@@ -10,13 +10,14 @@
 
 ---
 
-## 0. 译名表（在第一幕的基础上新增三条）
+## 0. 译名表（在第一幕的基础上新增四条）
 
 | 中文 | English | 说明 |
 | --- | --- | --- |
 | 定时图案 | **the timing pattern** | QR 第 6 行 / 第 6 列那两条交替的黑格。专有名词，小写 t |
 | 紫色生物 | **the purple one** | **不给学名**。跟「the red ones」同一逻辑；它一次只来一只，所以用单数 |
 | 绿色生物 | **the green one** | **不给学名**。第二幕起低频登场，一次清 3×3（红怪的面扩展版） |
+| 界丝 | **the thread** | 代码里叫 `BOUND-THREAD`，但**界面上只叫 the thread**（`HINT_THREAD_*` 都是 `THE THREAD`）。要跟「两条线 / the lines」区分开：线是码上的结构，丝是圣坛长出来的东西 |
 
 沿用第一幕：`Sequencer` / `the Altar` / `the Dark` / `the Anomaly` / `the grey` / `a stain` / `the plain` / `the old man` / `the red ones` / `erosion`。
 
@@ -38,6 +39,22 @@
 | **A2\_****M1** ✅ | 第二幕开场，光退下去之后（**作者已确认**） | `The old man hasn't come back.`<br>`The three corners are still here.`<br>`Something between them is missing.` | 老者没有回来。三个角还在，但角与角之间少了什么。 |
 | **A2\_****M2** | 第一次照出定时图案的绿框 | `Two lines.`<br>`They run between the corners.`<br>`I never looked there.` | 两条线，从角与角之间穿过去。我从来没往那儿看过。 |
 | **A2\_****GREEN** | 绿怪第一次进场（第二幕低频，清 3×3） | `That one's green.`<br>`It eats a whole patch.` | 那是绿色的。它吃一整片。 |
+| **A2\_****THREAD\_****BORN** | 第二幕第一次在固定黑点长出界丝（开场约 8 秒） | `The altar grew a thread.`<br>`One at a time, on the dark dot.` | 圣坛长出一根丝。一次一根，长在唯一的那个固定黑点上。 |
+| **A2\_****THREAD\_****PICK** | 第一次捡起界丝（站到黑点旁按 B） | `It's the altar's own material.`<br>`It knows it's broken.`<br>`I can pull it across a gap.` | 那是圣坛自己的材料。它知道自己破了。我能把它拉过裂缝。 |
+| **A2\_****THREAD\_****BRIDGE** | 第一次按 I 搭成跨缝通道（**飘字，不停世界**） | `It won't hold long.` | 撑不了多久。 |
+
+> **2026-11-24 补**：作者指出「游戏里没有讲述界丝的来历和作用」—— 此前界丝只有四句操作提示
+> （`HINT_THREAD_PICK` / `_FULL` / `_EMPTY` / `_CAST`），玩家知道要按 I，但不知道这根丝是什么、
+> 从哪来、凭什么架得住裂缝。这三句按「看见什么说什么」写：
+>
+> - **BORN** 只交代「谁长的、长在哪、一次一根」—— 不解释圣坛为什么能长；
+> - **PICK** 才给来历（圣坛**自己的材料**、它**知道自己破了**）和用途（拉过裂缝）。这是唯一带判断的一句，
+>   所以放在玩家**手里真的拿到**之后，而不是一开场就念；
+> - **BRIDGE** 只给时限（5 秒），而且走**飘字**：这一刻玩家正在过桥，冻世界会打断动作。
+>   这也是全篇唯一一次用 `mumble` 讲规则。
+>
+> 三句都是**一生一次**（`thread_born_said` / `thread_pick_said` / `thread_bridge_said`），
+> 第二幕很静，不能每次长丝都念。
 | ~~**A2\_**~~~~**M3**~~ | ~~紫色生物第一次出现~~ | `That's not one of the red ones.`<br>`It's slower. It's looking at the lines.` | ~~那不是红色生物。它更慢，而且它在看那两条线。~~ |
 | ~~**A2\_**~~~~**M4**~~ | ~~第一次被清掉一整条之后~~ | `It didn't take one cell.`<br>`It took the whole line.` | ~~它不是拿走一格。它拿走了整条。~~ |
 

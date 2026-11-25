@@ -93,7 +93,7 @@ all_boards(g)                       # BL → TL → TR → BR（最后一块 0 �
 check("100 格全复原", g.board.progress() == 100, "%d" % g.board.progress())
 check("四块拼完 → 收尾清屏 → 奖励阶段", g.state == "REWARD", "%s/%s" % (g.state, g.clear_phase))
 run(g, 1.8)                                     # REWARD_DELAY 之后才浮出
-check("道具浮出（只剩 BAG 一件，地图已删）", len(g.items) == 1 and g.items[0].kind == "bag",
+check("道具浮出（BAG + MAP 两件）", sorted(i.kind for i in g.items) == ["bag", "map"],
       "%d / %s" % (len(g.items), [i.kind for i in g.items]))
 
 # --- 性能 ---

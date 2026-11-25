@@ -294,17 +294,17 @@ class GreenOne:
 
 
 class PurpleOne:
-    """锁圣坛内的一个黑格，撞到后清掉它所在「黑格更多」的那一整条线。
+    """锁圣坛内的一个黑格，撞到后清掉它所在的那一整条线。
 
-    规则（作者 2026-11-11 拍板）：
-      P3  只锁**圣坛内**的有效黑域
-      P2  比较锁定格所在的行与列，清**黑格更多**的那条
+    规则（作者 2026-11-11 拍板；2026-11-25 把「最近」和「黑格更多」改成随机）：
+      P3  只锁**圣坛内**的有效黑域；目标从里面**均匀随机**挑一格（原：最近）
+      P2  撞到后**随机**清该格所在的行或列（原：比较行/列，清黑格更多的那条）
       P4  清**整条 25 格**（含圣坛外的平地诱饵）
-      P9  脏格不算黑格 —— 既不计入「哪条多」，也不被清掉
+      P9  脏格不算黑格 —— 既不会被选中，也不被清掉
       P10 圣坛内**一格黑域都没有**时，转而扑向码序使，撞到扣 10% 血（作者 2026-11-12）
-      默认  平局选离玩家远的那条；一生只生效一次，撞完由 game 移除
+      默认  诱饵优先；一生只生效一次，撞完由 game 移除
 
-    update() 返回 "alive" / ("wipe", axis, index, cleared) / ("hit",)。
+    update() 返回 "alive" / ("wipe", axis, index, cleared) / ("hit",) / ("decoy", decoy)。
     """
 
     def __init__(self, pos, speed=None, radius=None):
@@ -318,8 +318,9 @@ class PurpleOne:
         self.done = False                      # 撞过一次就置 True，防止同一只连清两条
 
     def retarget(self, board, decoys=None):
-        """最近的有效黑域，**且必须在圣坛内**。找不到返回 False。
-        2026-11-16：优先锁诱饵（强吸引）。
+        """诱饵优先；否则在圣坛内的有效黑域里**均匀随机**挑一格。找不到返回 False。
+
+        2026-11-25 作者改：原来是「最近的黑格」，现在是随机 —— 行踪不可预测。
         """
         if decoys:
             best_dc, best_d = None, None
@@ -333,31 +334,18 @@ class PurpleOne:
             if best_dc is not None:
                 self.target = best_dc.cell
                 return True
-        best, best_d = None, None
-        for r in range(GRID_N):
-            row = board.state[r]
-            for c in range(GRID_N):
-                if row[c] != VALID or not board.in_altar(r, c):
-                    continue
-                cx, cy = cell_center(r, c)
-                d = (cx - self.pos.x) ** 2 + (cy - self.pos.y) ** 2
-                if best_d is None or d < best_d:
-                    best, best_d = (r, c), d
-        self.target = best
-        return best is not None
+        cells = [(r, c) for r in range(GRID_N) for c in range(GRID_N)
+                 if board.state[r][c] == VALID and board.in_altar(r, c)]
+        if not cells:
+            self.target = None
+            return False
+        self.target = random.choice(cells)
+        return True
 
-    def pick_line(self, board, cell, player_pos=None):
-        """行 vs 列，谁的黑格多清谁；平局清离玩家远的那条。返回 ("row"|"col", index)。"""
+    def pick_line(self, cell):
+        """清「行」还是「列」：各 50%，纯随机（作者 2026-11-25 定）。"""
         r, c = cell
-        n_row = board.line_dark("row", r)
-        n_col = board.line_dark("col", c)
-        if n_row != n_col:
-            return ("row", r) if n_row > n_col else ("col", c)
-        if player_pos is None:
-            return ("row", r)
-        cx, cy = cell_center(r, c)
-        # 玩家离线越远越安全：比较「玩家到这条行/列中线的距离」
-        return ("row", r) if abs(player_pos.y - cy) >= abs(player_pos.x - cx) else ("col", c)
+        return ("row", r) if random.random() < 0.5 else ("col", c)
 
     def update(self, dt, board, player=None, decoys=None):
         if self.done:                          # 已经清过一条：等 game 把自己移除
@@ -381,7 +369,7 @@ class PurpleOne:
                         self.target = None
                         self.done = True
                         return ("decoy", dc)
-            axis, idx = self.pick_line(board, self.target, player.pos if player else None)
+            axis, idx = self.pick_line(self.target)
             cleared = board.clear_line(axis, idx)
             self.last_wipe = (axis, idx, cleared)
             self.target = None
@@ -627,7 +615,7 @@ class Item:
     """清屏之后从已复原的黑格上浮出来的道具。t 是浮起进度 0→1。"""
 
     def __init__(self, kind, cell):
-        self.kind = kind                # "bag" / "sword"
+        self.kind = kind                # "bag" / "map" / "sword"
         self.cell = cell
         self.pos = pygame.Vector2(cell_center(*cell))
         self.t = 0.0

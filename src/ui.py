@@ -10,7 +10,7 @@
 """
 
 import math
-import types
+import re
 from typing import TYPE_CHECKING
 
 import pygame
@@ -19,6 +19,7 @@ if TYPE_CHECKING:            # 只为 IDE 补全与类型检查，运行时不�
     from src.game import Game
 
 from src import sprites, story
+from src.lang import T, TK
 from src.config import (
     BOARD_PUSH, BOARDS,
     BAG_SLOTS, CELL, CLEAR_WAVE_WIDTH, C_ACCENT, C_ALTAR, C_BG, C_BG_GRID, C_CELL_BLACK,
@@ -34,7 +35,7 @@ from src.config import (
     GRID_ORIGIN, GRID_PX, HEALTH_LOW, HEALTH_MAX, HEALTH_WARN, HINT_Y, HUD_X, HUD_Y,
     INTRO_FALL, INTRO_PRINT, INTRO_SHOW,
     INTRO_TOTAL, MIRAGE_ALPHA_MAX, MIRAGE_FADE, MIRAGE_RADIUS, MONO_CPS,
-    MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H,
+    MONO_FADE_IN, MONO_FADE_OUT, MONO_FONT, MONO_LINE_H, MONO_MAX_ROWS,
     PANEL_H, PANEL_PAD, PANEL_W, PANEL_X, PANEL_Y,
     OLDMAN_HP, OLDMAN_REVIVE_TIME, SPAWN_ORIGIN,
     SPAWN_PX, STAIN_LIMIT, SWORD_RANGE, SWORD_SWING_TIME, TARGET_N, TOAST_LIFT,
@@ -193,9 +194,45 @@ def _keycap(s, g: "Game", key, x, cy, color=C_ACCENT):
     return box.right
 
 
+def _draw_call_bubble(g: "Game", s, ox, oy):
+    """T 呼叫提示：老者头顶一个小的对话气泡，里面是键帽 [T] + CALL 标签。
+
+    比原来那句荧光大字轻得多：白底气泡 + 黑键帽 + 短标签，像场景里的元素
+    而不是 UI 横幅。`bob` 让它轻微上下浮，不至于死贴在那儿。
+    """
+    key_img = g.f_small.render("T", True, C_ACCENT)
+    key_w = key_img.get_width() + 18                  # 与 _keycap 的键帽宽一致
+    label = g.f_small.render(T("CALL"), True, C_CELL_BLACK)
+    pad_x, pad_y, gap = 10, 6, 8
+    bw = pad_x + key_w + gap + label.get_width() + pad_x
+    bh = 28 + pad_y * 2
+
+    bob = int(2 * math.sin(g.anim_t * 2.4))           # 轻微上下浮
+
+    bubble = pygame.Rect(0, 0, bw, bh)
+    bubble.center = (ox, oy - 42 + bob)
+    # 贴近边缘时夹在窗口内，避免气泡出界
+    bubble.left = max(bubble.left, 6)
+    bubble.right = min(bubble.right, WINDOW_W - 6)
+    bubble.top = max(bubble.top, 6)
+
+    # 尾巴：白色小三角，尖端指向老者头顶
+    tx = min(max(ox, bubble.left + 8), bubble.right - 8)
+    pygame.draw.polygon(s, C_CELL_WHITE,
+                        [(tx - 4, bubble.bottom - 1), (tx + 4, bubble.bottom - 1), (tx, bubble.bottom + 5)])
+
+    # 气泡主体
+    pygame.draw.rect(s, C_CELL_WHITE, bubble, border_radius=8)
+    pygame.draw.rect(s, C_CELL_LINE, bubble, 1, border_radius=8)
+
+    # 键帽 [T] + 标签 CALL
+    right = _keycap(s, g, "T", bubble.left + pad_x, bubble.centery, color=C_ACCENT)
+    s.blit(label, label.get_rect(midleft=(right + gap, bubble.centery)))
+
+
 def _draw_title_enter(g: "Game", s, t):
     """进场提示：一个呼吸的框（不硬闪），右边一颗跟着闪的光标。"""
-    label = g.f_main.render("PRESS ENTER", True, C_TEXT)
+    label = g.f_main.render(T("PRESS ENTER"), True, C_TEXT)
     box = pygame.Rect(0, 0, label.get_width() + 56, 46)
     box.center = (WINDOW_W // 2, 596)
     k = 0.5 + 0.5 * math.sin(t * 2.4)                    # 0 → 1 呼吸
@@ -210,12 +247,12 @@ def _draw_title_controls(g: "Game", s, cy):
     """键位说明：键帽 + 右侧一列短词，一行排开。"""
     items = (("WASD", "MOVE"), ("SHIFT", "ANOMALY"), ("J", "DARK"), ("K", "ERASE"))
     gap_key, gap_group = 12, 38
-    spans = [(g.f_small.size(k)[0] + 18, g.f_main.size(v)[0]) for k, v in items]
+    spans = [(g.f_small.size(k)[0] + 18, g.f_main.size(T(v))[0]) for k, v in items]
     total = sum(kw + gap_key + lw for kw, lw in spans) + gap_group * (len(items) - 1)
     x = (WINDOW_W - total) // 2
     for (key, label), (kw, lw) in zip(items, spans):
         right = _keycap(s, g, key, x, cy)
-        img = g.f_main.render(label, True, C_TEXT)
+        img = g.f_main.render(T(label), True, C_TEXT)
         s.blit(img, img.get_rect(midleft=(right + gap_key, cy)))
         x = right + gap_key + lw + gap_group
 
@@ -240,7 +277,7 @@ def draw_title(g: "Game"):
     _draw_title_enter(g, s, t)
     _draw_title_controls(g, s, 720)
 
-    center_txt(g, "ESC: QUIT      F1: DEBUG", (WINDOW_W // 2, 838), g.f_small, C_DIM)
+    center_txt(g, T("ESC: QUIT      F1: DEBUG"), (WINDOW_W // 2, 838), g.f_small, C_DIM)
 
     # 四角括号：把整块画面框住，暗示「你现在看到的也是一块被读出来的东西」
     m, L = 34, 46
@@ -395,7 +432,7 @@ def draw_world(g: "Game"):
     if not in_intro:
         draw_player(g, s)
 
-    if g.state == "SCAN":                            # 第五幕的收尾：一束光把码读出去
+    if g.state in ("SCAN", "ALTAR2_SCAN"):            # 收尾：一束光把码读出去
         _draw_scan(g, s)
 
     _draw_toasts(g, s)                               # 嘀咕：飘在头顶，不挡、不冻世界
@@ -708,7 +745,7 @@ def _draw_toasts(g, s):
         if fade <= 0.02:
             continue
         col = C_OLDMAN if who == story.OLD_MAN else C_ACCENT
-        lines = [ln for ln in text.split("\n") if ln.strip()]
+        lines = [ln for ln in T(text).split("\n") if ln.strip()]
         if not lines:
             continue
         block_h = len(lines) * 18
@@ -916,15 +953,15 @@ def _draw_revive_hint(g, s, om):
 def _draw_item(g, s, it):
     rise = int((1.0 - it.t) * 22)
     sprites.draw_item(s, it.kind, it.pos.x, it.pos.y, g.anim_t, rise)
-    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / SWORD」
-    label = {"bag": "BAG", "sword": "SWORD"}.get(it.kind, "")
-    img = g.f_tiny.render(label, True, C_ITEM)
+    # 小标签压在道具上方：图标已经认得出，但第一幕需要玩家一眼知道「这是 BAG / MAP / SWORD」
+    label = {"bag": "BAG", "map": "MAP", "sword": "SWORD"}.get(it.kind, "")
+    img = g.f_tiny.render(T(label), True, C_ITEM)
     s.blit(img, img.get_rect(center=(int(it.pos.x), int(it.pos.y) + rise - 23)))
 
 
 def _draw_threat(g, s):
     """红怪的狠话：屏幕中央偏上，全大写、猩红。"""
-    img = g.f_mid.render(story.THREAT, True, C_MONSTER)
+    img = g.f_mid.render(T(story.THREAT), True, C_MONSTER)
     rect = img.get_rect(center=(PLAY_W // 2, THREAT_Y)).inflate(56, 24)
     plate = pygame.Surface(rect.size, pygame.SRCALPHA)
     plate.fill((0, 0, 0, 150))
@@ -1037,11 +1074,12 @@ def draw_hud(g: "Game"):
     b = g.board
 
     # ---- 顶部 ----
-    txt(g, "ACT %d" % g.act, (HUD_X, HUD_Y + 2), g.f_main, C_TEXT)
+    txt(g, T("ALTAR II") if g.act >= 6 else T("ACT %d" % g.act),
+        (HUD_X, HUD_Y + 2), g.f_main, C_TEXT)
     if g.state in ("BATTLE", "CLEAR", "REWARD", "DEAD"):
-        txt(g, "TIME %02d:%02d" % (int(g.elapsed) // 60, int(g.elapsed) % 60),
+        txt(g, T("TIME %02d:%02d" % (int(g.elapsed) // 60, int(g.elapsed) % 60)),
             (PLAY_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
-    txt(g, "[ESC] MENU", (WINDOW_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
+    txt(g, T("[ESC] MENU"), (WINDOW_W - 24, HUD_Y + 6), g.f_small, C_DIM, right=True)
 
     # ---- 右侧面板 ----
     panel = pygame.Rect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
@@ -1058,17 +1096,29 @@ def draw_hud(g: "Game"):
         hp_col = C_WARN
     else:
         hp_col = C_ACCENT
-    txt(g, "HEALTH", (x, 96), g.f_small, C_DIM)
+    txt(g, T("HEALTH"), (x, 96), g.f_small, C_DIM)
     txt(g, "%d%%" % hp, (x + PANEL_INNER, 92), g.f_panel, hp_col, right=True)
     draw_bar(g, pygame.Rect(x, 126, PANEL_INNER, 24), hp / float(HEALTH_MAX), hp_col)
 
     done = b.progress()
     total = len(b.must) or 1
+    if g.act >= 6:                                    # 第二圣坛：只报还差几格
+        txt(g, T("DARK"), (x, 196), g.f_small, C_DIM)
+        txt(g, "%d / %d" % (done, total), (x + PANEL_INNER, 192), g.f_panel, C_TEXT, right=True)
+        draw_bar(g, pygame.Rect(x, 226, PANEL_INNER, 18), done / float(total), C_TEXT)
+        txt(g, T("NO MONSTERS"), (x, 280), g.f_small, C_ACCENT)
+        txt(g, T("IT READS WHEN IT IS WHOLE"), (x, 312), g.f_small, C_DIM)
+        pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + PANEL_INNER, 396))
+        if g.has_bag:
+            _draw_bag(g, s, x, 412)
+        _draw_abilities(g, s, x, 590)
+        _draw_bottom(g, s)
+        return
     if g.act >= 5:                                    # 第五幕：唯一的数字是「错了几块」
         eff = g.act5_errors()
         fr = g.frame_broken()
         col = C_MONSTER if (fr or eff > ERROR_TOLERANCE) else C_ACCENT
-        txt(g, "FRAME" if fr else "ERRORS", (x, 196), g.f_small,
+        txt(g, T("FRAME") if fr else T("ERRORS"), (x, 196), g.f_small,
             C_MONSTER if fr else C_DIM)
         txt(g, ("%d" % fr) if fr else ("%d / %d" % (eff, ERROR_TOLERANCE)),
             (x + PANEL_INNER, 192), g.f_panel, col, right=True)
@@ -1077,16 +1127,16 @@ def draw_hud(g: "Game"):
         if fr:
             # 第五幕他在场：骨架归他，玩家不用管这一头 —— 所以别写「坏了」，
             # 写「他在补」。同一行字承担「现在为什么还不能读」的解释。
-            txt(g, "HE'S ON THE FRAME" if (g.oldman is not None and not g.oldman.gone)
-                else "THE FRAME IS BROKEN", (x, 252), g.f_small, C_MONSTER)
+            txt(g, T("HE'S ON THE FRAME") if (g.oldman is not None and not g.oldman.gone)
+                else T("THE FRAME IS BROKEN"), (x, 252), g.f_small, C_MONSTER)
         else:
-            txt(g, "IT READS AT %d OR LESS" % ERROR_TOLERANCE, (x, 252), g.f_small, C_DIM)
-        txt(g, "STAINS", (x, 280), g.f_small, C_DIM)
+            txt(g, T("IT READS AT %d OR LESS" % ERROR_TOLERANCE), (x, 252), g.f_small, C_DIM)
+        txt(g, T("STAINS"), (x, 280), g.f_small, C_DIM)
         txt(g, "%d / %d" % (b.stains, STAIN_LIMIT), (x + PANEL_INNER, 276), g.f_panel, C_TEXT, right=True)
-        txt(g, "RED ON FIELD", (x, 340), g.f_small, C_DIM)
+        txt(g, T("RED ON FIELD"), (x, 340), g.f_small, C_DIM)
         txt(g, str(len(g.monsters)), (x + PANEL_INNER, 336), g.f_panel,
             C_MONSTER if g.monsters else C_TEXT, right=True)
-        txt(g, "PURPLE ON FIELD", (x, 372), g.f_small, C_DIM)
+        txt(g, T("PURPLE ON FIELD"), (x, 372), g.f_small, C_DIM)
         txt(g, str(len(g.purples)), (x + PANEL_INNER, 368), g.f_panel,
             C_PURPLE if g.purples else C_TEXT, right=True)
         pygame.draw.line(s, C_PANEL_LINE, (x, 396), (x + PANEL_INNER, 396))
@@ -1099,7 +1149,7 @@ def draw_hud(g: "Game"):
     # 报 x/y 玩家看不出该干嘛（HUD 上 121/126 和 10/126 一样没用）。
     owe = max(0, total - done)
     awaiting_fill = g.act == 3 and g.scribe_done_said and owe > 0   # 只有第三幕是他写你欠
-    txt(g, "FILL" if awaiting_fill else "DARK", (x, 196), g.f_small,
+    txt(g, T("FILL") if awaiting_fill else T("DARK"), (x, 196), g.f_small,
         C_MONSTER if awaiting_fill else C_DIM)
     txt(g, ("%d" % owe) if awaiting_fill else ("%d / %d" % (done, total)),
         (x + PANEL_INNER, 192), g.f_panel, C_MONSTER if awaiting_fill else C_TEXT, right=True)
@@ -1109,15 +1159,15 @@ def draw_hud(g: "Game"):
     # 脏格：本幕**累计**涂错格数，擦掉不减；超过额度就转红（那时每次扣血）
     stains = b.stains
     st_col = C_MONSTER if stains > STAIN_LIMIT else (C_WARN if stains > STAIN_LIMIT * 0.7 else C_TEXT)
-    txt(g, "STAINS", (x, 280), g.f_small, C_DIM)
+    txt(g, T("STAINS"), (x, 280), g.f_small, C_DIM)
     txt(g, "%d / %d" % (stains, STAIN_LIMIT), (x + PANEL_INNER, 276), g.f_panel, st_col, right=True)
 
-    txt(g, "RED ON FIELD", (x, 340), g.f_small, C_DIM)
+    txt(g, T("RED ON FIELD"), (x, 340), g.f_small, C_DIM)
     txt(g, str(len(g.monsters)), (x + PANEL_INNER, 336), g.f_panel,
         C_MONSTER if g.monsters else C_TEXT, right=True)
 
     if g.act >= 2:                                   # 第二幕才有紫怪
-        txt(g, "PURPLE ON FIELD", (x, 372), g.f_small, C_DIM)
+        txt(g, T("PURPLE ON FIELD"), (x, 372), g.f_small, C_DIM)
         txt(g, str(len(g.purples)), (x + PANEL_INNER, 368), g.f_panel,
             C_PURPLE if g.purples else C_TEXT, right=True)
 
@@ -1138,42 +1188,38 @@ def _draw_bottom(g, s):
         pass                                    # 对话框自带 ENTER 提示，底部别再摆键位表
     elif g.state == "TUTORIAL" and g.prompt_text:
         # 教程阶段那句提示本身就是键位表，不用再摆一遍
-        center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y + 10), g.f_prompt, C_ACCENT)
+        center_txt(g, T(g.prompt_text), (PLAY_W // 2, HINT_Y + 10), g.f_prompt, C_ACCENT)
     elif g.state != "SCAN":                     # 扫描时世界只剩那一束光，别摆键位
         # 常驻键位表（C6：关键键别只弹一次，错过就卡住）
-        keys = "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL"
-        if g.act >= 5:                          # 第五幕：只修，不再有"扫"的新东西
-            keys = "[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE"
+        keys = T("[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE   [T] CALL")
+        if g.act >= 6:                          # 第二圣坛：只有走、看、写；骨架不许擦
+            keys = T("[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK")
+        elif g.act >= 5:                        # 第五幕：只修，不再有"扫"的新东西
+            keys = T("[WASD] MOVE   [SHIFT] ANOMALY   [J] DARK   [K] ERASE")
         elif g.act >= 4:                        # 第四幕换动词：按住 J 扫灰域
-            keys = "[WASD] MOVE   [SHIFT] ANOMALY   HOLD [J] SWEEP   [K] ERASE"
-        if g.act >= 3 and g.has_sword:
-            keys += "   [U] SWORD"              # 第三幕才有剑，别在前两幕挂着让人按
-        if g.act >= 2:
-            keys += "   [I] BRIDGE"             # 第二幕起：界丝搭跨缝通道
-        # 道具（2026-11-16）：每幕解锁一个，键位随解锁追加
-        if g.has_time_slow:
-            keys += "   [E] HOLD"
-        if g.has_dash:
-            keys += "   [Q] DASH"
-        if g.has_decoy:
-            keys += "   [F] DECOY"
-        if g.scroll_count > 0:
-            keys += "   [G] PULL"
+            keys = T("[WASD] MOVE   [SHIFT] ANOMALY   HOLD [J] SWEEP   [K] ERASE")
+        if g.act < 6:                           # 第二圣坛不再挂剑 / 界丝 / 技能键
+            if g.act >= 3 and g.has_sword:
+                keys += T("   [U] SWORD")      # 第三幕才有剑，别在前两幕挂着让人按
+            if g.act >= 2:
+                keys += T("   [I] BRIDGE")     # 第二幕起：界丝搭跨缝通道
+            # 道具（2026-11-16）：每幕解锁一个，键位随解锁追加
+            if g.has_time_slow:
+                keys += T("   [E] HOLD")
+            if g.has_dash:
+                keys += T("   [Q] DASH")
+            if g.has_decoy:
+                keys += T("   [F] DECOY")
+            if g.scroll_count > 0:
+                keys += T("   [G] PULL")
         txt(g, keys, (HUD_X, HINT_Y), g.f_small, C_ERASING)
         if g.prompt_text:
             if g.prompt_text == story.PROMPT_CALL and g.oldman is not None and not g.oldman.gone:
-                # T 呼叫提示：放在老者头顶附近，跟着老者走
-                ox, oy = int(g.oldman.pos.x), int(g.oldman.pos.y)
-                img = g.f_prompt.render(g.prompt_text, True, C_ACCENT)
-                r = img.get_rect(center=(ox, oy - 64))
-                # 贴近边缘时把提示夹在窗口内，避免文字出界被裁掉
-                r.left = max(r.left, 6)
-                r.right = min(r.right, WINDOW_W - 6)
-                r.top = max(r.top, 6)
-                g.screen.blit(img, r)
+                # T 呼叫提示：老者头顶一个小的对话气泡（键帽 [T] + CALL）
+                _draw_call_bubble(g, s, int(g.oldman.pos.x), int(g.oldman.pos.y))
             else:
                 # 其他操作提示（PRESS [J] / [B] 之类）：棋盘下方居中
-                center_txt(g, g.prompt_text, (PLAY_W // 2, HINT_Y - 100), g.f_prompt, C_ACCENT)
+                center_txt(g, T(g.prompt_text), (PLAY_W // 2, HINT_Y - 100), g.f_prompt, C_ACCENT)
 
     # 心声：暂停中（mono_hold）时 mono_t 是 0，所以两个条件都要认
     if g.mono_text and (g.mono_hold or g.mono_t > 0):
@@ -1207,13 +1253,15 @@ def _bag_icon(kind):
 
 
 def _draw_bag(g, s, x, y):
-    txt(g, "BAG", (x, y), g.f_small, C_DIM)
+    txt(g, T("BAG"), (x, y), g.f_small, C_DIM)
     cols, rows = 4, 2
     gap = 12
     w = (PANEL_INNER - gap * (cols - 1)) // cols
     h = 62
     # 背包是「容器」，它本身不占格子；格子里放的是包里的东西
     inside = []
+    if g.has_map:
+        inside.append("map")               # 第一幕收尾拿到的收藏品
     if g.has_sword:
         inside.append("sword")             # 第二幕收尾拿到的
     if getattr(g, "thread_count", 0) > 0:
@@ -1249,7 +1297,7 @@ def _draw_abilities(g, s, x, y):
     常驻能力（时停/冲刺/诱饵）显示冷却遮罩；一次性（卷轴）显示剩余数量。
     未解锁的格子显示暗占位。
     """
-    txt(g, "ABILITIES", (x, y), g.f_small, C_DIM)
+    txt(g, T("ABILITIES"), (x, y), g.f_small, C_DIM)
     cols = 4
     gap = 14
     w = (PANEL_INNER - gap * (cols - 1)) // cols
@@ -1333,7 +1381,7 @@ def _speech_box(s, g, box, name, who, solid_tab=True):
     s.fill(C_BOX, box)                        # 实心：半透明会把底下的白格透出来，显得脏
     pygame.draw.rect(s, C_PANEL_LINE, box, 1)
     _corner_brackets(s, box, 20, who)
-    img = g.f_dlg_name.render(name, True, who if not solid_tab else (8, 10, 14))
+    img = g.f_dlg_name.render(T(name), True, who if not solid_tab else (8, 10, 14))
     tab = pygame.Rect(box.x + DLG_PAD, box.y - 17, img.get_width() + 32, 34)
     if solid_tab:
         s.fill(who, tab)
@@ -1345,17 +1393,36 @@ def _speech_box(s, g, box, name, who, solid_tab=True):
 
 def mono_lines(g):
     """折好的心声行（字号比对话大一号，折行宽度按对话框内宽算）。"""
-    return _wrap_paragraphs(g.f_mono, g.mono_text, DLG_BOX[2] - DLG_PAD * 2)
+    return _wrap_paragraphs(g.f_mono, T(g.mono_text), DLG_BOX[2] - DLG_PAD * 2)
+
+
+MONO_TOP_PAD = 44                 # 正文第一行距框顶（2~3 行时）
+MONO_TOP_PAD_TIGHT = 30           # 4 行时收窄，把 14px 让给最后一行（否则会压到底部的 ENTER）
+
+
+def mono_rows(g):
+    """这一句心声会占几行（下限 2，上限 `MONO_MAX_ROWS`）。"""
+    return max(DLG_MIN_ROWS, min(MONO_MAX_ROWS, len(mono_lines(g))))
 
 
 def mono_box(g):
-    """心声明框的矩形：和对话框同宽同底边，高度按这句的行数缩（最少 2 行，最多 3 行）。
+    """心声明框的矩形：和对话框同宽同底边，高度按这句的行数缩（最少 2 行，最多 4 行）。
 
     测试也用它取样 —— 手写坐标迟早和渲染错开一格。
+
+    2026-11-24：上限从 3 提到 4。原来 3 行封顶，`A1_GUIDE`（第一幕开战前的引导）和
+    `A5_M1`（第五幕「它吃的不是格子，是格子里说的话」）都折成 4 行，第 4 行直接掉到框外、
+    压在 ENTER 提示上。高度用 MONO_LINE_H 自己算：`DLG_BOX[3]`(264) 是按对话 48px 行高定的，
+    拿来卡 54px 的心声正好差一截。
     """
-    rows = max(DLG_MIN_ROWS, min(3, len(mono_lines(g))))
-    h = min(DLG_BOX[3], rows * MONO_LINE_H + 64)
+    h = mono_rows(g) * MONO_LINE_H + 64
     return pygame.Rect(DLG_BOX[0], DLG_BOTTOM - h, DLG_BOX[2], h)
+
+
+def mono_text_top(g, box):
+    """正文第一行的 y。4 行时上边距收窄（见 `mono_box`）。"""
+    pad = MONO_TOP_PAD_TIGHT if mono_rows(g) >= MONO_MAX_ROWS else MONO_TOP_PAD
+    return box.y + pad
 
 
 def _mono_paint(g, s, box, vis, typing, done=False, blink=True):
@@ -1366,7 +1433,7 @@ def _mono_paint(g, s, box, vis, typing, done=False, blink=True):
     who = getattr(g, "mono_who", "") or story.SEQUENCER
     col = C_OLDMAN if who == story.OLD_MAN else C_ACCENT
     _speech_box(s, g, box, who, col, solid_tab=False)
-    top = box.y + 44
+    top = mono_text_top(g, box)
     for i, ln in enumerate(vis):
         s.blit(g.f_mono.render(ln, True, C_TEXT), (box.x + DLG_PAD, top + i * MONO_LINE_H))
     if typing and vis:                        # 打字光标（和对话同一个位置算法）
@@ -1377,12 +1444,12 @@ def _mono_paint(g, s, box, vis, typing, done=False, blink=True):
     if not done:
         return
     # 字打完了：底部两角给「按回车继续」——世界是停着的，必须让玩家知道怎么走
-    hint = g.f_small.render("ENTER", True, C_ACCENT if blink else C_DIM)
+    hint = g.f_small.render(T("ENTER"), True, C_ACCENT if blink else C_DIM)
     s.blit(hint, hint.get_rect(bottomleft=(box.x + DLG_PAD, box.bottom - 18)))
     if blink:
         ax, ay = box.right - 52, box.bottom - 34
         pygame.draw.polygon(s, C_ACCENT, [(ax, ay), (ax + 16, ay), (ax + 8, ay + 12)])
-    tag = g.f_tiny.render("PAUSED", True, C_DIM)
+    tag = g.f_tiny.render(T("PAUSED"), True, C_DIM)
     s.blit(tag, (box.right - tag.get_width() - DLG_PAD, box.y + 12))
 
 
@@ -1421,7 +1488,7 @@ def _draw_monologue(g, s):
 
 
 def _draw_hint(g, s):
-    lines = g.hint_text.split("\n")
+    lines = T(g.hint_text).split("\n")
     imgs = [g.f_main.render(ln, True, C_WARN) for ln in lines]
     bw = max(im.get_width() for im in imgs) + 48
     bh = 16 + 30 * len(imgs)
@@ -1446,8 +1513,8 @@ def _draw_awaken(g, s):
     cy = WINDOW_H // 2 - 40
     icon_r = 26
 
-    label = g.f_big.render(name, True, C_TEXT)
-    key_im = g.f_mid.render("AWAKENED  " + key, True, C_ACCENT)
+    label = g.f_big.render(T(name), True, C_TEXT)
+    key_im = g.f_mid.render(T("AWAKENED  ") + key, True, C_ACCENT)
     # 动态尺寸：文字两行 + 图标，纵向居中排
     pad = 20
     text_w = max(label.get_width(), key_im.get_width())
@@ -1484,6 +1551,7 @@ def _draw_teach_anim(g, s):
     label, key = story.TEACH.get(g.teach_kind, ("", ""))
     if not key:
         return
+    key = TK(key)                                   # 真键名不动，`HOLD J` → `按住 J`
     tl = g.teach_total - g.teach_t                  # 已播时长（本地时间）
     alpha = int(255 * min(1.0, tl / TEACH_FADE_IN, g.teach_t / TEACH_FADE_OUT))
     if alpha <= 0:
@@ -1504,7 +1572,7 @@ def _draw_teach_anim(g, s):
     key_box = pygame.Rect(18, 20, kw, 28)
     pygame.draw.circle(surf, (*C_ACCENT, int(60 * k)), (key_box.centerx, 34), 20 + int(4 * k))
     right = _keycap(surf, g, key, 18, 34, color=C_ACCENT)
-    img = g.f_main.render(label, True, C_TEXT)
+    img = g.f_main.render(T(label), True, C_TEXT)
     surf.blit(img, img.get_rect(midleft=(right + 14, 34)))
 
     # 舞台：码序者角色演示区
@@ -1573,25 +1641,6 @@ def _teach_effect(surf, kind, rect, tl):
         else:
             pygame.draw.rect(surf, C_CELL_WHITE, cells[1])
         pygame.draw.rect(surf, C_CELL_LINE, cells[1], 1)
-    elif kind == "call":
-        # 码序者（左）与老者（右）面对面，两人之间冒出对话气泡
-        sprites.draw_sequencer(surf, cells[0].centerx, cy, facing=3, t=tl)
-        om = types.SimpleNamespace(pos=pygame.math.Vector2(cells[2].centerx, cy - 2),
-                                   facing=2, staff_t=0.0)
-        sprites.draw_oldman(surf, om, t=tl)
-        # 对话气泡：省略号 1→2→3 个点循环
-        bx = cells[1].centerx
-        bubble = pygame.Rect(0, 0, 24, 15)
-        bubble.center = (bx, cy - 2)
-        pygame.draw.rect(surf, C_CELL_WHITE, bubble, border_radius=4)
-        pygame.draw.rect(surf, C_CELL_LINE, bubble, 1, border_radius=4)
-        pygame.draw.polygon(surf, C_CELL_WHITE,
-                            [(bx - 3, bubble.bottom - 1), (bx + 3, bubble.bottom - 1), (bx, bubble.bottom + 4)])
-        pygame.draw.line(surf, C_CELL_LINE, (bx - 3, bubble.bottom - 1), (bx, bubble.bottom + 4), 1)
-        pygame.draw.line(surf, C_CELL_LINE, (bx + 3, bubble.bottom - 1), (bx, bubble.bottom + 4), 1)
-        n = 1 + (int(p * 4) % 3)
-        for i in range(n):
-            pygame.draw.circle(surf, C_CELL_BLACK, (bubble.centerx - 3 + i * 3, bubble.centery + 1), 1)
     elif kind == "pick":
         sprites.draw_sequencer(surf, cells[1].centerx, cy, facing=1, t=tl)
         y = gy - int(22 * min(1.0, p / 0.5))
@@ -1633,16 +1682,53 @@ def _teach_effect(surf, kind, rect, tl):
 
 # ==== 对话框 ====
 
+_NO_LINE_START = "。，、；：！？）》」』】…—"
+_NO_LINE_END = "（《「『【"
+_CJK_TOKEN = re.compile(
+    r"[\u3400-\u4dbf\u4e00-\u9fff]"
+    r"|[\u3000-\u303f\uff00-\uffef]"
+    r"|[^\s\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+")
+
+
 def wrap_text(font, text, max_w):
-    """按空格断行。单词本身超宽也不硬切，宁可溢出一点。"""
-    lines, cur = [], ""
-    for word in text.split(" "):
-        t = (cur + " " + word).strip()
-        if cur and font.size(t)[0] > max_w:
+    """折行。纯 ASCII 走原来的「按空格断行」；含中文时按字/词折，并做最小避头尾。
+
+    英文版面必须和改前逐字一致，所以 ASCII 分支原样保留；中文没有空格，
+    直接把整句当一个「单词」会溢出，所以走 CJK 分支：
+      · 中文一字一个 token，英文/数字/URL 连续段当一个不可分 token；
+      · 行首不放 。，、！？：；」』）】… ，行尾不留 「『（【（挤进上一行或挪到下一行）。
+    """
+    if text.isascii():
+        lines, cur = [], ""
+        for word in text.split(" "):
+            t = (cur + " " + word).strip()
+            if cur and font.size(t)[0] > max_w:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = t
+        if cur:
             lines.append(cur)
-            cur = word
-        else:
-            cur = t
+        return lines
+
+    tokens = _CJK_TOKEN.findall(text)
+    lines, cur = [], ""
+    for tok in tokens:
+        if not cur:
+            cur = tok
+            continue
+        if font.size(cur + tok)[0] <= max_w:
+            cur += tok
+            continue
+        if tok[0] in _NO_LINE_START:            # 避头：标点挂在行尾（允许略出框）
+            lines.append(cur + tok)
+            cur = ""
+            continue
+        while len(cur) > 1 and cur[-1] in _NO_LINE_END:   # 避尾：开括号挪到下一行
+            tok = cur[-1] + tok
+            cur = cur[:-1]
+        lines.append(cur)
+        cur = tok
     if cur:
         lines.append(cur)
     return lines
@@ -1654,7 +1740,7 @@ def dialog_lines(g):
         return [], ""
     speaker, text = g.dlg_lines[g.dlg_i]
     x, y, w, h = DLG_BOX
-    return _wrap_paragraphs(g.f_dlg, text, w - DLG_PAD * 2), speaker
+    return _wrap_paragraphs(g.f_dlg, T(text), w - DLG_PAD * 2), speaker
 
 
 def dialog_char_total(g):
@@ -1706,7 +1792,7 @@ def draw_dialog(g):
         ax, ay = box.right - 52, box.bottom - 34
         pygame.draw.polygon(s, who, [(ax, ay), (ax + 16, ay), (ax + 8, ay + 12)])
 
-    hint = g.f_small.render("ENTER", True, C_DIM)
+    hint = g.f_small.render(T("ENTER"), True, C_DIM)
     s.blit(hint, hint.get_rect(bottomleft=(box.x + DLG_PAD, box.bottom - 18)))
 
 
@@ -1717,10 +1803,10 @@ def draw_dead(g: "Game"):
     veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
     veil.fill((0, 0, 0, 200))
     s.blit(veil, (0, 0))
-    center_txt(g, "SEQUENCER DOWN", (WINDOW_W // 2, 430), g.f_mid, C_MONSTER)
-    center_txt(g, "THE ALTAR WILL TAKE YOU BACK", (WINDOW_W // 2, 500), g.f_main, C_TEXT)
+    center_txt(g, T("SEQUENCER DOWN"), (WINDOW_W // 2, 430), g.f_mid, C_MONSTER)
+    center_txt(g, T("THE ALTAR WILL TAKE YOU BACK"), (WINDOW_W // 2, 500), g.f_main, C_TEXT)
     if int(g.menu_t * 2.0) % 2 == 0:
-        center_txt(g, "CLICK OR PRESS ENTER", (WINDOW_W // 2, 580), g.f_main, C_ERASING)
+        center_txt(g, T("CLICK OR PRESS ENTER"), (WINDOW_W // 2, 580), g.f_main, C_ERASING)
 
 
 def draw_end(g: "Game"):
@@ -1733,14 +1819,19 @@ def draw_end(g: "Game"):
         s.fill(C_BG)
         _draw_clean_code(g, s)
         cx = WINDOW_W // 2
-        center_txt(g, g.banner_text, (cx, 604), g.f_big, C_TEXT)
+        # 中文字形比英文字高得多：结局页的大字/副标题/回车各让一档，不然会叠在一起
+        if g.lang == "zh":
+            y_banner, y_line, y_enter, y_hint = 600, 674, 736, 786
+        else:
+            y_banner, y_line, y_enter, y_hint = 604, 660, 722, 774
+        center_txt(g, T(g.banner_text), (cx, y_banner), g.f_end, C_TEXT)
         if getattr(g, "end_line", ""):
-            center_txt(g, g.end_line, (cx, 660), g.f_mid, C_ACCENT)
+            center_txt(g, T(g.end_line), (cx, y_line), g.f_mid, C_ACCENT)
         # 脚注：这张码是**真的要拿手机扫**的。放在 PRESS ENTER 下面当小字，
         # 不抢那张码的戏，但让「扫它」这个动作有机会被想到。
-        center_txt(g, story.END_HINT, (cx, 774), g.f_small, C_DIM)
+        center_txt(g, T(story.END_HINT), (cx, y_hint), g.f_small, C_DIM)
         if int(g.menu_t * 2.0) % 2 == 0:
-            center_txt(g, "PRESS ENTER", (cx, 722), g.f_main, C_ERASING)
+            center_txt(g, T("PRESS ENTER"), (cx, y_enter), g.f_main, C_ERASING)
         return
     # 幕末压暗：**只压世界，不把 HUD 一起黑掉**。
     # 原来是一张盖满整屏的 216 遮罩，右侧面板连数字都看不见 —— 第一眼像游戏卡死了。
@@ -1751,36 +1842,50 @@ def draw_end(g: "Game"):
     side = pygame.Surface((WINDOW_W - PLAY_W, WINDOW_H), pygame.SRCALPHA)
     side.fill((0, 0, 0, 96))                         # 96 ≈ 留 62% 亮度
     s.blit(side, (PLAY_W, 0))
-    center_txt(g, g.banner_text, (PLAY_W // 2, WINDOW_H // 2 - 30), g.f_big, C_TEXT)
+    if g.lang == "zh":
+        y_banner, y_line, y_enter = 462, 545, 612
+    else:
+        y_banner, y_line, y_enter = WINDOW_H // 2 - 30, WINDOW_H // 2 + 30, WINDOW_H // 2 + 90
+    center_txt(g, T(g.banner_text), (PLAY_W // 2, y_banner), g.f_end, C_TEXT)
     if getattr(g, "end_line", ""):                   # 结局副标题：这张码到底写了什么
-        center_txt(g, g.end_line, (PLAY_W // 2, WINDOW_H // 2 + 30), g.f_mid, C_ACCENT)
+        center_txt(g, T(g.end_line), (PLAY_W // 2, y_line), g.f_mid, C_ACCENT)
     if int(g.menu_t * 2.0) % 2 == 0:
-        center_txt(g, "PRESS ENTER", (PLAY_W // 2, WINDOW_H // 2 + 90), g.f_main, C_ERASING)
+        center_txt(g, T("PRESS ENTER"), (PLAY_W // 2, y_enter), g.f_main, C_ERASING)
 
 
-PAUSE_OPTIONS = ("CONTINUE", "RESTART ACT", "QUIT TO TITLE")
+PAUSE_OPTIONS = ("CONTINUE", "LANGUAGE", "RESTART ACT", "QUIT TO TITLE")
+
+
+def _pause_label(g: "Game", i):
+    """暂停菜单第 i 项的文字。语言项显示「语言：ENGLISH / 中文」——
+    当前值随 `g.lang` 变，所以不把整串塞进译文表。"""
+    if i == 1:
+        value = "ENGLISH" if g.lang == "en" else "中文"
+        sep = "：" if g.lang == "zh" else ":  "       # 中文用全角冒号
+        return T("LANGUAGE") + sep + value
+    return T(PAUSE_OPTIONS[i])
 
 
 def draw_pause(g: "Game"):
-    """ESC 暂停菜单：半透明遮罩盖住世界，中央三选项，W/S 或方向键切换、回车确认。"""
+    """ESC 暂停菜单：半透明遮罩盖住世界，中央四选项，W/S 或方向键切换、回车确认。"""
     s = g.screen
     veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
     veil.fill((0, 0, 0, 180))
     s.blit(veil, (0, 0))
 
     cx = WINDOW_W // 2
-    center_txt(g, "PAUSED", (cx, 350), g.f_big, C_TEXT)
+    center_txt(g, T("PAUSED"), (cx, 350), g.f_big, C_TEXT)
 
-    for i, label in enumerate(PAUSE_OPTIONS):
-        y = 470 + i * 70
+    for i in range(len(PAUSE_OPTIONS)):
+        y = 452 + i * 66
         sel = (i == g.pause_sel)
         col = C_ACCENT if sel else C_DIM
         # 选中项：左侧一个指示箭头 + 高亮文字
         if sel:
             pygame.draw.polygon(s, C_ACCENT, [(cx - 150, y - 8), (cx - 138, y), (cx - 150, y + 8)])
-        center_txt(g, label, (cx, y), g.f_mid, col)
+        center_txt(g, _pause_label(g, i), (cx, y), g.f_mid, col)
 
-    center_txt(g, "[W/S] SELECT    [ENTER] CONFIRM    [ESC] RESUME",
+    center_txt(g, T("[W/S] SELECT    [ENTER] CONFIRM    [ESC] RESUME"),
                (cx, 720), g.f_small, C_DIM)
 
 

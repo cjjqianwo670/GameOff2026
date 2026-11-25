@@ -201,7 +201,7 @@ for (r, c) in sorted(g8.must)[:12]:                # 道具要落在已复原的
     g8.board.state[r][c] = 1
 g8.enter_reward()
 run(g8, REWARD_DELAY + 0.3)
-check("第一幕照旧浮出 BAG 一件（地图已删）", len(g8.items) == 1 and g8.items[0].kind == "bag",
+check("第一幕照旧浮出 BAG + MAP 两件", sorted(i.kind for i in g8.items) == ["bag", "map"],
       "%d 件 / %s" % (len(g8.items), [i.kind for i in g8.items]))
 
 

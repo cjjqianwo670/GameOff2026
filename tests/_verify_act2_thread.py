@@ -194,4 +194,58 @@ g6.thread_bridge = {"cells": [bl_br_edge_from, bl_br_edge_to], "t": 5.0}
 check("搭了通道 → 能跨缝走到对面板块", g6._can_stand(bl_br_edge_from, bl_br_edge_to))
 check("通道外的分离缝仍走不过去", not g6._can_stand((16, 11), (16, 12)))
 
+# ============ 7. 来历与作用（2026-11-24：作者「界丝没有讲述来历和作用」）============
+# 三个「第一次」各给一句，且一生只给一次 —— 第二幕很静，不能每次都念。
+from src import story  # noqa: E402
+
+g7 = to_act2()
+g7.mono_hold = False
+g7.mono_text = ""
+g7.thread_on_cell = False
+g7.thread_spawn_t = 0.01
+g7.thread_count = 0
+g7.update(1 / 60)
+check("第一次黑点长出界丝 → 独白说清「圣坛自己长的、一次一根」",
+      g7.mono_hold and g7.mono_text == story.A2_THREAD_BORN, repr(g7.mono_text))
+
+# 推掉这句；再把黑点占位/清空各试一次，确认不会第二次弹
+for _ in range(240):
+    auto_mono(g7)
+    g7.update(1 / 60)
+g7.mono_text = ""
+g7.thread_on_cell = False
+g7.thread_spawn_t = 0.01
+g7.update(1 / 60)
+check("第二次长出 → 不再念（一生一次）", not g7.mono_hold and g7.mono_text == "",
+      repr(g7.mono_text))
+
+# 第一次捡起：讲来历 + 用途
+g7.mono_hold = False
+g7.thread_on_cell = True
+g7.thread_count = 0
+r, c = g7.board.thread_cell()
+g7.player.cell = (r, c)
+g7.player.pos.update(cell_center(r, c))
+g7.handle_event(key(SC_B))
+check("第一次捡起界丝 → 独白说清来历与用途",
+      g7.mono_hold and g7.mono_text == story.A2_THREAD_PICK, repr(g7.mono_text))
+
+# 第一次搭成通道：只飘一句（不停世界）
+g7.mono_hold = False
+g7.thread_count = 1
+r, c = 15, 11
+g7.player.cell = (r, c)
+g7.player.pos.update(cell_center(r, c))
+g7.player.facing = 3
+g7.toasts.clear()
+g7.input.held.add(SC_I)
+for _ in range(int(THREAD_BRIDGE_CAST * 60) + 2):
+    g7.update(1 / 60)
+g7.input.held.discard(SC_I)
+texts = [t[0] for t in g7.toasts]
+check("第一次搭成通道 → 飘字「撑不久」，且不冻世界",
+      story.A2_THREAD_BRIDGE in texts and not g7.mono_hold, str(texts))
+check("三句台词都在（来历 + 作用 + 时限）",
+      all(getattr(story, n) for n in ("A2_THREAD_BORN", "A2_THREAD_PICK", "A2_THREAD_BRIDGE")))
+
 finish(TITLE)

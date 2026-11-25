@@ -17,6 +17,7 @@ import pygame
 
 from src.config import (
     C_CELL_BLACK, C_ITEM, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK,
+    C_MAP_DARK, C_MAP_INK, C_MAP_PAPER,
     C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK,
     C_MONSTER_RING, C_OLDMAN, C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OLDMAN_SKIN, C_OUTLINE,
     C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP, C_PLAYER_LIGHT, C_PROP_TOOL, C_SASH, C_STAFF
@@ -402,6 +403,8 @@ def draw_item(s, kind, cx, cy, t=0.0, rise=0, glow=True):
         _item_glow(s, px, py + 9)
     if kind == "sword":
         _draw_sword_item(s, px, py, t, glow)
+    elif kind == "map":
+        _draw_map_item(s, px, py, t, glow)
     else:
         _draw_bag_item(s, px, py, t, glow)
 
@@ -471,6 +474,34 @@ def _draw_bag_item(s, px, py, t, ground=True):
     s.fill(C_ITEM, pygame.Rect(px - 1, py + 2, 3, 3))
 
     pygame.draw.polygon(s, C_OUTLINE, flap, 1)
+    pygame.draw.polygon(s, C_OUTLINE, body, 1)
+
+
+def _draw_map_item(s, px, py, t, ground=True):
+    """地图：一张折过的羊皮纸 + 一条虚线路线 + 终点的金叉。
+
+    22px 里画不了地形，只用「折痕 + 路线 + 叉」三样认出它 ——
+    叉是整张图唯一的高光，和背包的金扣一样，远看先看到那一点。
+    """
+    py = int(py + math.sin(t * 2.4) * 0.8)
+    if ground:
+        shadow(s, px, py + 11, 22, 6, 72)
+
+    body = [(px - 10, py - 8), (px + 10, py - 8), (px + 10, py + 8), (px - 10, py + 8)]
+    pygame.draw.polygon(s, C_MAP_PAPER, body)
+
+    # 右折压暗 + 一道中缝：纸才有「折过、塞在包里」的体积
+    pygame.draw.polygon(s, C_MAP_DARK,
+                        [(px + 2, py - 8), (px + 10, py - 8), (px + 10, py + 8), (px + 2, py + 8)])
+    pygame.draw.line(s, C_MAP_DARK, (px, py - 8), (px, py + 8), 1)
+
+    # 路线：从左上到右下几个墨点，终点一个金叉
+    for dx, dy in ((-8, 4), (-6, 1), (-3, 3), (0, 0)):
+        s.fill(C_MAP_INK, pygame.Rect(px + dx, py + dy, 2, 2))
+    x, y = px + 6, py + 4
+    pygame.draw.line(s, C_ITEM, (x - 2, y - 2), (x + 2, y + 2), 1)
+    pygame.draw.line(s, C_ITEM, (x - 2, y + 2), (x + 2, y - 2), 1)
+
     pygame.draw.polygon(s, C_OUTLINE, body, 1)
 
 

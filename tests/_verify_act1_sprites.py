@@ -16,6 +16,7 @@ from src.config import (  # noqa: E402
     C_BG, C_CELL_BLACK, C_CELL_WHITE, C_MONSTER, C_MONSTER_CORE, C_MONSTER_DARK, C_MONSTER_RING, C_OLDMAN,
     C_OLDMAN_DARK, C_OLDMAN_LIGHT, C_OUTLINE, C_PLAYER, C_PLAYER_DARK, C_PLAYER_DEEP,
     C_ITEM, C_ITEM_LEATHER, C_ITEM_LEATHER_DARK,
+    C_MAP_DARK, C_MAP_INK, C_MAP_PAPER,
     C_PLAYER_LIGHT,
     C_SASH, C_STAFF
 )
@@ -267,6 +268,14 @@ body = pygame.Rect(26, 22, 28, 20)                  # 道具本体
 n_body = sum(1 for x in range(body.left, body.right) for y in range(body.top, body.bottom)
              if with_glow.get_at((x, y))[:3] != no_glow.get_at((x, y))[:3])
 check("光环只落在脚下，没有糊到道具身上", n_body == 0, "%d px 被污染" % n_body)
+
+# 地图（2026-11-22 回归：第一幕收尾多一件收藏品）
+map_s = item_canvas("map")
+map_px = colors_in(map_s, pygame.Rect(28, 30, 24, 22))
+check("地图用羊皮纸色画（不是背包皮革）", C_MAP_PAPER in map_px, str(sorted(map_px))[:60])
+check("地图上有折痕暗面", C_MAP_DARK in map_px)
+check("地图上有路线墨点", C_MAP_INK in map_px)
+check("地图终点有金色叉（唯一高光）", C_ITEM in map_px)
 
 
 # --- 拾到背包之后，码序使背上就背着它（2026-11-11）---

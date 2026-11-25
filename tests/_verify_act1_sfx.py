@@ -73,12 +73,25 @@ def make_audio_with_probe(g):
     class ProbeAudio:
         def __init__(self):
             self.enabled = True
+            self.muted = False
             self._sounds = {n: FakeSound() for n in sfx.SOUNDS}
             for n, s in self._sounds.items():
                 s.name = n
 
         def play(self, name):
             calls.append(name)
+
+        def update(self, ducked=False):
+            pass
+
+        def play_music(self, name):
+            self.music = name
+
+        def stop_music(self, fade_ms=0):
+            self.music = None
+
+        def set_muted(self, muted):
+            self.muted = muted
     return ProbeAudio()
 
 
@@ -206,15 +219,53 @@ probe("ui", lambda: g9.advance_dialog())
 class BrokenAudio:
     def __init__(self):
         self.enabled = False
+        self.muted = False
         self._sounds = {}
 
     def play(self, name):
         pass  # 静默 no-op
+
+    def update(self, ducked=False):
+        pass
+
+    def play_music(self, name):
+        pass
+
+    def stop_music(self, fade_ms=0):
+        pass
+
+    def set_muted(self, muted):
+        self.muted = muted
 
 
 gb = to_roam(new_game())
 gb.audio = BrokenAudio()
 gb.audio.play("paint")
 check("静音降级不崩", True)
+
+
+# ---- 背景音乐：波形层（dummy 驱动下 _Audio 不合成，这里直接验合成结果）----
+music = {}
+for name in ("title", "act1", "act5"):
+    pcm = sfx.build_music(name)
+    music[name] = pcm
+    expect = int(sfx.MUSIC_LOOP * sfx._RATE) * 2
+    check("音乐 %-5s 长度 12s" % name, len(pcm) == expect, "%d / %d" % (len(pcm), expect))
+    check("音乐 %-5s 非静音" % name, not is_silent(pcm))
+check("音乐 title ≠ act1", music["title"] != music["act1"])
+check("音乐 act1 ≠ act5", music["act1"] != music["act5"])
+check("音乐 act5 ≠ title", music["act5"] != music["title"])
+
+# ---- 背景音乐：换幕映射（dummy 下只记名字，不花时间合成）----
+gm = new_game()                       # new_game() 里已经 start_act()
+check("音乐 开局接 act1", gm.audio._music_name == "act1", str(gm.audio._music_name))
+gm._begin_act(3)
+check("音乐 换幕接 act3", gm.audio._music_name == "act3", str(gm.audio._music_name))
+gm.audio.play_music("act3")
+check("音乐 同名不重播", gm.audio._music_name == "act3")
+gm.audio.set_muted(True)
+check("音乐 静音标志", gm.audio.muted is True)
+gm.audio.set_muted(False)
+check("音乐 取消静音", gm.audio.muted is False)
 
 finish("第一幕 · 音效")

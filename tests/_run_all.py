@@ -73,7 +73,7 @@ def run_one(path):
 def main(argv):
     quiet = "--quiet" in argv
     words = [a for a in argv if not a.startswith("--")]
-    files = sorted(glob.glob(os.path.join(HERE, "_verify_act*.py")))
+    files = sorted(glob.glob(os.path.join(HERE, "_verify_*.py")))
     if words:
         files = [f for f in files if any(w in os.path.basename(f) for w in words)]
     if not files:
